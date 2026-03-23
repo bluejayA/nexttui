@@ -2,9 +2,9 @@
 
 ## Current State
 - **Phase**: CONSTRUCTION
-- **Stage**: code-generation (Unit 2: core-runtime 완료)
+- **Stage**: code-generation (Unit 8: nova-domain 완료)
 - **Complexity**: Comprehensive
-- **Commit**: (no commits yet — greenfield)
+- **Commit**: dccfdf6
 
 ## Completed Work
 
@@ -96,7 +96,14 @@
   - KeyMap (5 modes, resolve, context_help, Ctrl+C ForceQuit)
   - R1 반영: COMMAND_TABLE 단일 테이블, Row 의존 제거, unicode match_ranges, save 에러 전파, 항목 길이 제한
 
+- [x] Unit 8: nova-domain — code-generation 완료 (57 tests, R1 리뷰 반영)
+  - NovaHttpAdapter (Server+Flavor API, URL-safe query builder, pagination helper)
+  - ServerModule (List/Detail/Create, ConfirmDialog, ViewModel 분리)
+  - FlavorModule (List/Create, Admin gate)
+  - 공통 인프라: ListNav, ConfirmHandler, ViewState, PendingAction (R1 DRY fix)
+  - R1 반영: URL 인코딩, DRY 추출, format_ips 정렬, Aggregate.id i64, status_display 통합, Create placeholder
+
 ## Next Steps
-1. Unit 8: nova-domain — ServerModule, FlavorModule
-2. Unit 9: neutron-domain — NetworkModule, SecurityGroupModule, FloatingIpModule
-3. 이후 Unit 9~15 순차 진행
+1. Unit 9: neutron-domain — NetworkModule, SecurityGroupModule, FloatingIpModule
+2. Unit 10: cinder-domain — VolumeModule, SnapshotModule
+3. 이후 Unit 10~15 순차 진행
