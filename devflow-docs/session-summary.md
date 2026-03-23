@@ -90,7 +90,13 @@
   - ConfirmDialog (YesNo + TypeToConfirm with render), FormWidget (field nav, validate, dropdown j/k)
   - R1 반영: target_id 전달, dropdown validation, scroll clamp, render 추가, buffer limits, dead code 제거
 
+- [x] Unit 7: input-system — functional-design + code-generation 완료 (30 tests, R1 리뷰 반영)
+  - CommandParser (16 abbr + 16 routes from COMMAND_TABLE single source, parse/auto_complete/history)
+  - SearchFilter (filter_rows on Vec<Vec<String>>, match_ranges char-based unicode-safe)
+  - KeyMap (5 modes, resolve, context_help, Ctrl+C ForceQuit)
+  - R1 반영: COMMAND_TABLE 단일 테이블, Row 의존 제거, unicode match_ranges, save 에러 전파, 항목 길이 제한
+
 ## Next Steps
-1. Unit 7: input-system — CommandParser, SearchFilter, KeyMap
-2. Unit 8: nova-domain — ServerModule, FlavorModule
+1. Unit 8: nova-domain — ServerModule, FlavorModule
+2. Unit 9: neutron-domain — NetworkModule, SecurityGroupModule, FloatingIpModule
 3. 이후 Unit 9~15 순차 진행
