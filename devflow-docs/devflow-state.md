@@ -40,4 +40,4 @@ A안 — 체계적 점진 구축 (application-design Comprehensive → units Sta
 - foundation (35 tests) — commit 0414a97
 - core-runtime (23 tests) — commit 0414a97
 - port-layer (6 tests) — commit 0414a97
-- infrastructure (43 tests, Council R2 reviewed) — commit pending
+- infrastructure (43 tests, Council R2 reviewed) — commit d5a5f74
