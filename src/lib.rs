@@ -6,6 +6,7 @@ pub mod config;
 pub mod error;
 pub mod event;
 pub mod event_loop;
+pub mod infra;
 pub mod models;
 pub mod port;
 pub mod router;

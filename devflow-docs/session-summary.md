@@ -68,7 +68,14 @@
   - 5개 Mock adapter (MockNova/Neutron/Cinder/Glance/Keystone)
   - Council 리뷰 반영: AuthMethod/Token/AuthHeaders Debug 마스킹, body truncate, Parse variant
 
+- [x] Unit 4: infrastructure — functional-design + code-generation 완료 (43 tests, Council R2 리뷰 반영)
+  - Cache (Box<dyn Any> type-erase, TTL, max_entries 1024, gc_expired, invalidate)
+  - RbacGuard (단일 RwLock<RbacState>, role/capability 기반, admin-only routes 8/actions 5)
+  - AuditLogger (JSON lines, 민감필드 마스킹, 에러 전파, log_result 2-phase, rotation 10MB)
+  - ServiceCatalog (endpoint resolution, interface fallback, region, ServiceType 5종)
+  - Council R2 반영: 에러 전파, capability 스테일 방지, cache bounding, atomic state, endpoint dedup
+
 ## Next Steps
-1. Unit 4: infrastructure — Cache, RbacGuard, AuditLogger, ServiceCatalog
-2. Unit 5: auth-adapter — KeystoneAuthAdapter, BaseHttpClient
-3. 이후 Unit 6~15 순차 진행
+1. Unit 5: auth-adapter — KeystoneAuthAdapter, BaseHttpClient
+2. Unit 6: ui-widgets — LayoutManager, Header, Sidebar, StatusBar, Toast, ResourceList, etc.
+3. 이후 Unit 7~15 순차 진행
