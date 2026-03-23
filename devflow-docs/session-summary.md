@@ -75,7 +75,12 @@
   - ServiceCatalog (endpoint resolution, interface fallback, region, ServiceType 5종)
   - Council R2 반영: 에러 전파, capability 스테일 방지, cache bounding, atomic state, endpoint dedup
 
+- [x] Unit 5: auth-adapter — functional-design + code-generation 완료 (20 tests, Council Ra→R2 리뷰 반영)
+  - KeystoneAuthAdapter (AuthProvider impl, Keystone v3 auth, token parsing, refresh loop)
+  - BaseHttpClient (endpoint cache, auth delegation, HTTP→ApiError mapping, send/send_json)
+  - Council R2 반영: refresh idempotency (AtomicBool), thundering herd (Mutex double-check), send_json→Parse, pub(crate) narrowing, Phase 2 doc comments
+
 ## Next Steps
-1. Unit 5: auth-adapter — KeystoneAuthAdapter, BaseHttpClient
-2. Unit 6: ui-widgets — LayoutManager, Header, Sidebar, StatusBar, Toast, ResourceList, etc.
-3. 이후 Unit 7~15 순차 진행
+1. Unit 6: ui-widgets — LayoutManager, Header, Sidebar, StatusBar, Toast, ResourceList, etc.
+2. Unit 7: input-system — CommandInput, SearchOverlay, KeyMapper
+3. 이후 Unit 8~15 순차 진행

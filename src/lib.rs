@@ -1,4 +1,5 @@
 pub mod action;
+pub mod adapter;
 pub mod app;
 pub mod background;
 pub mod component;
