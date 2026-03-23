@@ -1,6 +1,6 @@
 use crate::models::common::Route;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Action {
     // Navigation
     Navigate(Route),
@@ -8,11 +8,15 @@ pub enum Action {
 
     // Nova
     FetchServers,
+    CreateServer(crate::port::types::ServerCreateParams),
     DeleteServer { id: String, name: String },
     RebootServer { id: String, hard: bool },
     StartServer { id: String },
     StopServer { id: String },
+    CreateServerSnapshot { server_id: String, name: String },
     FetchFlavors,
+    CreateFlavor(crate::port::types::FlavorCreateParams),
+    DeleteFlavor { id: String },
     FetchAggregates,
     FetchComputeServices,
     FetchHypervisors,
@@ -55,11 +59,21 @@ mod tests {
 
     #[test]
     fn test_action_variants_exist() {
-        // Verify key variants compile and can be created
+        use crate::port::types::{FlavorCreateParams, ServerCreateParams};
+
         let actions: Vec<Action> = vec![
             Action::Navigate(Route::Servers),
             Action::Back,
             Action::FetchServers,
+            Action::CreateServer(ServerCreateParams {
+                name: "test".into(),
+                image_id: "img-1".into(),
+                flavor_id: "flv-1".into(),
+                networks: vec![],
+                security_groups: None,
+                key_name: None,
+                availability_zone: None,
+            }),
             Action::DeleteServer {
                 id: "s1".into(),
                 name: "web".into(),
@@ -68,6 +82,21 @@ mod tests {
                 id: "s1".into(),
                 hard: false,
             },
+            Action::StartServer { id: "s1".into() },
+            Action::StopServer { id: "s1".into() },
+            Action::CreateServerSnapshot {
+                server_id: "s1".into(),
+                name: "snap".into(),
+            },
+            Action::FetchFlavors,
+            Action::CreateFlavor(FlavorCreateParams {
+                name: "m1.test".into(),
+                vcpus: 1,
+                ram_mb: 512,
+                disk_gb: 10,
+                is_public: true,
+            }),
+            Action::DeleteFlavor { id: "f1".into() },
             Action::FetchNetworks,
             Action::FetchVolumes,
             Action::FetchImages,
@@ -76,6 +105,6 @@ mod tests {
             Action::SwitchCloud("prod".into()),
             Action::Quit,
         ];
-        assert!(actions.len() >= 12);
+        assert!(actions.len() >= 18);
     }
 }

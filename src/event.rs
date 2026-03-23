@@ -25,10 +25,14 @@ pub enum AppEvent {
     AgentsLoaded(Vec<NetworkAgent>),
 
     // CUD results
+    ServerCreated(Server),
     ServerDeleted { id: String, name: String },
     ServerRebooted { id: String },
     ServerStarted { id: String },
     ServerStopped { id: String },
+    ServerSnapshotCreated { server_id: String, image_id: String },
+    FlavorCreated(Flavor),
+    FlavorDeleted { id: String },
     VolumeDeleted { id: String },
     ImageDeleted { id: String },
     FloatingIpCreated(FloatingIp),
@@ -53,6 +57,7 @@ mod tests {
     fn test_app_event_variants_exist() {
         let events: Vec<AppEvent> = vec![
             AppEvent::ServersLoaded(vec![]),
+            AppEvent::FlavorsLoaded(vec![]),
             AppEvent::NetworksLoaded(vec![]),
             AppEvent::VolumesLoaded(vec![]),
             AppEvent::ImagesLoaded(vec![]),
@@ -60,6 +65,11 @@ mod tests {
                 id: "s1".into(),
                 name: "web".into(),
             },
+            AppEvent::ServerSnapshotCreated {
+                server_id: "s1".into(),
+                image_id: "img-1".into(),
+            },
+            AppEvent::FlavorDeleted { id: "f1".into() },
             AppEvent::ApiError {
                 operation: "delete".into(),
                 message: "not found".into(),
@@ -68,6 +78,6 @@ mod tests {
             AppEvent::AuthFailed("expired".into()),
             AppEvent::CloudSwitched("prod".into()),
         ];
-        assert!(events.len() >= 9);
+        assert!(events.len() >= 12);
     }
 }

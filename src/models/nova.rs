@@ -75,7 +75,7 @@ fn default_true() -> bool {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Aggregate {
-    pub id: u32,
+    pub id: i64,
     pub name: String,
     pub availability_zone: Option<String>,
     #[serde(default)]
