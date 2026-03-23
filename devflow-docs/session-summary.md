@@ -80,7 +80,17 @@
   - BaseHttpClient (endpoint cache, auth delegation, HTTP→ApiError mapping, send/send_json)
   - Council R2 반영: refresh idempotency (AtomicBool), thundering herd (Mutex double-check), send_json→Parse, pub(crate) narrowing, Phase 2 doc comments
 
+- [x] Unit 6: ui-widgets — functional-design + code-generation 완료 (48 tests, R1 리뷰 반영)
+  - LayoutManager (calculate areas, sidebar toggle, resize, min_size)
+  - Header, StatusBar (stateless renderers), Toast (Success/Error/Info)
+  - Sidebar (j/k/Enter, RBAC filter, sync_active, selected_index clamp)
+  - InputBar (Command/Search mode, buffer limit 256)
+  - ResourceList (j/k/g/G/Enter, filter, ColumnDef, RowStyleHint)
+  - DetailView (link extraction, Tab cycle, NavigateToResource with id, scroll clamp)
+  - ConfirmDialog (YesNo + TypeToConfirm with render), FormWidget (field nav, validate, dropdown j/k)
+  - R1 반영: target_id 전달, dropdown validation, scroll clamp, render 추가, buffer limits, dead code 제거
+
 ## Next Steps
-1. Unit 6: ui-widgets — LayoutManager, Header, Sidebar, StatusBar, Toast, ResourceList, etc.
-2. Unit 7: input-system — CommandInput, SearchOverlay, KeyMapper
-3. 이후 Unit 8~15 순차 진행
+1. Unit 7: input-system — CommandParser, SearchFilter, KeyMap
+2. Unit 8: nova-domain — ServerModule, FlavorModule
+3. 이후 Unit 9~15 순차 진행

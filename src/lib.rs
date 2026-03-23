@@ -11,3 +11,4 @@ pub mod infra;
 pub mod models;
 pub mod port;
 pub mod router;
+pub mod ui;

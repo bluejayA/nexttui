@@ -39,6 +39,10 @@ pub enum Action {
     FetchProjects,
     FetchUsers,
 
+    // UI
+    SelectResource { id: String },
+    NavigateToResource { route: Route, id: String },
+
     // System
     RefreshAll,
     SwitchCloud(String),

@@ -4,7 +4,7 @@
 CONSTRUCTION
 
 ## Current Stage
-code-generation (Unit 5: auth-adapter 완료) → Unit 6 대기
+code-generation (Unit 6: ui-widgets 완료) → Unit 7 대기
 
 ## Pre-Planning Progress
 - user-stories: done (48개, 승인 완료)
@@ -42,3 +42,4 @@ A안 — 체계적 점진 구축 (application-design Comprehensive → units Sta
 - port-layer (6 tests) — commit 0414a97
 - infrastructure (43 tests, Council R2 reviewed) — commit d5a5f74
 - auth-adapter (20 tests, Council Ra→R2 reviewed) — commit bb0a5d6
+- ui-widgets (48 tests, R1 reviewed) — commit pending
