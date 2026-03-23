@@ -1,0 +1,29 @@
+# DevFlow Audit Log
+
+## 2026-03-18
+- **New aidlc session started** — Project: nexttui (Rust TUI), User request: "devflow로 시작하겠습니다"
+- **workspace-detection complete** — Greenfield, Rust (cargo init state), ref: substation (Swift)
+- **Complexity declared: Comprehensive** — 코어 프레임워크 + 3서비스 + 아키텍처 재설계
+- **requirements-analysis complete** — FR 11개 (44 sub-items), NFR 5개, 열린 질문 0, 가정 6개. 토글 사이드바 UX 확정, Phase 1 clouds.yaml만 지원 확정
+- **user-stories HELD** — 23 스토리 생성 완료, 사용자 직접 보강/추가 후 새 세션에서 재개 예정
+
+## 2026-03-23
+- **Session resumed at user-stories** — devflow 재개
+- **PTF-Admin API list PDF 분석** — 사용자 제공 피드백 문서 (9페이지). 4개 섹션: OpenStack CLI 운영, Block/NAS Admin, Object(Cloudian) Admin, Network System Admin
+- **Gap analysis complete** — 기존 FR 보강 9건, 신규 FR 5건 (FR-12~16), Phase 2 분류 4건 (NAS, Cloudian, Network System, Placement)
+- **requirements.md updated** — FR 11→16개, Phase 1 스코프 확대 (Identity/Glance/Monitoring/Admin 추가), Port/Adapter 멀티 백엔드 확장 (FR-05.4, FR-05.5)
+- **user-stories updated** — 23→44개 (Admin 21개 추가, 기존 3개 보강), Actor에 Admin 추가, TR-07/TR-08 추가
+- **멀티 백엔드 아키텍처 요구사항 확정** — OpenStack API 외 Cloudian(S3 HMAC), Manila Admin, Network System 등 이종 백엔드 수용 필수. Phase 1에서 추상화 설계 선행
+- **기획 배경 문서(requirements_scope_backgroud.md) 분석 반영** — Classic→NEXT 전환 컨텍스트, 인터뷰 시사점 3가지, 아키텍처 2안 비교, Scope 3단계 정의
+- **아키텍처 방향 확정: Phase 1은 Thick Client(MVP, 2안)** → Phase 2에서 Service Layer 중심(1안)으로 점진 전환. Port/Adapter 추상화로 전환 대비
+- **신규 FR 추가**: FR-17 (RBAC/권한 제어), FR-18 (감사 로그), FR-19 (통합 조회), FR-20 (운영 워크플로우/Phase 2)
+- **NFR-06 추가**: VDI 기반 배포 환경 (Windows/Linux, 관리망 내부)
+- **user-stories 업데이트**: 44→48개 (US-045~048 추가: RBAC, 2단계 확인, 감사 로그, 통합 조회)
+- **nfr-requirements 완료** — 5개 카테고리, 도메인: 사내도구+보안상향, 프로파일: 소규모
+- **workflow-planning 완료** — A안(체계적 점진 구축) 선택. app-design Comprehensive, units/code/build Standard
+- **application-design LIST 완료** — 52개 컴포넌트 (7 레이어: Core 5, UI 10, Input 3, Port 6, Adapter 7, Domain 16, Infra 5)
+- **application-design DETAIL 완료** — Comprehensive depth, 4개 서브에이전트 병렬 실행. Core+Infra / Port+Adapter / UI+Input / Domain+NFR 레이어별 분리 설계. NFR Design Patterns 5개 카테고리 포함
+- **Agent Council Review 완료** — Codex(GPT-5.3) + Gemini + Claude 3자 리뷰. 4건 액션 아이템 도출 (필수 2 + 권고 2), 전건 설계 문서에 반영
+- **INCEPTION 완료** — 전체 스테이지: workspace → complexity → requirements → user-stories → nfr → workflow-planning → application-design → agent-council-review
+- **user-stories 승인 완료** — 48개 (Must 42 + Should 6)
+- **nfr-requirements 완료** — GENERATE 모드, 도메인: 사내도구+보안상향, 프로파일: 소규모. 5개 카테고리 (성능/보안/가용성/데이터무결성/배포운영), 4개 제외 (확장성/모니터링/재해복구/컴플라이언스 — 로컬 TUI 특성). 조정 없이 기본값 승인

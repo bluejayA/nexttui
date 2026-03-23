@@ -1,0 +1,42 @@
+# DevFlow State
+
+## Current Phase
+CONSTRUCTION
+
+## Current Stage
+code-generation (Unit 3: port-layer 완료) → Unit 4 대기
+
+## Pre-Planning Progress
+- user-stories: done (48개, 승인 완료)
+- nfr-requirements: done (5개 카테고리)
+- workflow-planning: done (A안 — 체계적 점진 구축)
+- application-design: done (52개 컴포넌트 Comprehensive + 5 NFR)
+- units-generation: done (15개 unit, 승인 완료)
+
+## Complexity
+Comprehensive
+
+## Selected Approach
+A안 — 체계적 점진 구축 (application-design Comprehensive → units Standard → code Standard → build Standard)
+
+## Unit List
+1. foundation
+2. core-runtime
+3. port-layer
+4. infrastructure
+5. auth-adapter
+6. ui-widgets
+7. input-system
+8. nova-domain
+9. neutron-domain
+10. cinder-domain
+11. glance-domain
+12. identity-domain
+13. nova-admin-domain
+14. admin-monitoring
+15. integration
+
+## Completed Units
+- foundation (35 tests, no commits yet)
+- core-runtime (23 tests, no commits yet)
+- port-layer (6 tests, no commits yet)

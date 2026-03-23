@@ -1,0 +1,12 @@
+/target
+.DS_Store
+
+# Secrets
+.env*
+*secret*
+*credential*
+*token*
+*.pem
+*.key
+*.p12
+*.pfx
