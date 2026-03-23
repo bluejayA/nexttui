@@ -37,6 +37,6 @@ A안 — 체계적 점진 구축 (application-design Comprehensive → units Sta
 15. integration
 
 ## Completed Units
-- foundation (35 tests, no commits yet)
-- core-runtime (23 tests, no commits yet)
-- port-layer (6 tests, no commits yet)
+- foundation (35 tests) — commit 0414a97
+- core-runtime (23 tests) — commit 0414a97
+- port-layer (6 tests) — commit 0414a97
