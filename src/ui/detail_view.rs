@@ -203,18 +203,45 @@ impl DetailView {
                         columns,
                         rows,
                     } => {
+                        // Calculate per-column max width from headers + all rows
+                        let col_count = columns.len();
+                        let mut col_widths: Vec<usize> = columns.iter().map(|c| c.len()).collect();
+                        for row in rows {
+                            for (i, cell) in row.iter().enumerate() {
+                                if i < col_widths.len() {
+                                    col_widths[i] = col_widths[i].max(cell.len());
+                                }
+                            }
+                        }
+
                         lines.push(Line::from(Span::styled(
                             format!("  {:>width$}:", label, width = key_width),
                             Style::default().fg(Color::DarkGray),
                         )));
                         let col_padding = " ".repeat(key_width + 4);
-                        let header = columns.join(" | ");
+
+                        // Render header with fixed-width columns
+                        let header: String = columns
+                            .iter()
+                            .enumerate()
+                            .map(|(i, c)| format!("{:<w$}", c, w = col_widths.get(i).copied().unwrap_or(c.len())))
+                            .collect::<Vec<_>>()
+                            .join(" | ");
                         lines.push(Line::from(Span::styled(
                             format!("{col_padding}{header}"),
                             Style::default().add_modifier(Modifier::UNDERLINED),
                         )));
+
+                        // Render rows with same fixed-width columns
                         for row in rows {
-                            let row_str = row.join(" | ");
+                            let row_str: String = (0..col_count)
+                                .map(|i| {
+                                    let cell = row.get(i).map(|s| s.as_str()).unwrap_or("");
+                                    let w = col_widths.get(i).copied().unwrap_or(0);
+                                    format!("{:<w$}", cell, w = w)
+                                })
+                                .collect::<Vec<_>>()
+                                .join(" | ");
                             lines.push(Line::from(format!("{col_padding}{row_str}")));
                         }
                     }
