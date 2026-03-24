@@ -193,7 +193,7 @@ impl DetailView {
                         lines.push(Line::from(vec![
                             Span::styled(
                                 format!("  {:>width$}: ", key, width = key_width),
-                                Style::default().fg(Color::Gray),
+                                Style::default().fg(Color::LightBlue),
                             ),
                             Span::styled(value, Style::default().fg(val_color)),
                         ]));
@@ -249,7 +249,7 @@ impl DetailView {
                         lines.push(Line::from(vec![
                             Span::styled(
                                 format!("  {:>width$}: ", key, width = key_width),
-                                Style::default().fg(Color::Gray),
+                                Style::default().fg(Color::LightBlue),
                             ),
                             Span::styled(
                                 format!("[{display}]"),
