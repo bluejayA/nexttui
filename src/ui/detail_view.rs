@@ -193,7 +193,7 @@ impl DetailView {
                         lines.push(Line::from(vec![
                             Span::styled(
                                 format!("  {:>width$}: ", key, width = key_width),
-                                Style::default().fg(Color::DarkGray),
+                                Style::default().fg(Color::Gray),
                             ),
                             Span::styled(value, Style::default().fg(val_color)),
                         ]));
@@ -216,7 +216,7 @@ impl DetailView {
 
                         lines.push(Line::from(Span::styled(
                             format!("  {:>width$}:", label, width = key_width),
-                            Style::default().fg(Color::DarkGray),
+                            Style::default().fg(Color::Gray),
                         )));
                         let col_padding = " ".repeat(key_width + 4);
 
@@ -249,7 +249,7 @@ impl DetailView {
                         lines.push(Line::from(vec![
                             Span::styled(
                                 format!("  {:>width$}: ", key, width = key_width),
-                                Style::default().fg(Color::DarkGray),
+                                Style::default().fg(Color::Gray),
                             ),
                             Span::styled(
                                 format!("[{display}]"),
