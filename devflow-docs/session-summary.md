@@ -2,9 +2,9 @@
 
 ## Current State
 - **Phase**: CONSTRUCTION
-- **Stage**: code-generation (Unit 8: nova-domain 완료)
+- **Stage**: code-generation (Unit 9: neutron-domain 완료)
 - **Complexity**: Comprehensive
-- **Commit**: dccfdf6
+- **Commit**: f9a4845
 
 ## Completed Work
 
@@ -103,7 +103,14 @@
   - 공통 인프라: ListNav, ConfirmHandler, ViewState, PendingAction (R1 DRY fix)
   - R1 반영: URL 인코딩, DRY 추출, format_ips 정렬, Aggregate.id i64, status_display 통합, Create placeholder
 
+- [x] Unit 9: neutron-domain — code-generation 완료 (66 tests, R1 리뷰 반영)
+  - NeutronHttpAdapter (Networks/Subnets/SGs/Rules/FIPs, shared HTTP helpers 추출)
+  - NetworkModule (List/Detail/Create, SubnetsLoaded 연동)
+  - SecurityGroupModule (List/Detail/Create, Rule CRUD + ConfirmDialog)
+  - FloatingIpModule (List/Create/Delete + ConfirmDialog)
+  - R1 반영: disassociate null 주석, loading dead code 명시, direction case-insensitive, 누락 테스트 추가
+
 ## Next Steps
-1. Unit 9: neutron-domain — NetworkModule, SecurityGroupModule, FloatingIpModule
-2. Unit 10: cinder-domain — VolumeModule, SnapshotModule
-3. 이후 Unit 10~15 순차 진행
+1. Unit 10: cinder-domain — VolumeModule, SnapshotModule
+2. Unit 11: glance-domain — ImageModule
+3. 이후 Unit 12~15 순차 진행
