@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::models::nova::{Address, Server, Flavor};
 use crate::ui::detail_view::{DetailData, DetailField, DetailSection};
-use crate::ui::form::FormField;
+use crate::ui::form::{FieldDef, FormField};
 use crate::ui::resource_list::{ColumnDef, ColumnWidth, Row, RowStyleHint};
 
 pub fn server_columns() -> Vec<ColumnDef> {
@@ -225,6 +225,20 @@ pub fn server_create_form(
         ),
         FormField::text("Key Pair", false),
         FormField::text("Availability Zone", false),
+    ]
+}
+
+/// Create server form fields using new FieldDef API.
+/// Options for Image/Flavor/Network/SecurityGroup can be populated later via set_field_options.
+pub fn server_create_defs() -> Vec<FieldDef> {
+    vec![
+        FieldDef::text("Name", true),
+        FieldDef::dropdown("Image", vec![], true),
+        FieldDef::dropdown("Flavor", vec![], true),
+        FieldDef::dropdown("Network", vec![], true),
+        FieldDef::dropdown("Security Group", vec![], false),
+        FieldDef::text("Key Pair", false),
+        FieldDef::text("Availability Zone", false),
     ]
 }
 
