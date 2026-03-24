@@ -4,7 +4,7 @@
 CONSTRUCTION
 
 ## Current Stage
-code-generation (Unit 15: integration 완료) → build-and-test 대기
+CONSTRUCTION 완료 (build-and-test 통과)
 
 ## Pre-Planning Progress
 - user-stories: done (48개, 승인 완료)

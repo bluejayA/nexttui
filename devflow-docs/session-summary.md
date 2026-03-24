@@ -1,10 +1,10 @@
 # Session Summary
 
 ## Current State
-- **Phase**: CONSTRUCTION
-- **Stage**: code-generation 전체 완료 (15/15 units) → build-and-test 대기
+- **Phase**: CONSTRUCTION 완료
+- **Stage**: build-and-test 통과 (454 tests, 0 warnings)
 - **Complexity**: Comprehensive
-- **Commit**: a6cf04c
+- **Commit**: 401209c
 
 ## Completed Work
 
@@ -122,5 +122,7 @@
 - [x] Unit 14: admin-monitoring — AgentModule (7 tests), UsageModule deferred to Phase 2
 - [x] Unit 15: integration — AdapterRegistry (2 tests), RBAC wiring deferred to Phase 2
 
+- [x] build-and-test — 454 tests 통과, 0 warnings, 경고 전건 정리 (401209c)
+
 ## Next Steps
-1. build-and-test — 전체 빌드 + 454 테스트 검증
+1. Phase 2 계획 수립 (Migration, Attach/Detach, Role/Quota, UsageModule, RBAC wiring 등)
