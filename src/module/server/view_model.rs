@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::models::nova::{Address, Server, Flavor};
 use crate::ui::detail_view::{DetailData, DetailField, DetailSection};
-use crate::ui::form::{FormField, FormFieldType};
+use crate::ui::form::FormField;
 use crate::ui::resource_list::{ColumnDef, ColumnWidth, Row, RowStyleHint};
 
 pub fn server_columns() -> Vec<ColumnDef> {
@@ -268,6 +268,7 @@ pub fn format_ips(addresses: &HashMap<String, Vec<Address>>) -> String {
 mod tests {
     use super::*;
     use crate::models::nova::{FlavorRef, ImageRef};
+    use crate::ui::form::FormFieldType;
 
     fn make_server(status: &str) -> Server {
         Server {

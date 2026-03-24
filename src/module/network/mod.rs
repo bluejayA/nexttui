@@ -240,7 +240,7 @@ mod tests {
     }
 
     #[test]
-    fn test_handle_key_g_G() {
+    fn test_handle_key_g_and_shift_g() {
         let (mut module, _rx) = setup();
         module.handle_key(key(KeyCode::Char('G')));
         assert_eq!(module.selected_index(), 2);

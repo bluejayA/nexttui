@@ -305,7 +305,7 @@ mod tests {
     }
 
     #[test]
-    fn test_navigate_g_G() {
+    fn test_navigate_g_and_shift_g() {
         let mut list = ResourceList::new(sample_columns());
         list.set_rows(sample_rows());
         list.handle_key(key(KeyCode::Char('G')));

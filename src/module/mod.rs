@@ -236,7 +236,7 @@ mod tests {
     }
 
     #[test]
-    fn test_list_nav_g_G() {
+    fn test_list_nav_g_and_shift_g() {
         let mut nav = ListNav::new();
         nav.set_count(10);
 

@@ -3,11 +3,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use super::{Link, build_pagination_query, encode_param, extract_next_marker};
+use super::{build_pagination_query, encode_param};
 use crate::adapter::http::base::BaseHttpClient;
 use crate::models::keystone::{Project, Role, RoleAssignment, User};
 use crate::port::auth::AuthProvider;
-use crate::port::error::{ApiError, ApiResult};
+use crate::port::error::ApiResult;
 use crate::port::keystone::KeystonePort;
 use crate::port::types::*;
 

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use super::{Link, append_pagination_parts, encode_param, extract_next_marker};
+use super::{append_pagination_parts, encode_param};
 use crate::adapter::http::base::BaseHttpClient;
 use crate::models::glance::Image;
 use crate::port::auth::AuthProvider;

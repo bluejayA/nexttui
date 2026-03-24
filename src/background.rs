@@ -180,7 +180,6 @@ impl Default for BackgroundTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::thread;
 
     #[test]
     fn test_tracker_started() {
