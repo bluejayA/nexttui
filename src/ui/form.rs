@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use crossterm::event::{KeyCode, KeyEvent};
 
 const MAX_INPUT_LEN: usize = 256;
+const POPUP_VISIBLE_ITEMS: usize = 10;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -355,7 +356,7 @@ impl FormWidget {
                         options: opts,
                         ..
                     } => {
-                        *opts = options.clone();
+                        *opts = options;
                         *state = FieldState::Dropdown {
                             selected: None,
                             open: false,
@@ -388,8 +389,9 @@ impl FormWidget {
             }
             match (def, state, &value) {
                 (FieldDef::Text { .. }, FieldState::Text { value: v, cursor }, FormValue::Text(t)) => {
-                    *v = t.clone();
-                    *cursor = t.len();
+                    let truncated: String = t.chars().take(MAX_INPUT_LEN).collect();
+                    *cursor = truncated.len();
+                    *v = truncated;
                 }
                 (
                     FieldDef::Dropdown { options, .. },
@@ -442,6 +444,17 @@ impl FormWidget {
                         None
                     }
                 }
+                (
+                    Validation::Required,
+                    FieldDef::MultiSelect { .. },
+                    FieldState::MultiSelect { selected, .. },
+                ) => {
+                    if !selected.iter().any(|&s| s) {
+                        Some(format!("{} is required", def.label()))
+                    } else {
+                        None
+                    }
+                }
                 (Validation::MinLength(min), FieldDef::Text { .. }, FieldState::Text { value, .. }) => {
                     if !value.is_empty() && value.len() < *min {
                         Some(format!("{} must be at least {} characters", def.label(), min))
@@ -464,7 +477,7 @@ impl FormWidget {
                     }
                 }
                 (Validation::Cidr, FieldDef::Text { .. }, FieldState::Text { value, .. }) => {
-                    if !value.is_empty() && !is_valid_cidr(value) {
+                    if !value.is_empty() && !is_valid_ipv4_cidr(value) {
                         Some(format!("{} must be a valid CIDR (e.g. 10.0.0.0/24)", def.label()))
                     } else {
                         None
@@ -648,8 +661,8 @@ impl FormWidget {
             }
         }
 
-        // Enter on last field or non-interactive field: attempt submit
-        if code == KeyCode::Enter {
+        // Enter submits only on the last field (spec FR-11)
+        if code == KeyCode::Enter && self.focused == self.fields.len().saturating_sub(1) {
             return self.validate_and_submit();
         }
 
@@ -682,7 +695,12 @@ impl FormWidget {
                     KeyCode::Down => {
                         let sel = selected.unwrap_or(0);
                         let max = options.len().saturating_sub(1);
-                        *selected = Some(sel.saturating_add(1).min(max));
+                        let new_sel = sel.saturating_add(1).min(max);
+                        *selected = Some(new_sel);
+                        // Keep scroll tracking the selection
+                        if new_sel >= *scroll + POPUP_VISIBLE_ITEMS {
+                            *scroll = new_sel.saturating_sub(POPUP_VISIBLE_ITEMS - 1);
+                        }
                     }
                     KeyCode::Enter | KeyCode::Right => {
                         *open = false;
@@ -737,7 +755,7 @@ impl FormWidget {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn is_valid_cidr(s: &str) -> bool {
+fn is_valid_ipv4_cidr(s: &str) -> bool {
     let Some((ip_part, prefix_part)) = s.split_once('/') else {
         return false;
     };
@@ -1458,17 +1476,99 @@ mod tests {
         }
     }
 
+    // -- Review fix: Enter on non-last field does NOT submit -----------------
+
+    #[test]
+    fn test_enter_on_middle_text_field_does_not_submit() {
+        let mut form = FormWidget::new("Test", vec![
+            FieldDef::text("Name", false),
+            FieldDef::text("Size", false),
+            FieldDef::text("Zone", false),
+        ]);
+        // Focus is on field 0 (not last)
+        let action = form.handle_key(key(KeyCode::Enter));
+        assert!(matches!(action, FormAction::None));
+    }
+
+    // -- Review fix: Dropdown scroll tracks down direction -------------------
+
+    #[test]
+    fn test_dropdown_scroll_tracks_down() {
+        let opts: Vec<String> = (0..20).map(|i| format!("opt-{i}")).collect();
+        let mut form = FormWidget::new("Test", vec![
+            FieldDef::dropdown("Big", opts, false),
+        ]);
+        form.handle_key(key(KeyCode::Enter)); // open
+
+        // Navigate down past POPUP_VISIBLE_ITEMS
+        for _ in 0..15 {
+            form.handle_key(key(KeyCode::Down));
+        }
+        if let FieldState::Dropdown { selected, scroll, .. } = &form.fields()[0].1 {
+            assert_eq!(*selected, Some(15));
+            assert!(*scroll > 0, "scroll should have advanced but was {scroll}");
+        }
+    }
+
+    // -- Review fix: MultiSelect Required validation -------------------------
+
+    #[test]
+    fn test_validate_required_multiselect_empty() {
+        let def = FieldDef::MultiSelect {
+            name: "Nets".into(),
+            label: "Networks".into(),
+            validations: vec![Validation::Required],
+            options: vec![SelectOption::simple("net1"), SelectOption::simple("net2")],
+        };
+        let mut form = FormWidget::new("Test", vec![def]);
+        let action = form.validate_and_submit();
+        assert!(matches!(action, FormAction::None));
+        assert_eq!(form.errors().len(), 1);
+        assert!(form.errors()[0].message.contains("required"));
+    }
+
+    #[test]
+    fn test_validate_required_multiselect_with_selection() {
+        let def = FieldDef::MultiSelect {
+            name: "Nets".into(),
+            label: "Networks".into(),
+            validations: vec![Validation::Required],
+            options: vec![SelectOption::simple("net1"), SelectOption::simple("net2")],
+        };
+        let mut form = FormWidget::new("Test", vec![def]);
+        // Open, toggle first, close
+        form.handle_key(key(KeyCode::Enter));
+        form.handle_key(key(KeyCode::Char(' ')));
+        form.handle_key(key(KeyCode::Enter));
+
+        let action = form.validate_and_submit();
+        assert!(matches!(action, FormAction::Submit(_)));
+    }
+
+    // -- Review fix: set_field_value respects MAX_INPUT_LEN ------------------
+
+    #[test]
+    fn test_set_field_value_text_truncates() {
+        let mut form = FormWidget::new("Test", vec![FieldDef::text("Name", false)]);
+        let long_str = "x".repeat(MAX_INPUT_LEN + 100);
+        form.set_field_value("Name", FormValue::Text(long_str));
+        if let (_, FieldState::Text { value, cursor }) = &form.fields()[0] {
+            assert_eq!(value.len(), MAX_INPUT_LEN);
+            assert_eq!(*cursor, MAX_INPUT_LEN);
+        }
+    }
+
     // -- CIDR helper --------------------------------------------------------
 
     #[test]
     fn test_cidr_validation_helper() {
-        assert!(is_valid_cidr("10.0.0.0/24"));
-        assert!(is_valid_cidr("192.168.1.0/16"));
-        assert!(is_valid_cidr("0.0.0.0/0"));
-        assert!(!is_valid_cidr("10.0.0.0"));       // no prefix
-        assert!(!is_valid_cidr("10.0.0.0/33"));     // prefix > 32
-        assert!(!is_valid_cidr("10.0.0/24"));       // only 3 octets
-        assert!(!is_valid_cidr("abc.0.0.0/24"));    // non-numeric
+        assert!(is_valid_ipv4_cidr("10.0.0.0/24"));
+        assert!(is_valid_ipv4_cidr("192.168.1.0/16"));
+        assert!(is_valid_ipv4_cidr("0.0.0.0/0"));
+        assert!(!is_valid_ipv4_cidr("10.0.0.0"));       // no prefix
+        assert!(!is_valid_ipv4_cidr("10.0.0.0/33"));     // prefix > 32
+        assert!(!is_valid_ipv4_cidr("10.0.0/24"));       // only 3 octets
+        assert!(!is_valid_ipv4_cidr("abc.0.0.0/24"));    // non-numeric
     }
 
     // -- Legacy compat ------------------------------------------------------
