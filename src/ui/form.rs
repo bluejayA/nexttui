@@ -1,6 +1,11 @@
 use std::collections::HashMap;
 
 use crossterm::event::{KeyCode, KeyEvent};
+use ratatui::layout::Rect;
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::Frame;
 
 const MAX_INPUT_LEN: usize = 256;
 const POPUP_VISIBLE_ITEMS: usize = 10;
@@ -775,6 +780,303 @@ impl FormWidget {
         }
 
         FormAction::None
+    }
+
+    // -- Rendering ----------------------------------------------------------
+
+    pub fn render(&self, frame: &mut Frame, area: Rect) {
+        let block = Block::default()
+            .title(format!(" {} ", self.title))
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan));
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        if inner.height == 0 || inner.width == 0 {
+            return;
+        }
+
+        let label_width = self
+            .fields
+            .iter()
+            .map(|(d, _)| d.label().chars().count())
+            .max()
+            .unwrap_or(0)
+            .min(inner.width as usize / 3);
+
+        let mut y = inner.y;
+        let error_map: HashMap<&str, &str> = self
+            .errors
+            .iter()
+            .map(|e| (e.field_name.as_str(), e.message.as_str()))
+            .collect();
+
+        for (i, (def, state)) in self.fields.iter().enumerate() {
+            if y >= inner.y + inner.height {
+                break;
+            }
+
+            let is_focused = i == self.focused;
+            let label_style = if is_focused {
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Gray)
+            };
+
+            let label_text = format!("{:>width$}: ", def.label(), width = label_width);
+            let value_width = inner
+                .width
+                .saturating_sub(label_text.chars().count() as u16);
+
+            // Render label + value on one line
+            let value_spans = self.render_field_value(def, state, is_focused, value_width);
+            let line = Line::from(
+                std::iter::once(Span::styled(label_text, label_style))
+                    .chain(value_spans)
+                    .collect::<Vec<_>>(),
+            );
+            let line_area = Rect::new(inner.x, y, inner.width, 1);
+            frame.render_widget(Paragraph::new(line), line_area);
+            y += 1;
+
+            // Show validation error below the field
+            if let Some(err_msg) = error_map.get(def.name())
+                && y < inner.y + inner.height
+            {
+                let padding = " ".repeat(label_width + 2);
+                let err_line = Line::from(vec![
+                    Span::raw(padding),
+                    Span::styled(
+                        format!("! {err_msg}"),
+                        Style::default().fg(Color::Red),
+                    ),
+                ]);
+                let err_area = Rect::new(inner.x, y, inner.width, 1);
+                frame.render_widget(Paragraph::new(err_line), err_area);
+                y += 1;
+            }
+        }
+
+        // Render hint at bottom
+        let hint_y = (inner.y + inner.height).saturating_sub(1);
+        if hint_y > y {
+            let hint = Line::from(Span::styled(
+                " ↑↓ Navigate  ←/Esc Cancel  Enter Submit ",
+                Style::default().fg(Color::DarkGray),
+            ));
+            let hint_area = Rect::new(inner.x, hint_y, inner.width, 1);
+            frame.render_widget(Paragraph::new(hint), hint_area);
+        }
+
+        // Render popup overlay (dropdown/multiselect) if open
+        self.render_popup_overlay(frame, inner, label_width);
+    }
+
+    fn render_field_value<'a>(
+        &self,
+        def: &FieldDef,
+        state: &FieldState,
+        is_focused: bool,
+        max_width: u16,
+    ) -> Vec<Span<'a>> {
+        match (def, state) {
+            (FieldDef::Text { password, .. }, FieldState::Text { value, cursor }) => {
+                let display: String = if *password {
+                    "*".repeat(value.chars().count())
+                } else {
+                    value.clone()
+                };
+                let truncated: String = display.chars().take(max_width as usize).collect();
+
+                if is_focused {
+                    let cursor_pos = (*cursor).min(truncated.chars().count());
+                    let before: String = truncated.chars().take(cursor_pos).collect();
+                    let cursor_char: String = truncated
+                        .chars()
+                        .nth(cursor_pos)
+                        .map(|c| c.to_string())
+                        .unwrap_or_else(|| " ".to_string());
+                    let after: String = truncated.chars().skip(cursor_pos + 1).collect();
+
+                    vec![
+                        Span::styled(before, Style::default().fg(Color::White)),
+                        Span::styled(
+                            cursor_char,
+                            Style::default()
+                                .fg(Color::Black)
+                                .bg(Color::White),
+                        ),
+                        Span::styled(after, Style::default().fg(Color::White)),
+                    ]
+                } else if truncated.is_empty() {
+                    vec![Span::styled("(empty)", Style::default().fg(Color::DarkGray))]
+                } else {
+                    vec![Span::styled(truncated, Style::default().fg(Color::White))]
+                }
+            }
+            (FieldDef::Dropdown { options, .. }, FieldState::Dropdown { selected, open, .. }) => {
+                let display = selected
+                    .and_then(|i| options.get(i))
+                    .map(|o| o.display.clone())
+                    .unwrap_or_else(|| "(select)".to_string());
+                let arrow = if *open { " ▲" } else { " ▼" };
+                let style = if is_focused {
+                    Style::default().fg(Color::Cyan)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+                vec![
+                    Span::styled(display, style),
+                    Span::styled(arrow, Style::default().fg(Color::DarkGray)),
+                ]
+            }
+            (
+                FieldDef::MultiSelect { options, .. },
+                FieldState::MultiSelect { selected, open, .. },
+            ) => {
+                let chosen: Vec<&str> = options
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| selected.get(*i).copied().unwrap_or(false))
+                    .map(|(_, o)| o.display.as_str())
+                    .collect();
+                let display = if chosen.is_empty() {
+                    "(select)".to_string()
+                } else {
+                    chosen.join(", ")
+                };
+                let arrow = if *open { " ▲" } else { " ▼" };
+                let style = if is_focused {
+                    Style::default().fg(Color::Cyan)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+                vec![
+                    Span::styled(display, style),
+                    Span::styled(arrow, Style::default().fg(Color::DarkGray)),
+                ]
+            }
+            (FieldDef::Checkbox { .. }, FieldState::Checkbox { checked }) => {
+                let icon = if *checked { "[x]" } else { "[ ]" };
+                let style = if is_focused {
+                    Style::default().fg(Color::Cyan)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+                vec![Span::styled(icon, style)]
+            }
+            _ => vec![],
+        }
+    }
+
+    fn render_popup_overlay(&self, frame: &mut Frame, inner: Rect, label_width: usize) {
+        let Some((def, state)) = self.fields.get(self.focused) else {
+            return;
+        };
+
+        let popup_x = inner.x + label_width as u16 + 2;
+        let available_width = inner.width.saturating_sub(label_width as u16 + 2);
+        // y position: below the focused field line
+        let field_y = inner.y + self.focused as u16;
+
+        match (def, state) {
+            (
+                FieldDef::Dropdown { options, .. },
+                FieldState::Dropdown {
+                    selected,
+                    open: true,
+                    scroll,
+                },
+            ) => {
+                let visible = (options.len()).min(POPUP_VISIBLE_ITEMS);
+                let popup_height = visible as u16 + 2; // +2 for borders
+                let popup_y = (field_y + 1).min(inner.y + inner.height - popup_height);
+                let popup_width = available_width.min(40);
+                let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+                frame.render_widget(Clear, popup_area);
+
+                let lines: Vec<Line> = options
+                    .iter()
+                    .enumerate()
+                    .skip(*scroll)
+                    .take(visible)
+                    .map(|(i, opt)| {
+                        let is_sel = *selected == Some(i);
+                        let prefix = if is_sel { "▸ " } else { "  " };
+                        let style = if is_sel {
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().fg(Color::White)
+                        };
+                        Line::from(Span::styled(format!("{prefix}{}", opt.display), style))
+                    })
+                    .collect();
+
+                let block = Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Cyan));
+                let widget = Paragraph::new(lines).block(block);
+                frame.render_widget(widget, popup_area);
+            }
+            (
+                FieldDef::MultiSelect { options, .. },
+                FieldState::MultiSelect {
+                    selected,
+                    open: true,
+                    scroll,
+                },
+            ) => {
+                let visible = (options.len()).min(POPUP_VISIBLE_ITEMS);
+                let popup_height = visible as u16 + 2;
+                let popup_y = (field_y + 1).min(inner.y + inner.height - popup_height);
+                let popup_width = available_width.min(40);
+                let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+                frame.render_widget(Clear, popup_area);
+
+                let cursor = *scroll; // scroll doubles as cursor in MultiSelect
+                let view_start = if cursor >= visible {
+                    cursor - visible + 1
+                } else {
+                    0
+                };
+                let lines: Vec<Line> = options
+                    .iter()
+                    .enumerate()
+                    .skip(view_start)
+                    .take(visible)
+                    .map(|(i, opt)| {
+                        let is_cursor = i == cursor;
+                        let checked = selected.get(i).copied().unwrap_or(false);
+                        let check = if checked { "[x]" } else { "[ ]" };
+                        let prefix = if is_cursor { "▸" } else { " " };
+                        let style = if is_cursor {
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().fg(Color::White)
+                        };
+                        Line::from(Span::styled(
+                            format!("{prefix} {check} {}", opt.display),
+                            style,
+                        ))
+                    })
+                    .collect();
+
+                let block = Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Cyan));
+                let widget = Paragraph::new(lines).block(block);
+                frame.render_widget(widget, popup_area);
+            }
+            _ => {}
+        }
     }
 }
 
@@ -1736,5 +2038,109 @@ mod tests {
         let _t = FormField::text("Name", true);
         let _d = FormField::dropdown("Type", vec!["a".into()], true);
         let _c = FormField::checkbox("Public");
+    }
+
+    // -- Render tests -------------------------------------------------------
+
+    fn render_to_buffer(form: &FormWidget, width: u16, height: u16) -> String {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                let area = Rect::new(0, 0, width, height);
+                form.render(f, area);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let mut output = String::new();
+        for y in 0..height {
+            for x in 0..width {
+                let cell = &buf[(x, y)];
+                output.push_str(cell.symbol());
+            }
+            output.push('\n');
+        }
+        output
+    }
+
+    #[test]
+    fn test_render_shows_title() {
+        let form = FormWidget::new("Create Server", vec![
+            FieldDef::text("Name", true),
+        ]);
+        let output = render_to_buffer(&form, 50, 10);
+        assert!(output.contains("Create Server"), "Title not found in render output");
+    }
+
+    #[test]
+    fn test_render_shows_field_labels() {
+        let form = FormWidget::new("Test", vec![
+            FieldDef::text("Name", false),
+            FieldDef::dropdown("Flavor", vec!["m1.small".into()], false),
+            FieldDef::checkbox("Public"),
+        ]);
+        let output = render_to_buffer(&form, 60, 12);
+        assert!(output.contains("Name"), "Name label not found");
+        assert!(output.contains("Flavor"), "Flavor label not found");
+        assert!(output.contains("Public"), "Public label not found");
+    }
+
+    #[test]
+    fn test_render_shows_checkbox_state() {
+        let mut form = FormWidget::new("Test", vec![
+            FieldDef::checkbox("Accept"),
+        ]);
+        let output = render_to_buffer(&form, 40, 8);
+        assert!(output.contains("[ ]"), "Unchecked state not found");
+
+        form.handle_key(key(KeyCode::Char(' ')));
+        let output = render_to_buffer(&form, 40, 8);
+        assert!(output.contains("[x]"), "Checked state not found");
+    }
+
+    #[test]
+    fn test_render_shows_dropdown_arrow() {
+        let form = FormWidget::new("Test", vec![
+            FieldDef::dropdown("Type", vec!["a".into()], false),
+        ]);
+        let output = render_to_buffer(&form, 40, 8);
+        assert!(
+            output.contains('▼') || output.contains("(select)"),
+            "Dropdown indicator not found"
+        );
+    }
+
+    #[test]
+    fn test_render_shows_validation_error() {
+        let mut form = FormWidget::new("Test", vec![
+            FieldDef::text("Name", true),
+        ]);
+        form.validate_and_submit();
+        let output = render_to_buffer(&form, 50, 10);
+        assert!(output.contains("required"), "Validation error not shown");
+    }
+
+    #[test]
+    fn test_render_no_panic_on_small_area() {
+        let form = FormWidget::new("Test", vec![
+            FieldDef::text("Name", false),
+            FieldDef::text("Size", false),
+        ]);
+        // Should not panic even with tiny area
+        let _output = render_to_buffer(&form, 5, 3);
+    }
+
+    #[test]
+    fn test_render_shows_text_value() {
+        let mut form = FormWidget::new("Test", vec![
+            FieldDef::text("Name", false),
+        ]);
+        form.handle_key(key(KeyCode::Char('h')));
+        form.handle_key(key(KeyCode::Char('i')));
+        let output = render_to_buffer(&form, 40, 8);
+        assert!(output.contains('h'), "Text value not rendered");
     }
 }
