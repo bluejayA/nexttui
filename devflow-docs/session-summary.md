@@ -2,9 +2,9 @@
 
 ## Current State
 - **Phase**: CONSTRUCTION
-- **Stage**: code-generation (Unit 9: neutron-domain 완료)
+- **Stage**: code-generation (Unit 10: cinder-domain 완료)
 - **Complexity**: Comprehensive
-- **Commit**: f9a4845
+- **Commit**: 00a007a
 
 ## Completed Work
 
@@ -110,7 +110,13 @@
   - FloatingIpModule (List/Create/Delete + ConfirmDialog)
   - R1 반영: disassociate null 주석, loading dead code 명시, direction case-insensitive, 누락 테스트 추가
 
+- [x] Unit 10: cinder-domain — code-generation 완료 (42 tests, R1 리뷰 반영)
+  - CinderHttpAdapter (Volumes/Snapshots API, extend/force-delete/state-reset)
+  - VolumeModule (List/Detail/Create, type-to-confirm delete, VolumeCreated→List 전환)
+  - SnapshotModule (List/Detail, yes-no delete)
+  - R1 반영: attach/detach stub, qos_spec 필드명, char-based ID truncation, deleting arm 중복 제거
+
 ## Next Steps
-1. Unit 10: cinder-domain — VolumeModule, SnapshotModule
-2. Unit 11: glance-domain — ImageModule
-3. 이후 Unit 12~15 순차 진행
+1. Unit 11: glance-domain — ImageModule
+2. Unit 12: identity-domain — ProjectModule, UserModule
+3. 이후 Unit 13~15 순차 진행

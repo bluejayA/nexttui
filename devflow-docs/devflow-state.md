@@ -4,7 +4,7 @@
 CONSTRUCTION
 
 ## Current Stage
-code-generation (Unit 9: neutron-domain 완료) → Unit 10 대기
+code-generation (Unit 10: cinder-domain 완료) → Unit 11 대기
 
 ## Pre-Planning Progress
 - user-stories: done (48개, 승인 완료)
@@ -46,3 +46,4 @@ A안 — 체계적 점진 구축 (application-design Comprehensive → units Sta
 - input-system (30 tests, R1 reviewed) — commit dd2dd9a
 - nova-domain (57 tests, R1 reviewed) — commit dccfdf6
 - neutron-domain (66 tests, R1 reviewed) — commit f9a4845
+- cinder-domain (42 tests, R1 reviewed) — commit 00a007a
