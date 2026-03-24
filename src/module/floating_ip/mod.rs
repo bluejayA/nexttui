@@ -11,7 +11,7 @@ use crate::event::AppEvent;
 use crate::models::neutron::FloatingIp;
 use crate::module::{ConfirmHandler, PendingAction, ViewState};
 use crate::ui::confirm::ConfirmDialog;
-use crate::ui::form::{FormAction, FormWidget};
+use crate::ui::form::{FormAction, FormWidget, SelectOption};
 use crate::ui::resource_list::{ResourceList, Row};
 
 use self::view_model::{fip_columns, fip_create_defs, fip_to_row};
@@ -77,6 +77,8 @@ impl FloatingIpModule {
         let defs = fip_create_defs();
         self.form = Some(FormWidget::new("Allocate Floating IP", defs));
         self.view_state = ViewState::Create;
+        // Request external networks for dropdown
+        let _ = self.action_tx.send(Action::FetchNetworks);
     }
 
     fn close_form(&mut self) {
@@ -165,6 +167,16 @@ impl Component for FloatingIpModule {
             }
             AppEvent::FloatingIpCreated(_) | AppEvent::FloatingIpDeleted { .. } => {
                 let _ = self.action_tx.send(Action::FetchFloatingIps);
+            }
+            AppEvent::NetworksLoaded(networks) => {
+                if let Some(form) = &mut self.form {
+                    let opts: Vec<SelectOption> = networks
+                        .iter()
+                        .filter(|n| n.external)
+                        .map(|n| SelectOption::new(&n.id, &n.name))
+                        .collect();
+                    form.set_field_options("External Network", opts);
+                }
             }
             AppEvent::ApiError {
                 operation, message, ..

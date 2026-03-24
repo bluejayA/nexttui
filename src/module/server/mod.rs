@@ -12,7 +12,7 @@ use crate::models::nova::Server;
 use crate::module::{ConfirmHandler, PendingAction, ViewState};
 use crate::port::types::{NetworkAttachment, ServerCreateParams};
 use crate::ui::confirm::ConfirmDialog;
-use crate::ui::form::{FormAction, FormWidget};
+use crate::ui::form::{FormAction, FormWidget, SelectOption};
 use crate::ui::resource_list::{ResourceList, Row};
 
 use self::view_model::{server_columns, server_create_defs, server_detail_data, server_to_row};
@@ -76,13 +76,14 @@ impl ServerModule {
     }
 
     fn open_create_form(&mut self) {
-        // Dropdown options (Image, Flavor, Network, SG) start empty.
-        // They are populated via set_field_options() when API data is loaded
-        // in handle_event(). Required validation on empty dropdowns prevents
-        // submission with blank values.
         let defs = server_create_defs();
         self.form = Some(FormWidget::new("Create Server", defs));
         self.view_state = ViewState::Create;
+        // Request data for dropdown options — handle_event will populate via set_field_options
+        let _ = self.action_tx.send(Action::FetchFlavors);
+        let _ = self.action_tx.send(Action::FetchImages);
+        let _ = self.action_tx.send(Action::FetchNetworks);
+        let _ = self.action_tx.send(Action::FetchSecurityGroups);
     }
 
     fn close_form(&mut self) {
@@ -279,6 +280,42 @@ impl Component for ServerModule {
             | AppEvent::ServerStopped { .. }
             | AppEvent::ServerCreated(_) => {
                 let _ = self.action_tx.send(Action::FetchServers);
+            }
+            AppEvent::FlavorsLoaded(flavors) => {
+                if let Some(form) = &mut self.form {
+                    let opts: Vec<SelectOption> = flavors
+                        .iter()
+                        .map(|f| SelectOption::new(&f.id, format!("{} ({}vCPU/{}MB/{}GB)", f.name, f.vcpus, f.ram, f.disk)))
+                        .collect();
+                    form.set_field_options("Flavor", opts);
+                }
+            }
+            AppEvent::ImagesLoaded(images) => {
+                if let Some(form) = &mut self.form {
+                    let opts: Vec<SelectOption> = images
+                        .iter()
+                        .map(|img| SelectOption::new(&img.id, &img.name))
+                        .collect();
+                    form.set_field_options("Image", opts);
+                }
+            }
+            AppEvent::NetworksLoaded(networks) => {
+                if let Some(form) = &mut self.form {
+                    let opts: Vec<SelectOption> = networks
+                        .iter()
+                        .map(|n| SelectOption::new(&n.id, &n.name))
+                        .collect();
+                    form.set_field_options("Network", opts);
+                }
+            }
+            AppEvent::SecurityGroupsLoaded(sgs) => {
+                if let Some(form) = &mut self.form {
+                    let opts: Vec<SelectOption> = sgs
+                        .iter()
+                        .map(|sg| SelectOption::new(&sg.id, &sg.name))
+                        .collect();
+                    form.set_field_options("Security Group", opts);
+                }
             }
             AppEvent::ApiError {
                 operation, message, ..
@@ -568,5 +605,47 @@ mod tests {
         // Submit should fail validation (Image is required but not selected)
         // So action should be None and we stay on form
         assert!(action.is_none());
+    }
+
+    #[test]
+    fn test_open_create_form_dispatches_fetch_actions() {
+        let (mut module, mut rx) = setup();
+        module.handle_key(key(KeyCode::Char('c')));
+
+        let mut actions = Vec::new();
+        while let Ok(a) = rx.try_recv() {
+            actions.push(a);
+        }
+        assert!(actions.iter().any(|a| matches!(a, Action::FetchFlavors)));
+        assert!(actions.iter().any(|a| matches!(a, Action::FetchImages)));
+        assert!(actions.iter().any(|a| matches!(a, Action::FetchNetworks)));
+        assert!(actions.iter().any(|a| matches!(a, Action::FetchSecurityGroups)));
+    }
+
+    #[test]
+    fn test_flavors_loaded_populates_form_options() {
+        use crate::models::nova::Flavor;
+
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Char('c')));
+
+        let flavors = vec![Flavor {
+            id: "flv-1".into(),
+            name: "m1.small".into(),
+            vcpus: 1,
+            ram: 2048,
+            disk: 20,
+            is_public: true,
+        }];
+        module.handle_event(&AppEvent::FlavorsLoaded(flavors));
+
+        let form = module.form.as_ref().unwrap();
+        // Flavor dropdown should now have options
+        if let (crate::ui::form::FieldDef::Dropdown { options, .. }, _) = &form.fields()[2] {
+            assert_eq!(options.len(), 1);
+            assert_eq!(options[0].value, "flv-1");
+        } else {
+            panic!("Expected Dropdown for Flavor field");
+        }
     }
 }
