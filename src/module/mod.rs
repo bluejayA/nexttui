@@ -1,3 +1,4 @@
+pub mod agent;
 pub mod aggregate;
 pub mod compute_service;
 pub mod flavor;
@@ -6,6 +7,7 @@ pub mod hypervisor;
 pub mod image;
 pub mod migration;
 pub mod network;
+// Note: UsageModule is deferred to Phase 2 (requires date range picker UI)
 pub mod project;
 pub mod security_group;
 pub mod server;
