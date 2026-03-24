@@ -126,7 +126,7 @@ impl SecurityGroupModule {
             }
             KeyCode::Char('c') => {
                 self.open_create_form();
-                None
+                Some(Action::EnterFormMode)
             }
             KeyCode::Char('d') => {
                 if let Some(sg) = self.selected_sg() {
@@ -174,6 +174,7 @@ impl SecurityGroupModule {
                 if let Some(sg) = self.current_sg() {
                     let sg_id = sg.id.clone();
                     self.open_rule_form(sg_id);
+                    return Some(Action::EnterFormMode);
                 }
                 None
             }
@@ -263,7 +264,7 @@ impl SecurityGroupModule {
                         self.view_state = ViewState::List;
                     }
 
-                    Some(Action::CreateSecurityGroupRule(SecurityGroupRuleCreateParams {
+                    let _ = self.action_tx.send(Action::CreateSecurityGroupRule(SecurityGroupRuleCreateParams {
                         security_group_id: sg_id,
                         direction,
                         protocol,
@@ -272,7 +273,8 @@ impl SecurityGroupModule {
                         remote_ip_prefix,
                         remote_group_id: None,
                         ethertype: None,
-                    }))
+                    }));
+                    Some(Action::ExitFormMode)
                 } else {
                     // SG create form
                     let name = values
@@ -292,11 +294,11 @@ impl SecurityGroupModule {
                         });
 
                     self.close_form();
-
-                    Some(Action::CreateSecurityGroup(SecurityGroupCreateParams {
+                    let _ = self.action_tx.send(Action::CreateSecurityGroup(SecurityGroupCreateParams {
                         name,
                         description,
-                    }))
+                    }));
+                    Some(Action::ExitFormMode)
                 }
             }
             FormAction::Cancel => {
@@ -311,7 +313,7 @@ impl SecurityGroupModule {
                 } else {
                     self.close_form();
                 }
-                None
+                Some(Action::ExitFormMode)
             }
             FormAction::None => None,
         }
@@ -589,7 +591,7 @@ mod tests {
 
     #[test]
     fn test_create_form_submit_produces_action() {
-        let (mut module, _rx) = setup();
+        let (mut module, mut rx) = setup();
         module.handle_key(key(KeyCode::Char('c')));
 
         // Type SG name
@@ -601,8 +603,13 @@ mod tests {
         module.handle_key(key(KeyCode::Down));
         let action = module.handle_key(key(KeyCode::Enter));
 
-        assert!(matches!(action, Some(Action::CreateSecurityGroup(_))));
+        // Submit now returns ExitFormMode; CreateSecurityGroup is sent via action_tx
+        assert!(matches!(action, Some(Action::ExitFormMode)));
         assert_eq!(*module.view_state(), ViewState::List);
         assert!(module.form.is_none());
+
+        // Verify CreateSecurityGroup was dispatched via channel
+        let sent = rx.try_recv().unwrap();
+        assert!(matches!(sent, Action::CreateSecurityGroup(_)));
     }
 }

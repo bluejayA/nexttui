@@ -76,7 +76,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Spawn background worker
         tokio::spawn(run_worker(registry, action_rx, event_tx));
 
-        let app = App::new(config, action_tx.clone());
+        let mut app = App::new(config, action_tx.clone());
+
+        // Register all modules
+        use nexttui::models::common::Route;
+        use nexttui::module::{
+            server::ServerModule, flavor::FlavorModule, network::NetworkModule,
+            security_group::SecurityGroupModule, floating_ip::FloatingIpModule,
+            volume::VolumeModule, snapshot::SnapshotModule, image::ImageModule,
+            project::ProjectModule, user::UserModule,
+        };
+        app.register_component(Route::Servers, Box::new(ServerModule::new(action_tx.clone())));
+        app.register_component(Route::Flavors, Box::new(FlavorModule::new(action_tx.clone(), true)));
+        app.register_component(Route::Networks, Box::new(NetworkModule::new(action_tx.clone())));
+        app.register_component(Route::SecurityGroups, Box::new(SecurityGroupModule::new(action_tx.clone())));
+        app.register_component(Route::FloatingIps, Box::new(FloatingIpModule::new(action_tx.clone())));
+        app.register_component(Route::Volumes, Box::new(VolumeModule::new(action_tx.clone())));
+        app.register_component(Route::Snapshots, Box::new(SnapshotModule::new(action_tx.clone())));
+        app.register_component(Route::Images, Box::new(ImageModule::new(action_tx.clone(), true)));
+        app.register_component(Route::Projects, Box::new(ProjectModule::new(action_tx.clone())));
+        app.register_component(Route::Users, Box::new(UserModule::new(action_tx.clone())));
 
         // Trigger initial data load
         let _ = action_tx.send(nexttui::action::Action::FetchServers);

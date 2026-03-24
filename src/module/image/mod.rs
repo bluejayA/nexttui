@@ -102,7 +102,7 @@ impl ImageModule {
             }
             KeyCode::Char('c') if self.is_admin => {
                 self.open_create_form();
-                None
+                Some(Action::EnterFormMode)
             }
             KeyCode::Char('d') if self.is_admin => {
                 if let Some(img) = self.selected_image() {
@@ -183,19 +183,19 @@ impl ImageModule {
                     });
 
                 self.close_form();
-
-                Some(Action::CreateImage(ImageCreateParams {
+                let _ = self.action_tx.send(Action::CreateImage(ImageCreateParams {
                     name,
                     disk_format,
                     container_format,
                     visibility,
                     min_disk,
                     min_ram,
-                }))
+                }));
+                Some(Action::ExitFormMode)
             }
             FormAction::Cancel => {
                 self.close_form();
-                None
+                Some(Action::ExitFormMode)
             }
             FormAction::None => None,
         }

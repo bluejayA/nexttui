@@ -27,3 +27,22 @@
 - **INCEPTION 완료** — 전체 스테이지: workspace → complexity → requirements → user-stories → nfr → workflow-planning → application-design → agent-council-review
 - **user-stories 승인 완료** — 48개 (Must 42 + Should 6)
 - **nfr-requirements 완료** — GENERATE 모드, 도메인: 사내도구+보안상향, 프로파일: 소규모. 5개 카테고리 (성능/보안/가용성/데이터무결성/배포운영), 4개 제외 (확장성/모니터링/재해복구/컴플라이언스 — 로컬 TUI 특성). 조정 없이 기본값 승인
+
+## 2026-03-24
+- **Flow finished — option A (local merge)** — All work already on main branch (3f72599). 15/15 units, 449 tests, demo mode, arrow-key navigation. Archived devflow-state and session-summary.
+- **New aidlc session started** — Form 위젯 개발: 렌더링, FieldDef/FieldState 분리, Validation, 드롭다운, 모듈 연동
+- **Phase transition: INCEPTION → CONSTRUCTION** — commit: 19e9700. 10개 컴포넌트 설계 확인, Minimal depth.
+- **unit-complete: form-core** — commit: b2db478. 56 tests, Council review (Codex GPT-5.3 + Gemini) PASS. Critical fixes: UTF-8 cursor safety, last-field submit, dropdown index-0. 501 total tests.
+- **unit-complete: form-render** — commit: d380a56. render() 구현 + 7 render tests. 508 total tests.
+- **unit-complete: form-integration** — commit: 17516cc. ServerModule FormWidget 연동, server_create_defs(), 3 integration tests. 513 total tests.
+- **Construction complete** — commit: 0bfdb40. 3/3 units, 513 tests (68 new), 7 commits on feature/form-widget.
+- **PR created** — https://github.com/bluejayA/nexttui/pull/1, option B (PR pending). Worktree retained until merge.
+- **Flow finished — PR merged** — merged at 2026-03-24T07:00:31Z. Worktree removed, branch deleted.
+- **New aidlc session started** — 나머지 모듈 FormField→FieldDef 마이그레이션 + 레거시 FormField/FormFieldType 제거
+- **Phase transition: INCEPTION → CONSTRUCTION** — Minimal complexity, 직행 구현. commit: 95497a1
+- **Construction complete** — commit: 5c27f38. 8 modules migrated, legacy FormField removed. 531 tests, 17 files changed.
+- **New aidlc session started** — 드롭다운 옵션 동적 주입 (set_field_options) + demo 모드 연동
+- **New aidlc session started** — Phase 2 Stage 1-1: Module Registry 시스템. 아키텍처 고도화 우선 (Substation 분석 기반). Phase 2 로드맵 승인 완료.
+- **workspace-detection complete** — Brownfield, 91 files, 534 tests, 16 modules. Complexity: Standard 제안, 승인 대기.
+- **Session paused** — Background Worker 작업 병행 진행 중. Complexity gate에서 중단.
+- **New aidlc session started** — Background Worker + OpenStack API 연동. action_rx consume → API 호출 → AppEvent 반환.

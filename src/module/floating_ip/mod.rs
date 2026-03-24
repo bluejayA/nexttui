@@ -99,7 +99,7 @@ impl FloatingIpModule {
         match key.code {
             KeyCode::Char('c') => {
                 self.open_create_form();
-                None
+                Some(Action::EnterFormMode)
             }
             KeyCode::Char('d') => {
                 if let Some(fip) = self.selected_fip() {
@@ -136,12 +136,12 @@ impl FloatingIpModule {
                     .unwrap_or_default();
 
                 self.close_form();
-
-                Some(Action::CreateFloatingIp { network_id })
+                let _ = self.action_tx.send(Action::CreateFloatingIp { network_id });
+                Some(Action::ExitFormMode)
             }
             FormAction::Cancel => {
                 self.close_form();
-                None
+                Some(Action::ExitFormMode)
             }
             FormAction::None => None,
         }

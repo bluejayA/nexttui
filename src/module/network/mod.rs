@@ -96,7 +96,7 @@ impl NetworkModule {
             }
             KeyCode::Char('c') => {
                 self.open_create_form();
-                None
+                Some(Action::EnterFormMode)
             }
             KeyCode::Char('r') => Some(Action::FetchNetworks),
             KeyCode::Left => Some(Action::FocusSidebar),
@@ -157,19 +157,19 @@ impl NetworkModule {
                     });
 
                 self.close_form();
-
-                Some(Action::CreateNetwork(NetworkCreateParams {
+                let _ = self.action_tx.send(Action::CreateNetwork(NetworkCreateParams {
                     name,
                     admin_state_up,
                     shared,
                     external,
                     mtu,
                     port_security_enabled: None,
-                }))
+                }));
+                Some(Action::ExitFormMode)
             }
             FormAction::Cancel => {
                 self.close_form();
-                None
+                Some(Action::ExitFormMode)
             }
             FormAction::None => None,
         }

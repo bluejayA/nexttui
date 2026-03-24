@@ -19,7 +19,7 @@ pub struct CinderHttpAdapter {
 impl CinderHttpAdapter {
     pub fn new(auth: Arc<dyn AuthProvider>, region: Option<String>) -> Self {
         Self {
-            base: BaseHttpClient::new(auth, "volumev3", EndpointInterface::Internal, region),
+            base: BaseHttpClient::new(auth, "block-storage", EndpointInterface::Public, region),
         }
     }
 }

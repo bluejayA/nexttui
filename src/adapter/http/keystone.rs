@@ -18,7 +18,7 @@ pub struct KeystoneHttpAdapter {
 impl KeystoneHttpAdapter {
     pub fn new(auth: Arc<dyn AuthProvider>, region: Option<String>) -> Self {
         Self {
-            base: BaseHttpClient::new(auth, "identity", EndpointInterface::Internal, region),
+            base: BaseHttpClient::new(auth, "identity", EndpointInterface::Public, region),
         }
     }
 }

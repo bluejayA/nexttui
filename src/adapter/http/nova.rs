@@ -20,7 +20,7 @@ pub struct NovaHttpAdapter {
 impl NovaHttpAdapter {
     pub fn new(auth: Arc<dyn AuthProvider>, region: Option<String>) -> Self {
         Self {
-            base: BaseHttpClient::new(auth, "compute", EndpointInterface::Internal, region),
+            base: BaseHttpClient::new(auth, "compute", EndpointInterface::Public, region),
         }
     }
 }

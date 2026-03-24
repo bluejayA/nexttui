@@ -365,6 +365,9 @@ impl AuthProvider for KeystoneAuthAdapter {
         interface: EndpointInterface,
         region: Option<&str>,
     ) -> ApiResult<String> {
+        // Ensure we have a valid token (triggers initial auth if needed)
+        let _ = self.get_token().await?;
+
         let current = self.current_token.read().await;
         let token = current
             .as_ref()

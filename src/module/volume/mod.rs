@@ -102,7 +102,7 @@ impl VolumeModule {
             }
             KeyCode::Char('c') => {
                 self.open_create_form();
-                None
+                Some(Action::EnterFormMode)
             }
             KeyCode::Char('d') => {
                 if let Some(vol) = self.selected_volume() {
@@ -186,18 +186,18 @@ impl VolumeModule {
                     });
 
                 self.close_form();
-
-                Some(Action::CreateVolume(VolumeCreateParams {
+                let _ = self.action_tx.send(Action::CreateVolume(VolumeCreateParams {
                     name,
                     size_gb,
                     volume_type,
                     description,
                     availability_zone,
-                }))
+                }));
+                Some(Action::ExitFormMode)
             }
             FormAction::Cancel => {
                 self.close_form();
-                None
+                Some(Action::ExitFormMode)
             }
             FormAction::None => None,
         }

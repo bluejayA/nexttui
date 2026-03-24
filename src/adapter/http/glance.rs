@@ -18,7 +18,7 @@ pub struct GlanceHttpAdapter {
 impl GlanceHttpAdapter {
     pub fn new(auth: Arc<dyn AuthProvider>, region: Option<String>) -> Self {
         Self {
-            base: BaseHttpClient::new(auth, "image", EndpointInterface::Internal, region),
+            base: BaseHttpClient::new(auth, "image", EndpointInterface::Public, region),
         }
     }
 }

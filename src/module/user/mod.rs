@@ -72,7 +72,7 @@ impl UserModule {
     fn handle_list_key(&mut self, key: KeyEvent) -> Option<Action> {
         if self.resource_list.handle_nav_key(key) { return None; }
         match key.code {
-            KeyCode::Char('c') => { self.open_create_form(); None }
+            KeyCode::Char('c') => { self.open_create_form(); Some(Action::EnterFormMode) }
             KeyCode::Char('d') => {
                 if let Some(user) = self.selected_user() {
                     let id = user.id.clone();
@@ -139,19 +139,19 @@ impl UserModule {
                     });
 
                 self.close_form();
-
-                Some(Action::CreateUser(UserCreateParams {
+                let _ = self.action_tx.send(Action::CreateUser(UserCreateParams {
                     name,
                     password,
                     email,
                     default_project_id: None,
                     domain_id,
                     enabled,
-                }))
+                }));
+                Some(Action::ExitFormMode)
             }
             FormAction::Cancel => {
                 self.close_form();
-                None
+                Some(Action::ExitFormMode)
             }
             FormAction::None => None,
         }

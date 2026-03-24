@@ -95,7 +95,7 @@ impl FlavorModule {
         match key.code {
             KeyCode::Char('c') if self.is_admin => {
                 self.open_create_form();
-                None
+                Some(Action::EnterFormMode)
             }
             KeyCode::Char('d') if self.is_admin => {
                 if let Some(flavor) = self.selected_flavor() {
@@ -163,18 +163,18 @@ impl FlavorModule {
                     .unwrap_or(true);
 
                 self.close_form();
-
-                Some(Action::CreateFlavor(FlavorCreateParams {
+                let _ = self.action_tx.send(Action::CreateFlavor(FlavorCreateParams {
                     name,
                     vcpus,
                     ram_mb,
                     disk_gb,
                     is_public,
-                }))
+                }));
+                Some(Action::ExitFormMode)
             }
             FormAction::Cancel => {
                 self.close_form();
-                None
+                Some(Action::ExitFormMode)
             }
             FormAction::None => None,
         }

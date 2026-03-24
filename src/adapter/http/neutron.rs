@@ -18,7 +18,7 @@ pub struct NeutronHttpAdapter {
 impl NeutronHttpAdapter {
     pub fn new(auth: Arc<dyn AuthProvider>, region: Option<String>) -> Self {
         Self {
-            base: BaseHttpClient::new(auth, "network", EndpointInterface::Internal, region),
+            base: BaseHttpClient::new(auth, "network", EndpointInterface::Public, region),
         }
     }
 }

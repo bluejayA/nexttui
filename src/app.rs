@@ -130,8 +130,15 @@ impl App {
             return true;
         }
 
-        // TODO(Unit 6): Form mode Esc → show cancel confirmation dialog (BR-02)
-        // Currently Form mode delegates all keys to FormWidget which is not yet implemented.
+        // Form mode: delegate all keys to the active component (FormWidget handles everything)
+        if self.input_mode == InputMode::Form {
+            if let Some(component) = self.components.get_mut(&self.router.current()) {
+                if let Some(action) = component.handle_key(key) {
+                    self.dispatch_action(action);
+                }
+            }
+            return true;
+        }
 
         // Delegate based on focus pane
         if self.input_mode == InputMode::Normal {
@@ -174,6 +181,12 @@ impl App {
                 if self.sidebar_visible {
                     self.focus = FocusPane::Sidebar;
                 }
+            }
+            Action::EnterFormMode => {
+                self.input_mode = InputMode::Form;
+            }
+            Action::ExitFormMode => {
+                self.input_mode = InputMode::Normal;
             }
             Action::Quit => {
                 self.should_quit = true;

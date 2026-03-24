@@ -1,26 +1,25 @@
 # Workflow Plan
 
-**Timestamp**: 2026-03-23T09:15:00+09:00
-**Selected Approach**: A안 — 체계적 점진 구축
+**Timestamp**: 2026-03-24T13:45:00+09:00
+**Selected Approach**: B안 — 설계 확인 후 구현
 
 ## Approaches Considered
-- A안) 체계적 점진 구축 (선택) — application-design Comprehensive + units/code/build Standard. 아키텍처 선행 설계로 Phase 2 전환 리스크 최소화
-- B안) 설계 경량화 + 빠른 구현 — application-design Standard + units Minimal. 기존 합의 활용, 구현 속도 우선
-- C안) 최소 설계 + 즉시 구현 — application-design 스킵. 코드로 아키텍처 탐색. 프로토타입용
+- A안) 직행 구현 — 기존 설계 문서(§8) 참조, application-design/units 스킵, 바로 code-generation
+- B안) 설계 확인 후 구현 — application-design Minimal로 설계 차이 정리 후 구현
 
 ## Approved Stages
 ### PRE-PLANNING
-- user-stories: included — 48개 (Must 42 + Should 6), Admin API + 기획 배경 반영 완료
-- nfr-requirements: included — 5개 카테고리 (성능/보안/가용성/데이터무결성/배포운영), 도메인: 사내도구+보안상향
+- user-stories: skipped — 기존 설계 문서에 인터랙션 시나리오 포함
+- nfr-requirements: skipped — requirements.md에 NFR 3개 포함
 
 ### CONSTRUCTION
-- application-design: included — Port/Adapter 멀티 백엔드 추상화, Component 시스템, RBAC, Service Layer 전환 대비 등 횡단 관심사 설계 필수
-- units-generation: included — 48개 스토리를 독립 구현 가능한 유닛으로 분해
-- code-generation: included — always (TDD protocol 적용)
+- application-design: included — 기존 설계 문서와 현재 코드 간 차이 정리 (Minimal depth)
+- units-generation: included — 구현 단위 분할 (Minimal depth)
+- code-generation: included — FormWidget 전면 재작성 + 모듈 연동 + demo 연동
 - build-and-test: included — always
 
 ## Stage Depths
-- application-design: Comprehensive (NFR Design 활성화, 멀티 백엔드 인증 설계, RBAC 구조, Service Layer 전환 대비)
-- units-generation: Standard (의존성 순서 정의, 유닛별 스토리 매핑)
-- code-generation: Standard (TDD protocol 적용 — RED-GREEN-REFACTOR)
-- build-and-test: Standard (단위 테스트 + 통합 빌드 검증)
+- application-design: Minimal
+- units-generation: Minimal
+- code-generation: Standard (TDD protocol 적용)
+- build-and-test: Standard

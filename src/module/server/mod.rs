@@ -130,7 +130,7 @@ impl ServerModule {
             }
             KeyCode::Char('c') => {
                 self.open_create_form();
-                None
+                Some(Action::EnterFormMode)
             }
             KeyCode::Char('d') => {
                 if let Some(server) = self.selected_server() {
@@ -251,8 +251,7 @@ impl ServerModule {
                     });
 
                 self.close_form();
-
-                Some(Action::CreateServer(ServerCreateParams {
+                let _ = self.action_tx.send(Action::CreateServer(ServerCreateParams {
                     name,
                     image_id,
                     flavor_id,
@@ -263,11 +262,12 @@ impl ServerModule {
                     security_groups: security_group,
                     key_name,
                     availability_zone,
-                }))
+                }));
+                Some(Action::ExitFormMode)
             }
             FormAction::Cancel => {
                 self.close_form();
-                None
+                Some(Action::ExitFormMode)
             }
             FormAction::None => None,
         }

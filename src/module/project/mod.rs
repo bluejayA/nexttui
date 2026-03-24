@@ -83,7 +83,7 @@ impl ProjectModule {
                 }
                 None
             }
-            KeyCode::Char('c') => { self.open_create_form(); None }
+            KeyCode::Char('c') => { self.open_create_form(); Some(Action::EnterFormMode) }
             KeyCode::Char('d') => {
                 if let Some(proj) = self.selected_project() {
                     let id = proj.id.clone();
@@ -150,17 +150,17 @@ impl ProjectModule {
                     });
 
                 self.close_form();
-
-                Some(Action::CreateProject(ProjectCreateParams {
+                let _ = self.action_tx.send(Action::CreateProject(ProjectCreateParams {
                     name,
                     description,
                     domain_id,
                     enabled,
-                }))
+                }));
+                Some(Action::ExitFormMode)
             }
             FormAction::Cancel => {
                 self.close_form();
-                None
+                Some(Action::ExitFormMode)
             }
             FormAction::None => None,
         }

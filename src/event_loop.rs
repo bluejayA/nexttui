@@ -47,7 +47,10 @@ pub async fn run_event_loop(
             // Branch 3: background events
             event = event_rx.recv() => {
                 match event {
-                    Some(ev) => app.handle_event(ev),
+                    Some(ev) => {
+                        eprintln!("[event_loop] Received: {:?}", std::mem::discriminant(&ev));
+                        app.handle_event(ev);
+                    }
                     None => {
                         // All event senders dropped — exit gracefully
                         app.should_quit = true;

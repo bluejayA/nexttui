@@ -59,6 +59,8 @@ pub enum Action {
 
     // UI
     FocusSidebar,
+    EnterFormMode,
+    ExitFormMode,
     SelectResource { id: String },
     NavigateToResource { route: Route, id: String },
 
