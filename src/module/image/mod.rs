@@ -12,7 +12,7 @@ use crate::action::Action;
 use crate::component::Component;
 use crate::event::AppEvent;
 use crate::models::glance::Image;
-use crate::module::{ConfirmHandler, ListNav, PendingAction, ViewState};
+use crate::module::{ConfirmHandler, PendingAction, ViewState};
 use crate::ui::confirm::ConfirmDialog;
 use crate::ui::resource_list::{ResourceList, Row};
 
@@ -21,7 +21,6 @@ use self::view_model::{image_columns, image_detail_data, image_to_row};
 pub struct ImageModule {
     view_state: ViewState,
     images: Vec<Image>,
-    nav: ListNav,
     is_admin: bool,
     #[allow(dead_code)] // Phase 2: loading spinner
     loading: bool,
@@ -36,7 +35,6 @@ impl ImageModule {
         Self {
             view_state: ViewState::List,
             images: Vec::new(),
-            nav: ListNav::new(),
             is_admin,
             loading: false,
             error_message: None,
@@ -55,7 +53,7 @@ impl ImageModule {
     }
 
     pub fn selected_index(&self) -> usize {
-        self.nav.selected_index
+        self.resource_list.selected_index()
     }
 
     pub fn error_message(&self) -> Option<&str> {
@@ -63,7 +61,7 @@ impl ImageModule {
     }
 
     fn selected_image(&self) -> Option<&Image> {
-        self.images.get(self.nav.selected_index)
+        self.images.get(self.resource_list.selected_index())
     }
 
     fn rows(&self) -> Vec<Row> {
@@ -78,7 +76,7 @@ impl ImageModule {
     }
 
     fn handle_list_key(&mut self, key: KeyEvent) -> Option<Action> {
-        if self.nav.handle_key(key) {
+        if self.resource_list.handle_nav_key(key) {
             return None;
         }
 
@@ -106,6 +104,7 @@ impl ImageModule {
                 None
             }
             KeyCode::Char('r') => Some(Action::FetchImages),
+            KeyCode::Left => Some(Action::FocusSidebar),
             KeyCode::Esc => Some(Action::Back),
             _ => None,
         }
@@ -113,7 +112,7 @@ impl ImageModule {
 
     fn handle_detail_key(&mut self, key: KeyEvent) -> Option<Action> {
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Left => {
                 self.view_state = ViewState::List;
                 None
             }
@@ -151,7 +150,6 @@ impl Component for ImageModule {
                 self.images = images.clone();
                 self.loading = false;
                 self.error_message = None;
-                self.nav.set_count(self.images.len());
                 let rows = self.rows();
                 self.resource_list.set_rows(rows);
             }

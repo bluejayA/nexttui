@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
 use tokio::sync::mpsc;
 
@@ -17,10 +17,17 @@ use crate::ui::layout::LayoutManager;
 use crate::ui::sidebar::{Sidebar, SidebarItem};
 use crate::ui::status_bar::{StatusBar, StatusInfo};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocusPane {
+    Sidebar,
+    Content,
+}
+
 pub struct App {
     pub should_quit: bool,
     pub input_mode: InputMode,
     pub sidebar_visible: bool,
+    pub focus: FocusPane,
 
     router: Router,
     components: HashMap<Route, Box<dyn Component>>,
@@ -41,6 +48,7 @@ impl App {
             should_quit: false,
             input_mode: InputMode::Normal,
             sidebar_visible: true,
+            focus: FocusPane::Content,
             router: Router::new(Route::Servers),
             components: HashMap::new(),
             background_tracker: BackgroundTracker::new(),
@@ -62,6 +70,12 @@ impl App {
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
         let no_modifiers = key.modifiers.is_empty();
 
+        // Ctrl+c always quits
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.should_quit = true;
+            return true;
+        }
+
         // Global keys in Normal mode (only without modifiers to avoid Ctrl+q etc.)
         if self.input_mode == InputMode::Normal && no_modifiers {
             match key.code {
@@ -74,8 +88,12 @@ impl App {
                     return true;
                 }
                 KeyCode::Tab => {
-                    self.sidebar_visible = !self.sidebar_visible;
-                    self.layout.toggle_sidebar();
+                    if self.sidebar_visible {
+                        self.focus = match self.focus {
+                            FocusPane::Content => FocusPane::Sidebar,
+                            FocusPane::Sidebar => FocusPane::Content,
+                        };
+                    }
                     return true;
                 }
                 KeyCode::Char('q') => {
@@ -86,14 +104,17 @@ impl App {
                     let items = default_sidebar_items();
                     let idx = if c == '0' { 9 } else { (c as usize) - ('1' as usize) };
                     if let Some(item) = items.get(idx) {
-                        self.router.navigate(item.route);
-                        self.sidebar.sync_active(&self.router.current(), true);
+                        self.dispatch_action(Action::Navigate(item.route));
                     }
                     return true;
                 }
                 KeyCode::Esc => {
-                    self.router.back();
-                    return true;
+                    if self.focus == FocusPane::Sidebar {
+                        self.focus = FocusPane::Content;
+                        return true;
+                    }
+                    // Fall through to let component handle Esc
+                    // (Detail→List transition, or return Action::Back for router)
                 }
                 _ => {}
             }
@@ -112,14 +133,27 @@ impl App {
         // TODO(Unit 6): Form mode Esc → show cancel confirmation dialog (BR-02)
         // Currently Form mode delegates all keys to FormWidget which is not yet implemented.
 
-        // Delegate to active component in Normal mode
-        if self.input_mode == InputMode::Normal
-            && let Some(component) = self.components.get_mut(&self.router.current())
-        {
-            if let Some(action) = component.handle_key(key) {
-                self.dispatch_action(action);
+        // Delegate based on focus pane
+        if self.input_mode == InputMode::Normal {
+            if self.focus == FocusPane::Sidebar && self.sidebar_visible {
+                if let Some(action) = self.sidebar.handle_key(key, true) {
+                    self.dispatch_action(action);
+                }
+                return true;
             }
-            return true;
+
+            if let Some(component) = self.components.get_mut(&self.router.current()) {
+                if let Some(action) = component.handle_key(key) {
+                    self.dispatch_action(action);
+                }
+                return true;
+            }
+
+            // Fallback: Esc with no component registered → router back
+            if key.code == KeyCode::Esc {
+                self.router.back();
+                return true;
+            }
         }
 
         true
@@ -130,9 +164,16 @@ impl App {
         match action {
             Action::Navigate(route) => {
                 self.router.navigate(route);
+                self.sidebar.sync_active(&self.router.current(), true);
+                self.focus = FocusPane::Content;
             }
             Action::Back => {
                 self.router.back();
+            }
+            Action::FocusSidebar => {
+                if self.sidebar_visible {
+                    self.focus = FocusPane::Sidebar;
+                }
             }
             Action::Quit => {
                 self.should_quit = true;
@@ -174,7 +215,8 @@ impl App {
 
         // Sidebar
         if let Some(sidebar_area) = areas.sidebar {
-            self.sidebar.render(frame, sidebar_area, true, &self.router.current());
+            let sidebar_focused = self.focus == FocusPane::Sidebar;
+            self.sidebar.render(frame, sidebar_area, true, &self.router.current(), sidebar_focused);
         }
 
         // Content
@@ -185,7 +227,7 @@ impl App {
         // Status bar
         let info = StatusInfo {
             message: format!("{} | {:?}", route_label, self.input_mode),
-            help_hint: "q:Quit Tab:Sidebar /:Search :Command".into(),
+            help_hint: "←→:Navigate q:Quit /:Search".into(),
             item_count: None,
             selected_index: None,
         };
@@ -329,13 +371,13 @@ mod tests {
     }
 
     #[test]
-    fn test_app_global_key_tab() {
+    fn test_app_global_key_tab_focus_toggle() {
         let mut app = make_app();
-        assert!(app.sidebar_visible);
+        assert_eq!(app.focus, FocusPane::Content);
         app.handle_key(make_key(KeyCode::Tab));
-        assert!(!app.sidebar_visible);
+        assert_eq!(app.focus, FocusPane::Sidebar);
         app.handle_key(make_key(KeyCode::Tab));
-        assert!(app.sidebar_visible);
+        assert_eq!(app.focus, FocusPane::Content);
     }
 
     #[test]

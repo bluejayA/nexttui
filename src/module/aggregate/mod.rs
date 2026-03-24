@@ -8,14 +8,12 @@ use crate::action::Action;
 use crate::component::Component;
 use crate::event::AppEvent;
 use crate::models::nova::Aggregate;
-use crate::module::ListNav;
 use crate::ui::resource_list::{ResourceList, Row};
 
 use self::view_model::{aggregate_columns, aggregate_to_row};
 
 pub struct AggregateModule {
     aggregates: Vec<Aggregate>,
-    nav: ListNav,
     #[allow(dead_code)]
     loading: bool,
     resource_list: ResourceList,
@@ -25,7 +23,6 @@ impl AggregateModule {
     pub fn new() -> Self {
         Self {
             aggregates: Vec::new(),
-            nav: ListNav::new(),
             loading: false,
             resource_list: ResourceList::new(aggregate_columns()),
         }
@@ -36,9 +33,10 @@ impl AggregateModule {
 
 impl Component for AggregateModule {
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
-        if self.nav.handle_key(key) { return None; }
+        if self.resource_list.handle_nav_key(key) { return None; }
         match key.code {
             KeyCode::Char('r') => Some(Action::FetchAggregates),
+            KeyCode::Left => Some(Action::FocusSidebar),
             KeyCode::Esc => Some(Action::Back),
             _ => None,
         }
@@ -47,7 +45,6 @@ impl Component for AggregateModule {
         if let AppEvent::AggregatesLoaded(aggs) = event {
             self.aggregates = aggs.clone();
             self.loading = false;
-            self.nav.set_count(self.aggregates.len());
             let rows = self.rows();
             self.resource_list.set_rows(rows);
         }

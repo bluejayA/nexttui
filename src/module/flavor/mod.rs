@@ -12,7 +12,7 @@ use crate::action::Action;
 use crate::component::Component;
 use crate::event::AppEvent;
 use crate::models::nova::Flavor;
-use crate::module::{ConfirmHandler, ListNav, PendingAction, ViewState};
+use crate::module::{ConfirmHandler, PendingAction, ViewState};
 use crate::ui::confirm::ConfirmDialog;
 use crate::ui::resource_list::{ResourceList, Row};
 
@@ -21,7 +21,6 @@ use self::view_model::{flavor_columns, flavor_to_row};
 pub struct FlavorModule {
     view_state: ViewState,
     flavors: Vec<Flavor>,
-    nav: ListNav,
     loading: bool,
     error_message: Option<String>,
     is_admin: bool,
@@ -35,7 +34,6 @@ impl FlavorModule {
         Self {
             view_state: ViewState::List,
             flavors: Vec::new(),
-            nav: ListNav::new(),
             loading: false,
             error_message: None,
             is_admin,
@@ -54,7 +52,7 @@ impl FlavorModule {
     }
 
     pub fn selected_index(&self) -> usize {
-        self.nav.selected_index
+        self.resource_list.selected_index()
     }
 
     pub fn set_admin(&mut self, is_admin: bool) {
@@ -62,7 +60,7 @@ impl FlavorModule {
     }
 
     fn selected_flavor(&self) -> Option<&Flavor> {
-        self.flavors.get(self.nav.selected_index)
+        self.flavors.get(self.resource_list.selected_index())
     }
 
     fn rows(&self) -> Vec<Row> {
@@ -78,7 +76,7 @@ impl FlavorModule {
 
 
     fn handle_list_key(&mut self, key: KeyEvent) -> Option<Action> {
-        if self.nav.handle_key(key) {
+        if self.resource_list.handle_nav_key(key) {
             return None;
         }
 
@@ -102,6 +100,7 @@ impl FlavorModule {
                 None
             }
             KeyCode::Char('r') => Some(Action::FetchFlavors),
+            KeyCode::Left => Some(Action::FocusSidebar),
             KeyCode::Esc => Some(Action::Back),
             _ => None,
         }
@@ -137,7 +136,6 @@ impl Component for FlavorModule {
                 self.flavors = flavors.clone();
                 self.loading = false;
                 self.error_message = None;
-                self.nav.set_count(self.flavors.len());
                 let rows = self.rows();
                 self.resource_list.set_rows(rows);
             }

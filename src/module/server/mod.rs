@@ -12,7 +12,7 @@ use crate::action::Action;
 use crate::component::Component;
 use crate::event::AppEvent;
 use crate::models::nova::Server;
-use crate::module::{ConfirmHandler, ListNav, PendingAction, ViewState};
+use crate::module::{ConfirmHandler, PendingAction, ViewState};
 use crate::ui::confirm::ConfirmDialog;
 use crate::ui::resource_list::{ResourceList, Row};
 
@@ -21,7 +21,6 @@ use self::view_model::{server_columns, server_detail_data, server_to_row};
 pub struct ServerModule {
     view_state: ViewState,
     servers: Vec<Server>,
-    nav: ListNav,
     loading: bool,
     error_message: Option<String>,
     confirm: ConfirmHandler,
@@ -34,7 +33,6 @@ impl ServerModule {
         Self {
             view_state: ViewState::List,
             servers: Vec::new(),
-            nav: ListNav::new(),
             loading: false,
             error_message: None,
             confirm: ConfirmHandler::new(),
@@ -52,7 +50,7 @@ impl ServerModule {
     }
 
     pub fn selected_index(&self) -> usize {
-        self.nav.selected_index
+        self.resource_list.selected_index()
     }
 
     pub fn error_message(&self) -> Option<&str> {
@@ -60,7 +58,7 @@ impl ServerModule {
     }
 
     fn selected_server(&self) -> Option<&Server> {
-        self.servers.get(self.nav.selected_index)
+        self.servers.get(self.resource_list.selected_index())
     }
 
     fn rows(&self) -> Vec<Row> {
@@ -77,8 +75,8 @@ impl ServerModule {
     }
 
     fn handle_list_key(&mut self, key: KeyEvent) -> Option<Action> {
-        // Navigation keys handled by ListNav
-        if self.nav.handle_key(key) {
+        // Navigation keys handled by ResourceList
+        if self.resource_list.handle_nav_key(key) {
             return None;
         }
 
@@ -109,6 +107,7 @@ impl ServerModule {
                 None
             }
             KeyCode::Char('r') => Some(Action::FetchServers),
+            KeyCode::Left => Some(Action::FocusSidebar),
             KeyCode::Esc => Some(Action::Back),
             _ => None,
         }
@@ -116,7 +115,7 @@ impl ServerModule {
 
     fn handle_detail_key(&mut self, key: KeyEvent) -> Option<Action> {
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Left => {
                 self.view_state = ViewState::List;
                 None
             }
@@ -181,7 +180,6 @@ impl Component for ServerModule {
                 self.servers = servers.clone();
                 self.loading = false;
                 self.error_message = None;
-                self.nav.set_count(self.servers.len());
                 let rows = self.rows();
                 self.resource_list.set_rows(rows);
             }

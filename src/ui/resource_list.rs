@@ -132,27 +132,37 @@ impl ResourceList {
         self.selected = 0;
     }
 
-    pub fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
+    /// Handle common list navigation keys (j/k/g/G). Returns true if the key was consumed.
+    pub fn handle_nav_key(&mut self, key: KeyEvent) -> bool {
         let max = self.filtered_indices.len().saturating_sub(1);
         match key.code {
             KeyCode::Char('j') | KeyCode::Down => {
                 if self.selected < max {
                     self.selected += 1;
                 }
-                None
+                true
             }
             KeyCode::Char('k') | KeyCode::Up => {
                 self.selected = self.selected.saturating_sub(1);
-                None
+                true
             }
             KeyCode::Char('G') => {
                 self.selected = max;
-                None
+                true
             }
             KeyCode::Char('g') => {
                 self.selected = 0;
-                None
+                true
             }
+            _ => false,
+        }
+    }
+
+    pub fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
+        if self.handle_nav_key(key) {
+            return None;
+        }
+        match key.code {
             KeyCode::Enter => self.selected_id().map(|id| Action::SelectResource {
                 id: id.to_string(),
             }),

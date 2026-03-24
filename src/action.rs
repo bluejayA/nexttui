@@ -58,6 +58,7 @@ pub enum Action {
     DeleteUser { id: String },
 
     // UI
+    FocusSidebar,
     SelectResource { id: String },
     NavigateToResource { route: Route, id: String },
 

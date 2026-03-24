@@ -8,14 +8,12 @@ use crate::action::Action;
 use crate::component::Component;
 use crate::event::AppEvent;
 use crate::models::neutron::NetworkAgent;
-use crate::module::ListNav;
 use crate::ui::resource_list::{ResourceList, Row};
 
 use self::view_model::{agent_columns, agent_to_row};
 
 pub struct AgentModule {
     agents: Vec<NetworkAgent>,
-    nav: ListNav,
     #[allow(dead_code)]
     loading: bool,
     resource_list: ResourceList,
@@ -25,21 +23,21 @@ impl AgentModule {
     pub fn new() -> Self {
         Self {
             agents: Vec::new(),
-            nav: ListNav::new(),
             loading: false,
             resource_list: ResourceList::new(agent_columns()),
         }
     }
     pub fn agents(&self) -> &[NetworkAgent] { &self.agents }
-    pub fn selected_index(&self) -> usize { self.nav.selected_index }
+    pub fn selected_index(&self) -> usize { self.resource_list.selected_index() }
     fn rows(&self) -> Vec<Row> { self.agents.iter().map(agent_to_row).collect() }
 }
 
 impl Component for AgentModule {
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
-        if self.nav.handle_key(key) { return None; }
+        if self.resource_list.handle_nav_key(key) { return None; }
         match key.code {
             KeyCode::Char('r') => Some(Action::FetchAgents),
+            KeyCode::Left => Some(Action::FocusSidebar),
             KeyCode::Esc => Some(Action::Back),
             _ => None,
         }
@@ -48,7 +46,6 @@ impl Component for AgentModule {
         if let AppEvent::AgentsLoaded(agents) = event {
             self.agents = agents.clone();
             self.loading = false;
-            self.nav.set_count(self.agents.len());
             let rows = self.rows();
             self.resource_list.set_rows(rows);
         }

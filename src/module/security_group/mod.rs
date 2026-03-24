@@ -12,7 +12,7 @@ use crate::action::Action;
 use crate::component::Component;
 use crate::event::AppEvent;
 use crate::models::neutron::SecurityGroup;
-use crate::module::{ConfirmHandler, ListNav, PendingAction, ViewState};
+use crate::module::{ConfirmHandler, PendingAction, ViewState};
 use crate::ui::confirm::ConfirmDialog;
 use crate::ui::resource_list::{ResourceList, Row};
 
@@ -21,8 +21,7 @@ use self::view_model::{sg_columns, sg_detail_data, sg_to_row};
 pub struct SecurityGroupModule {
     view_state: ViewState,
     security_groups: Vec<SecurityGroup>,
-    nav: ListNav,
-    rule_nav: ListNav,
+    rule_selected: usize,
     #[allow(dead_code)] // Phase 2: set to true on Action dispatch, render loading spinner
     loading: bool,
     error_message: Option<String>,
@@ -36,8 +35,7 @@ impl SecurityGroupModule {
         Self {
             view_state: ViewState::List,
             security_groups: Vec::new(),
-            nav: ListNav::new(),
-            rule_nav: ListNav::new(),
+            rule_selected: 0,
             loading: false,
             error_message: None,
             confirm: ConfirmHandler::new(),
@@ -55,7 +53,7 @@ impl SecurityGroupModule {
     }
 
     pub fn selected_index(&self) -> usize {
-        self.nav.selected_index
+        self.resource_list.selected_index()
     }
 
     pub fn error_message(&self) -> Option<&str> {
@@ -63,7 +61,7 @@ impl SecurityGroupModule {
     }
 
     fn selected_sg(&self) -> Option<&SecurityGroup> {
-        self.security_groups.get(self.nav.selected_index)
+        self.security_groups.get(self.resource_list.selected_index())
     }
 
     fn current_sg(&self) -> Option<&SecurityGroup> {
@@ -91,7 +89,7 @@ impl SecurityGroupModule {
     }
 
     fn handle_list_key(&mut self, key: KeyEvent) -> Option<Action> {
-        if self.nav.handle_key(key) {
+        if self.resource_list.handle_nav_key(key) {
             return None;
         }
 
@@ -99,9 +97,7 @@ impl SecurityGroupModule {
             KeyCode::Enter => {
                 if let Some(sg) = self.selected_sg() {
                     let id = sg.id.clone();
-                    let rule_count = sg.security_group_rules.len();
-                    self.rule_nav = ListNav::new();
-                    self.rule_nav.set_count(rule_count);
+                    self.rule_selected = 0;
                     self.view_state = ViewState::Detail(id);
                 }
                 None
@@ -122,6 +118,7 @@ impl SecurityGroupModule {
                 None
             }
             KeyCode::Char('r') => Some(Action::FetchSecurityGroups),
+            KeyCode::Left => Some(Action::FocusSidebar),
             KeyCode::Esc => Some(Action::Back),
             _ => None,
         }
@@ -129,12 +126,25 @@ impl SecurityGroupModule {
 
     fn handle_detail_key(&mut self, key: KeyEvent) -> Option<Action> {
         // Rule navigation in detail view
-        if self.rule_nav.handle_key(key) {
-            return None;
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                if let Some(sg) = self.current_sg() {
+                    let max = sg.security_group_rules.len().saturating_sub(1);
+                    if self.rule_selected < max {
+                        self.rule_selected += 1;
+                    }
+                }
+                return None;
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.rule_selected = self.rule_selected.saturating_sub(1);
+                return None;
+            }
+            _ => {}
         }
 
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Left => {
                 self.view_state = ViewState::List;
                 None
             }
@@ -142,7 +152,7 @@ impl SecurityGroupModule {
                 if let Some(sg) = self.current_sg() {
                     if let Some(rule) = sg
                         .security_group_rules
-                        .get(self.rule_nav.selected_index)
+                        .get(self.rule_selected)
                     {
                         let rule_id = rule.id.clone();
                         let short_id = if rule_id.len() > 8 {
@@ -192,7 +202,6 @@ impl Component for SecurityGroupModule {
                 self.security_groups = sgs.clone();
                 self.loading = false;
                 self.error_message = None;
-                self.nav.set_count(self.security_groups.len());
                 let rows = self.rows();
                 self.resource_list.set_rows(rows);
             }

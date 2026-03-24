@@ -8,7 +8,7 @@ use crate::action::Action;
 use crate::component::Component;
 use crate::event::AppEvent;
 use crate::models::nova::Hypervisor;
-use crate::module::{ListNav, ViewState};
+use crate::module::ViewState;
 use crate::ui::resource_list::{ResourceList, Row};
 
 use self::view_model::{hypervisor_columns, hypervisor_to_row};
@@ -16,7 +16,6 @@ use self::view_model::{hypervisor_columns, hypervisor_to_row};
 pub struct HypervisorModule {
     view_state: ViewState,
     hypervisors: Vec<Hypervisor>,
-    nav: ListNav,
     #[allow(dead_code)]
     loading: bool,
     error_message: Option<String>,
@@ -28,7 +27,6 @@ impl HypervisorModule {
         Self {
             view_state: ViewState::List,
             hypervisors: Vec::new(),
-            nav: ListNav::new(),
             loading: false,
             error_message: None,
             resource_list: ResourceList::new(hypervisor_columns()),
@@ -37,16 +35,17 @@ impl HypervisorModule {
 
     pub fn view_state(&self) -> &ViewState { &self.view_state }
     pub fn hypervisors(&self) -> &[Hypervisor] { &self.hypervisors }
-    pub fn selected_index(&self) -> usize { self.nav.selected_index }
+    pub fn selected_index(&self) -> usize { self.resource_list.selected_index() }
 
     fn rows(&self) -> Vec<Row> { self.hypervisors.iter().map(hypervisor_to_row).collect() }
 }
 
 impl Component for HypervisorModule {
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
-        if self.nav.handle_key(key) { return None; }
+        if self.resource_list.handle_nav_key(key) { return None; }
         match key.code {
             KeyCode::Char('r') => Some(Action::FetchHypervisors),
+            KeyCode::Left => Some(Action::FocusSidebar),
             KeyCode::Esc => Some(Action::Back),
             _ => None,
         }
@@ -58,7 +57,6 @@ impl Component for HypervisorModule {
                 self.hypervisors = hv.clone();
                 self.loading = false;
                 self.error_message = None;
-                self.nav.set_count(self.hypervisors.len());
                 let rows = self.rows();
                 self.resource_list.set_rows(rows);
             }

@@ -9,7 +9,7 @@ use crate::action::Action;
 use crate::component::Component;
 use crate::event::AppEvent;
 use crate::models::cinder::VolumeSnapshot;
-use crate::module::{ConfirmHandler, ListNav, PendingAction, ViewState};
+use crate::module::{ConfirmHandler, PendingAction, ViewState};
 use crate::ui::confirm::ConfirmDialog;
 use crate::ui::resource_list::{ResourceList, Row};
 
@@ -18,7 +18,6 @@ use self::view_model::{snapshot_columns, snapshot_detail_data, snapshot_to_row};
 pub struct SnapshotModule {
     view_state: ViewState,
     snapshots: Vec<VolumeSnapshot>,
-    nav: ListNav,
     #[allow(dead_code)] // Phase 2: loading spinner
     loading: bool,
     error_message: Option<String>,
@@ -32,7 +31,6 @@ impl SnapshotModule {
         Self {
             view_state: ViewState::List,
             snapshots: Vec::new(),
-            nav: ListNav::new(),
             loading: false,
             error_message: None,
             confirm: ConfirmHandler::new(),
@@ -50,7 +48,7 @@ impl SnapshotModule {
     }
 
     pub fn selected_index(&self) -> usize {
-        self.nav.selected_index
+        self.resource_list.selected_index()
     }
 
     pub fn error_message(&self) -> Option<&str> {
@@ -58,7 +56,7 @@ impl SnapshotModule {
     }
 
     fn selected_snapshot(&self) -> Option<&VolumeSnapshot> {
-        self.snapshots.get(self.nav.selected_index)
+        self.snapshots.get(self.resource_list.selected_index())
     }
 
     fn rows(&self) -> Vec<Row> {
@@ -73,7 +71,7 @@ impl SnapshotModule {
     }
 
     fn handle_list_key(&mut self, key: KeyEvent) -> Option<Action> {
-        if self.nav.handle_key(key) {
+        if self.resource_list.handle_nav_key(key) {
             return None;
         }
 
@@ -100,6 +98,7 @@ impl SnapshotModule {
                 None
             }
             KeyCode::Char('r') => Some(Action::FetchSnapshots),
+            KeyCode::Left => Some(Action::FocusSidebar),
             KeyCode::Esc => Some(Action::Back),
             _ => None,
         }
@@ -107,7 +106,7 @@ impl SnapshotModule {
 
     fn handle_detail_key(&mut self, key: KeyEvent) -> Option<Action> {
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Left => {
                 self.view_state = ViewState::List;
                 None
             }
@@ -135,7 +134,6 @@ impl Component for SnapshotModule {
                 self.snapshots = snapshots.clone();
                 self.loading = false;
                 self.error_message = None;
-                self.nav.set_count(self.snapshots.len());
                 let rows = self.rows();
                 self.resource_list.set_rows(rows);
             }

@@ -12,7 +12,7 @@ use crate::action::Action;
 use crate::component::Component;
 use crate::event::AppEvent;
 use crate::models::cinder::Volume;
-use crate::module::{ConfirmHandler, ListNav, PendingAction, ViewState};
+use crate::module::{ConfirmHandler, PendingAction, ViewState};
 use crate::ui::confirm::ConfirmDialog;
 use crate::ui::resource_list::{ResourceList, Row};
 
@@ -21,7 +21,6 @@ use self::view_model::{volume_columns, volume_detail_data, volume_to_row};
 pub struct VolumeModule {
     view_state: ViewState,
     volumes: Vec<Volume>,
-    nav: ListNav,
     #[allow(dead_code)] // Phase 2: loading spinner
     loading: bool,
     error_message: Option<String>,
@@ -35,7 +34,6 @@ impl VolumeModule {
         Self {
             view_state: ViewState::List,
             volumes: Vec::new(),
-            nav: ListNav::new(),
             loading: false,
             error_message: None,
             confirm: ConfirmHandler::new(),
@@ -53,7 +51,7 @@ impl VolumeModule {
     }
 
     pub fn selected_index(&self) -> usize {
-        self.nav.selected_index
+        self.resource_list.selected_index()
     }
 
     pub fn error_message(&self) -> Option<&str> {
@@ -61,7 +59,7 @@ impl VolumeModule {
     }
 
     fn selected_volume(&self) -> Option<&Volume> {
-        self.volumes.get(self.nav.selected_index)
+        self.volumes.get(self.resource_list.selected_index())
     }
 
     fn rows(&self) -> Vec<Row> {
@@ -78,7 +76,7 @@ impl VolumeModule {
     }
 
     fn handle_list_key(&mut self, key: KeyEvent) -> Option<Action> {
-        if self.nav.handle_key(key) {
+        if self.resource_list.handle_nav_key(key) {
             return None;
         }
 
@@ -112,6 +110,7 @@ impl VolumeModule {
                 None
             }
             KeyCode::Char('r') => Some(Action::FetchVolumes),
+            KeyCode::Left => Some(Action::FocusSidebar),
             KeyCode::Esc => Some(Action::Back),
             _ => None,
         }
@@ -119,7 +118,7 @@ impl VolumeModule {
 
     fn handle_detail_key(&mut self, key: KeyEvent) -> Option<Action> {
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Left => {
                 self.view_state = ViewState::List;
                 None
             }
@@ -157,7 +156,6 @@ impl Component for VolumeModule {
                 self.volumes = volumes.clone();
                 self.loading = false;
                 self.error_message = None;
-                self.nav.set_count(self.volumes.len());
                 let rows = self.rows();
                 self.resource_list.set_rows(rows);
             }

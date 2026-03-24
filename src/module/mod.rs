@@ -15,7 +15,7 @@ pub mod snapshot;
 pub mod user;
 pub mod volume;
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::KeyEvent;
 
 use crate::action::Action;
 use crate::ui::confirm::{ConfirmDialog, ConfirmResult};
@@ -47,62 +47,6 @@ pub enum PendingAction {
     // Keystone
     DeleteProject { id: String, name: String },
     DeleteUser { id: String, name: String },
-}
-
-/// Shared list navigation state. Extracts the common j/k/g/G/selection logic
-/// so domain modules don't duplicate it.
-pub struct ListNav {
-    pub selected_index: usize,
-    item_count: usize,
-}
-
-impl ListNav {
-    pub fn new() -> Self {
-        Self {
-            selected_index: 0,
-            item_count: 0,
-        }
-    }
-
-    pub fn set_count(&mut self, count: usize) {
-        self.item_count = count;
-        self.clamp();
-    }
-
-    pub fn clamp(&mut self) {
-        if self.item_count > 0 {
-            self.selected_index = self.selected_index.min(self.item_count - 1);
-        } else {
-            self.selected_index = 0;
-        }
-    }
-
-    /// Handle common list navigation keys. Returns true if the key was consumed.
-    pub fn handle_key(&mut self, key: KeyEvent) -> bool {
-        match key.code {
-            KeyCode::Char('j') | KeyCode::Down => {
-                if self.item_count > 0 {
-                    self.selected_index = (self.selected_index + 1).min(self.item_count - 1);
-                }
-                true
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.selected_index = self.selected_index.saturating_sub(1);
-                true
-            }
-            KeyCode::Char('g') => {
-                self.selected_index = 0;
-                true
-            }
-            KeyCode::Char('G') => {
-                if self.item_count > 0 {
-                    self.selected_index = self.item_count - 1;
-                }
-                true
-            }
-            _ => false,
-        }
-    }
 }
 
 /// Shared confirm dialog handler. Wraps the ConfirmDialog + PendingAction
@@ -163,6 +107,7 @@ impl ConfirmHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::KeyCode;
 
     #[test]
     fn test_view_state_default_is_list() {
@@ -216,60 +161,6 @@ mod tests {
             },
         ];
         assert_eq!(actions.len(), 12);
-    }
-
-    #[test]
-    fn test_list_nav_j_k() {
-        let mut nav = ListNav::new();
-        nav.set_count(5);
-        assert_eq!(nav.selected_index, 0);
-
-        assert!(nav.handle_key(KeyEvent::from(KeyCode::Char('j'))));
-        assert_eq!(nav.selected_index, 1);
-
-        assert!(nav.handle_key(KeyEvent::from(KeyCode::Char('k'))));
-        assert_eq!(nav.selected_index, 0);
-
-        // Can't go below 0
-        assert!(nav.handle_key(KeyEvent::from(KeyCode::Char('k'))));
-        assert_eq!(nav.selected_index, 0);
-    }
-
-    #[test]
-    fn test_list_nav_g_and_shift_g() {
-        let mut nav = ListNav::new();
-        nav.set_count(10);
-
-        assert!(nav.handle_key(KeyEvent::from(KeyCode::Char('G'))));
-        assert_eq!(nav.selected_index, 9);
-
-        assert!(nav.handle_key(KeyEvent::from(KeyCode::Char('g'))));
-        assert_eq!(nav.selected_index, 0);
-    }
-
-    #[test]
-    fn test_list_nav_empty_list() {
-        let mut nav = ListNav::new();
-        nav.set_count(0);
-        assert!(nav.handle_key(KeyEvent::from(KeyCode::Char('j'))));
-        assert_eq!(nav.selected_index, 0);
-    }
-
-    #[test]
-    fn test_list_nav_clamp_on_shrink() {
-        let mut nav = ListNav::new();
-        nav.set_count(10);
-        nav.selected_index = 9;
-        nav.set_count(3);
-        assert_eq!(nav.selected_index, 2);
-    }
-
-    #[test]
-    fn test_list_nav_ignores_unrelated_keys() {
-        let mut nav = ListNav::new();
-        nav.set_count(5);
-        assert!(!nav.handle_key(KeyEvent::from(KeyCode::Enter)));
-        assert!(!nav.handle_key(KeyEvent::from(KeyCode::Char('x'))));
     }
 
     #[test]

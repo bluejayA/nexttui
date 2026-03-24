@@ -60,7 +60,7 @@ impl Sidebar {
                 self.selected_index = self.selected_index.saturating_sub(1);
                 None
             }
-            KeyCode::Enter => {
+            KeyCode::Enter | KeyCode::Right => {
                 let visible = self.visible_items(is_admin);
                 let route = visible.get(self.selected_index).map(|item| item.route);
                 route.map(Action::Navigate)
@@ -87,6 +87,7 @@ impl Sidebar {
         area: Rect,
         is_admin: bool,
         current_route: &Route,
+        focused: bool,
     ) {
         let visible = self.visible_items(is_admin);
         let items: Vec<ListItem> = visible
@@ -98,10 +99,15 @@ impl Sidebar {
                 } else {
                     " "
                 };
-                let style = if i == self.selected_index {
+                let style = if i == self.selected_index && focused {
                     Style::default()
                         .fg(Color::Black)
-                        .bg(Color::White)
+                        .bg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD)
+                } else if i == self.selected_index {
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::DarkGray)
                         .add_modifier(Modifier::BOLD)
                 } else if item.admin_only {
                     Style::default()

@@ -12,7 +12,7 @@ use crate::action::Action;
 use crate::component::Component;
 use crate::event::AppEvent;
 use crate::models::keystone::Project;
-use crate::module::{ConfirmHandler, ListNav, PendingAction, ViewState};
+use crate::module::{ConfirmHandler, PendingAction, ViewState};
 use crate::ui::confirm::ConfirmDialog;
 use crate::ui::resource_list::{ResourceList, Row};
 
@@ -21,7 +21,6 @@ use self::view_model::{project_columns, project_detail_data, project_to_row};
 pub struct ProjectModule {
     view_state: ViewState,
     projects: Vec<Project>,
-    nav: ListNav,
     #[allow(dead_code)]
     loading: bool,
     error_message: Option<String>,
@@ -35,7 +34,6 @@ impl ProjectModule {
         Self {
             view_state: ViewState::List,
             projects: Vec::new(),
-            nav: ListNav::new(),
             loading: false,
             error_message: None,
             confirm: ConfirmHandler::new(),
@@ -46,11 +44,11 @@ impl ProjectModule {
 
     pub fn view_state(&self) -> &ViewState { &self.view_state }
     pub fn projects(&self) -> &[Project] { &self.projects }
-    pub fn selected_index(&self) -> usize { self.nav.selected_index }
+    pub fn selected_index(&self) -> usize { self.resource_list.selected_index() }
     pub fn error_message(&self) -> Option<&str> { self.error_message.as_deref() }
 
     fn selected_project(&self) -> Option<&Project> {
-        self.projects.get(self.nav.selected_index)
+        self.projects.get(self.resource_list.selected_index())
     }
 
     fn rows(&self) -> Vec<Row> {
@@ -65,7 +63,7 @@ impl ProjectModule {
     }
 
     fn handle_list_key(&mut self, key: KeyEvent) -> Option<Action> {
-        if self.nav.handle_key(key) { return None; }
+        if self.resource_list.handle_nav_key(key) { return None; }
         match key.code {
             KeyCode::Enter => {
                 if let Some(proj) = self.selected_project() {
@@ -89,6 +87,7 @@ impl ProjectModule {
                 None
             }
             KeyCode::Char('r') => Some(Action::FetchProjects),
+            KeyCode::Left => Some(Action::FocusSidebar),
             KeyCode::Esc => Some(Action::Back),
             _ => None,
         }
@@ -96,7 +95,7 @@ impl ProjectModule {
 
     fn handle_detail_key(&mut self, key: KeyEvent) -> Option<Action> {
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => { self.view_state = ViewState::List; None }
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Left => { self.view_state = ViewState::List; None }
             _ => None,
         }
     }
@@ -125,7 +124,6 @@ impl Component for ProjectModule {
                 self.projects = projects.clone();
                 self.loading = false;
                 self.error_message = None;
-                self.nav.set_count(self.projects.len());
                 let rows = self.rows();
                 self.resource_list.set_rows(rows);
             }

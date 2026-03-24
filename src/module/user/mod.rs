@@ -12,7 +12,7 @@ use crate::action::Action;
 use crate::component::Component;
 use crate::event::AppEvent;
 use crate::models::keystone::User;
-use crate::module::{ConfirmHandler, ListNav, PendingAction, ViewState};
+use crate::module::{ConfirmHandler, PendingAction, ViewState};
 use crate::ui::confirm::ConfirmDialog;
 use crate::ui::resource_list::{ResourceList, Row};
 
@@ -21,7 +21,6 @@ use self::view_model::{user_columns, user_to_row};
 pub struct UserModule {
     view_state: ViewState,
     users: Vec<User>,
-    nav: ListNav,
     #[allow(dead_code)]
     loading: bool,
     error_message: Option<String>,
@@ -35,7 +34,6 @@ impl UserModule {
         Self {
             view_state: ViewState::List,
             users: Vec::new(),
-            nav: ListNav::new(),
             loading: false,
             error_message: None,
             confirm: ConfirmHandler::new(),
@@ -46,10 +44,10 @@ impl UserModule {
 
     pub fn view_state(&self) -> &ViewState { &self.view_state }
     pub fn users(&self) -> &[User] { &self.users }
-    pub fn selected_index(&self) -> usize { self.nav.selected_index }
+    pub fn selected_index(&self) -> usize { self.resource_list.selected_index() }
     pub fn error_message(&self) -> Option<&str> { self.error_message.as_deref() }
 
-    fn selected_user(&self) -> Option<&User> { self.users.get(self.nav.selected_index) }
+    fn selected_user(&self) -> Option<&User> { self.users.get(self.resource_list.selected_index()) }
     fn rows(&self) -> Vec<Row> { self.users.iter().map(user_to_row).collect() }
 
     fn resolve_action(pending: PendingAction) -> Option<Action> {
@@ -60,7 +58,7 @@ impl UserModule {
     }
 
     fn handle_list_key(&mut self, key: KeyEvent) -> Option<Action> {
-        if self.nav.handle_key(key) { return None; }
+        if self.resource_list.handle_nav_key(key) { return None; }
         match key.code {
             KeyCode::Char('c') => { self.view_state = ViewState::Create; None }
             KeyCode::Char('d') => {
@@ -78,6 +76,7 @@ impl UserModule {
                 None
             }
             KeyCode::Char('r') => Some(Action::FetchUsers),
+            KeyCode::Left => Some(Action::FocusSidebar),
             KeyCode::Esc => Some(Action::Back),
             _ => None,
         }
@@ -107,7 +106,6 @@ impl Component for UserModule {
                 self.users = users.clone();
                 self.loading = false;
                 self.error_message = None;
-                self.nav.set_count(self.users.len());
                 let rows = self.rows();
                 self.resource_list.set_rows(rows);
             }

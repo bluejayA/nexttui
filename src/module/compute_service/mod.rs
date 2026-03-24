@@ -8,14 +8,12 @@ use crate::action::Action;
 use crate::component::Component;
 use crate::event::AppEvent;
 use crate::models::nova::ComputeService;
-use crate::module::ListNav;
 use crate::ui::resource_list::{ResourceList, Row};
 
 use self::view_model::{compute_service_columns, compute_service_to_row};
 
 pub struct ComputeServiceModule {
     services: Vec<ComputeService>,
-    nav: ListNav,
     #[allow(dead_code)]
     loading: bool,
     resource_list: ResourceList,
@@ -25,7 +23,6 @@ impl ComputeServiceModule {
     pub fn new() -> Self {
         Self {
             services: Vec::new(),
-            nav: ListNav::new(),
             loading: false,
             resource_list: ResourceList::new(compute_service_columns()),
         }
@@ -36,9 +33,10 @@ impl ComputeServiceModule {
 
 impl Component for ComputeServiceModule {
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
-        if self.nav.handle_key(key) { return None; }
+        if self.resource_list.handle_nav_key(key) { return None; }
         match key.code {
             KeyCode::Char('r') => Some(Action::FetchComputeServices),
+            KeyCode::Left => Some(Action::FocusSidebar),
             KeyCode::Esc => Some(Action::Back),
             _ => None,
         }
@@ -47,7 +45,6 @@ impl Component for ComputeServiceModule {
         if let AppEvent::ComputeServicesLoaded(svcs) = event {
             self.services = svcs.clone();
             self.loading = false;
-            self.nav.set_count(self.services.len());
             let rows = self.rows();
             self.resource_list.set_rows(rows);
         }
