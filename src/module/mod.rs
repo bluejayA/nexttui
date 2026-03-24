@@ -2,9 +2,11 @@ pub mod flavor;
 pub mod floating_ip;
 pub mod image;
 pub mod network;
+pub mod project;
 pub mod security_group;
 pub mod server;
 pub mod snapshot;
+pub mod user;
 pub mod volume;
 
 use crossterm::event::{KeyCode, KeyEvent};
@@ -36,6 +38,9 @@ pub enum PendingAction {
     DeleteSnapshot { id: String, name: String },
     // Glance
     DeleteImage { id: String, name: String },
+    // Keystone
+    DeleteProject { id: String, name: String },
+    DeleteUser { id: String, name: String },
 }
 
 /// Shared list navigation state. Extracts the common j/k/g/G/selection logic
@@ -195,8 +200,16 @@ mod tests {
                 id: "img1".into(),
                 name: "ubuntu".into(),
             },
+            PendingAction::DeleteProject {
+                id: "proj1".into(),
+                name: "test".into(),
+            },
+            PendingAction::DeleteUser {
+                id: "user1".into(),
+                name: "admin".into(),
+            },
         ];
-        assert_eq!(actions.len(), 10);
+        assert_eq!(actions.len(), 12);
     }
 
     #[test]

@@ -49,6 +49,12 @@ pub enum AppEvent {
     FloatingIpCreated(FloatingIp),
     FloatingIpDeleted { id: String },
 
+    // Keystone CUD
+    ProjectCreated(Project),
+    ProjectDeleted { id: String },
+    UserCreated(User),
+    UserDeleted { id: String },
+
     // Error
     ApiError { operation: String, message: String },
 

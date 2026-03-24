@@ -51,7 +51,11 @@ pub enum Action {
 
     // Keystone Admin
     FetchProjects,
+    CreateProject(crate::port::types::ProjectCreateParams),
+    DeleteProject { id: String },
     FetchUsers,
+    CreateUser(crate::port::types::UserCreateParams),
+    DeleteUser { id: String },
 
     // UI
     SelectResource { id: String },
