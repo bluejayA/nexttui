@@ -12,6 +12,10 @@ use crate::config::Config;
 use crate::event::AppEvent;
 use crate::models::common::Route;
 use crate::router::Router;
+use crate::ui::header::{Header, HeaderContext};
+use crate::ui::layout::LayoutManager;
+use crate::ui::sidebar::{Sidebar, SidebarItem};
+use crate::ui::status_bar::{StatusBar, StatusInfo};
 
 pub struct App {
     pub should_quit: bool,
@@ -24,10 +28,15 @@ pub struct App {
     action_tx: mpsc::UnboundedSender<Action>,
 
     config: Arc<Config>,
+    layout: LayoutManager,
+    sidebar: Sidebar,
+    header: Header,
+    status_bar: StatusBar,
 }
 
 impl App {
     pub fn new(config: Config, action_tx: mpsc::UnboundedSender<Action>) -> Self {
+        let sidebar = Sidebar::new(default_sidebar_items());
         Self {
             should_quit: false,
             input_mode: InputMode::Normal,
@@ -37,6 +46,10 @@ impl App {
             background_tracker: BackgroundTracker::new(),
             action_tx,
             config: Arc::new(config),
+            layout: LayoutManager::new(),
+            sidebar,
+            header: Header::new(),
+            status_bar: StatusBar::new(),
         }
     }
 
@@ -62,10 +75,20 @@ impl App {
                 }
                 KeyCode::Tab => {
                     self.sidebar_visible = !self.sidebar_visible;
+                    self.layout.toggle_sidebar();
                     return true;
                 }
                 KeyCode::Char('q') => {
                     self.should_quit = true;
+                    return true;
+                }
+                KeyCode::Char(c @ '1'..='9') | KeyCode::Char(c @ '0') => {
+                    let items = default_sidebar_items();
+                    let idx = if c == '0' { 9 } else { (c as usize) - ('1' as usize) };
+                    if let Some(item) = items.get(idx) {
+                        self.router.navigate(item.route);
+                        self.sidebar.sync_active(&self.router.current(), true);
+                    }
                     return true;
                 }
                 KeyCode::Esc => {
@@ -136,11 +159,37 @@ impl App {
 
     /// Render the UI.
     pub fn render(&self, frame: &mut Frame) {
-        // Skeleton: render active component in full area
-        let area = frame.area();
-        if let Some(component) = self.components.get(&self.router.current()) {
-            component.render(frame, area);
+        let areas = self.layout.calculate(frame.area());
+
+        // Header
+        let route_label = route_display_name(&self.router.current());
+        let cloud_name = self.config.active_cloud_name().to_string();
+        let region = self.config.active_cloud_config()
+            .region_name.as_deref().unwrap_or("default").to_string();
+        self.header.render(frame, areas.header, &HeaderContext {
+            resource_type: route_label.to_string(),
+            cloud_name,
+            region,
+        });
+
+        // Sidebar
+        if let Some(sidebar_area) = areas.sidebar {
+            self.sidebar.render(frame, sidebar_area, true, &self.router.current());
         }
+
+        // Content
+        if let Some(component) = self.components.get(&self.router.current()) {
+            component.render(frame, areas.content);
+        }
+
+        // Status bar
+        let info = StatusInfo {
+            message: format!("{} | {:?}", route_label, self.input_mode),
+            help_hint: "q:Quit Tab:Sidebar /:Search :Command".into(),
+            item_count: None,
+            selected_index: None,
+        };
+        self.status_bar.render(frame, areas.status_bar, &info, &[]);
     }
 
     pub fn router(&self) -> &Router {
@@ -165,6 +214,42 @@ impl App {
 
     pub fn action_tx(&self) -> &mpsc::UnboundedSender<Action> {
         &self.action_tx
+    }
+}
+
+fn default_sidebar_items() -> Vec<SidebarItem> {
+    vec![
+        SidebarItem { label: "Servers".into(), route: Route::Servers, shortcut: "1".into(), admin_only: false },
+        SidebarItem { label: "Flavors".into(), route: Route::Flavors, shortcut: "2".into(), admin_only: false },
+        SidebarItem { label: "Networks".into(), route: Route::Networks, shortcut: "3".into(), admin_only: false },
+        SidebarItem { label: "Security Groups".into(), route: Route::SecurityGroups, shortcut: "4".into(), admin_only: false },
+        SidebarItem { label: "Floating IPs".into(), route: Route::FloatingIps, shortcut: "5".into(), admin_only: false },
+        SidebarItem { label: "Volumes".into(), route: Route::Volumes, shortcut: "6".into(), admin_only: false },
+        SidebarItem { label: "Snapshots".into(), route: Route::Snapshots, shortcut: "7".into(), admin_only: false },
+        SidebarItem { label: "Images".into(), route: Route::Images, shortcut: "8".into(), admin_only: false },
+        SidebarItem { label: "Projects".into(), route: Route::Projects, shortcut: "9".into(), admin_only: true },
+        SidebarItem { label: "Users".into(), route: Route::Users, shortcut: "0".into(), admin_only: true },
+    ]
+}
+
+fn route_display_name(route: &Route) -> &'static str {
+    match route {
+        Route::Servers | Route::ServerDetail | Route::ServerCreate => "Servers",
+        Route::Flavors => "Flavors",
+        Route::Networks | Route::NetworkDetail => "Networks",
+        Route::SecurityGroups | Route::SecurityGroupDetail => "Security Groups",
+        Route::FloatingIps => "Floating IPs",
+        Route::Volumes | Route::VolumeDetail | Route::VolumeCreate => "Volumes",
+        Route::Snapshots => "Snapshots",
+        Route::Images | Route::ImageDetail => "Images",
+        Route::Projects => "Projects",
+        Route::Users => "Users",
+        Route::Migrations => "Migrations",
+        Route::Aggregates => "Aggregates",
+        Route::ComputeServices => "Compute Services",
+        Route::Hypervisors => "Hypervisors",
+        Route::Agents => "Agents",
+        Route::Usage => "Usage",
     }
 }
 
