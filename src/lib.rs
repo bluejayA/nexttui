@@ -15,3 +15,4 @@ pub mod module;
 pub mod port;
 pub mod router;
 pub mod ui;
+pub mod worker;

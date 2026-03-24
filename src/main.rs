@@ -1,4 +1,5 @@
 use std::io;
+use std::sync::Arc;
 
 use crossterm::{
     execute,
@@ -8,22 +9,26 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use tokio::sync::mpsc;
 
+use nexttui::adapter::auth::keystone::KeystoneAuthAdapter;
+use nexttui::adapter::registry::AdapterRegistry;
 use nexttui::app::App;
 use nexttui::config::Config;
 use nexttui::demo::create_demo_app;
+use nexttui::event::AppEvent;
 use nexttui::event_loop::run_event_loop;
+use nexttui::port::types::{AuthCredential, AuthMethod, ProjectScopeParam};
+use nexttui::worker::run_worker;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
     let demo_mode = args.iter().any(|a| a == "--demo");
 
-    let (mut app, _action_rx, _event_tx) = if demo_mode {
-        let (app, action_rx) = create_demo_app();
-        let (event_tx, _) = mpsc::unbounded_channel::<nexttui::event::AppEvent>();
-        (app, action_rx, event_tx)
+    let (mut app, event_rx) = if demo_mode {
+        let (app, _action_rx) = create_demo_app();
+        let (_event_tx, event_rx) = mpsc::unbounded_channel::<AppEvent>();
+        (app, event_rx)
     } else {
-        // Normal mode: load config, setup channels
         let config = match Config::load() {
             Ok(c) => c,
             Err(e) => {
@@ -37,9 +42,55 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let (action_tx, action_rx) = mpsc::unbounded_channel();
-        let (event_tx, _) = mpsc::unbounded_channel::<nexttui::event::AppEvent>();
-        let app = App::new(config, action_tx);
-        (app, action_rx, event_tx)
+        let (event_tx, event_rx) = mpsc::unbounded_channel::<AppEvent>();
+
+        // Build auth credential from config
+        let cloud = config.active_cloud_config();
+        let credential = AuthCredential {
+            auth_url: cloud.auth.auth_url.clone(),
+            method: AuthMethod::Password {
+                username: cloud.auth.username.clone().unwrap_or_default(),
+                password: cloud.auth.password.clone().unwrap_or_default(),
+                domain_name: cloud
+                    .auth
+                    .user_domain_name
+                    .clone()
+                    .unwrap_or_else(|| "Default".to_string()),
+            },
+            project_scope: cloud.auth.project_name.as_ref().map(|pn| ProjectScopeParam {
+                name: pn.clone(),
+                domain_name: cloud
+                    .auth
+                    .project_domain_name
+                    .clone()
+                    .unwrap_or_else(|| "Default".to_string()),
+            }),
+        };
+
+        let auth_provider = Arc::new(KeystoneAuthAdapter::new(credential));
+        let registry = Arc::new(AdapterRegistry::new_http(
+            auth_provider,
+            cloud.region_name.clone(),
+        ));
+
+        // Spawn background worker
+        tokio::spawn(run_worker(registry, action_rx, event_tx));
+
+        let app = App::new(config, action_tx.clone());
+
+        // Trigger initial data load
+        let _ = action_tx.send(nexttui::action::Action::FetchServers);
+        let _ = action_tx.send(nexttui::action::Action::FetchFlavors);
+        let _ = action_tx.send(nexttui::action::Action::FetchNetworks);
+        let _ = action_tx.send(nexttui::action::Action::FetchSecurityGroups);
+        let _ = action_tx.send(nexttui::action::Action::FetchFloatingIps);
+        let _ = action_tx.send(nexttui::action::Action::FetchVolumes);
+        let _ = action_tx.send(nexttui::action::Action::FetchSnapshots);
+        let _ = action_tx.send(nexttui::action::Action::FetchImages);
+        let _ = action_tx.send(nexttui::action::Action::FetchProjects);
+        let _ = action_tx.send(nexttui::action::Action::FetchUsers);
+
+        (app, event_rx)
     };
 
     // Setup terminal
@@ -48,12 +99,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-
-    // Create event channel for the event loop
-    let (_ev_tx, event_rx) = mpsc::unbounded_channel();
-
-    // In demo mode, inject initial data via events was already done in create_demo_app.
-    // The event_rx here is just for the event loop to listen on (no background tasks).
 
     let result = run_event_loop(&mut terminal, &mut app, event_rx).await;
 
