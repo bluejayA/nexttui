@@ -976,10 +976,29 @@ impl FormWidget {
             return;
         };
 
-        let popup_x = inner.x + label_width as u16 + 2;
-        let available_width = inner.width.saturating_sub(label_width as u16 + 2);
-        // y position: below the focused field line
-        let field_y = inner.y + self.focused as u16;
+        let label_cols = (label_width as u16).saturating_add(2);
+        let popup_x = inner.x.saturating_add(label_cols);
+        let available_width = inner.width.saturating_sub(label_cols);
+        if available_width < 4 {
+            return; // Not enough space for popup (need at least border + 2 chars)
+        }
+
+        // Calculate actual y position accounting for error lines above focused field
+        let mut field_y = inner.y;
+        let error_names: Vec<&str> = self.errors.iter().map(|e| e.field_name.as_str()).collect();
+        for (i, (d, _)) in self.fields.iter().enumerate() {
+            if i == self.focused {
+                break;
+            }
+            field_y = field_y.saturating_add(1); // field line
+            if error_names.contains(&d.name()) {
+                field_y = field_y.saturating_add(1); // error line
+            }
+        }
+
+        // Frame bounds for clamping
+        let frame_w = frame.area().width;
+        let frame_h = frame.area().height;
 
         match (def, state) {
             (
@@ -991,9 +1010,17 @@ impl FormWidget {
                 },
             ) => {
                 let visible = (options.len()).min(POPUP_VISIBLE_ITEMS);
-                let popup_height = visible as u16 + 2; // +2 for borders
-                let popup_y = (field_y + 1).min(inner.y + inner.height - popup_height);
-                let popup_width = available_width.min(40);
+                let popup_height = (visible as u16 + 2).min(frame_h.saturating_sub(field_y));
+                if popup_height < 3 {
+                    return; // Not enough space for popup
+                }
+                let popup_y = field_y.saturating_add(1).min(
+                    frame_h.saturating_sub(popup_height),
+                );
+                let popup_width = available_width.min(40).min(frame_w.saturating_sub(popup_x));
+                if popup_width < 4 {
+                    return;
+                }
                 let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
 
                 frame.render_widget(Clear, popup_area);
@@ -1032,9 +1059,17 @@ impl FormWidget {
                 },
             ) => {
                 let visible = (options.len()).min(POPUP_VISIBLE_ITEMS);
-                let popup_height = visible as u16 + 2;
-                let popup_y = (field_y + 1).min(inner.y + inner.height - popup_height);
-                let popup_width = available_width.min(40);
+                let popup_height = (visible as u16 + 2).min(frame_h.saturating_sub(field_y));
+                if popup_height < 3 {
+                    return;
+                }
+                let popup_y = field_y.saturating_add(1).min(
+                    frame_h.saturating_sub(popup_height),
+                );
+                let popup_width = available_width.min(40).min(frame_w.saturating_sub(popup_x));
+                if popup_width < 4 {
+                    return;
+                }
                 let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
 
                 frame.render_widget(Clear, popup_area);
@@ -2131,6 +2166,32 @@ mod tests {
         ]);
         // Should not panic even with tiny area
         let _output = render_to_buffer(&form, 5, 3);
+    }
+
+    #[test]
+    fn test_render_popup_on_small_area_no_panic() {
+        let mut form = FormWidget::new("Test", vec![
+            FieldDef::dropdown("Type", vec!["a".into(), "b".into(), "c".into()], false),
+        ]);
+        // Open popup
+        form.handle_key(key(KeyCode::Enter));
+        // Render on very small area — must not panic from u16 underflow
+        let _output = render_to_buffer(&form, 10, 4);
+    }
+
+    #[test]
+    fn test_render_popup_with_errors_above() {
+        let mut form = FormWidget::new("Test", vec![
+            FieldDef::text("Name", true),
+            FieldDef::dropdown("Type", vec!["a".into(), "b".into()], false),
+        ]);
+        // Trigger validation error on Name
+        form.validate_and_submit();
+        // Move to dropdown and open popup
+        form.handle_key(key(KeyCode::Down));
+        form.handle_key(key(KeyCode::Enter));
+        // Should render without panic — popup y accounts for error line
+        let _output = render_to_buffer(&form, 50, 15);
     }
 
     #[test]
