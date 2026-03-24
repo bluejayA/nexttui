@@ -447,7 +447,7 @@ mod tests {
     fn sample_keystone_response_json() -> &'static str {
         r#"{
             "token": {
-                "expires_at": "2026-03-24T14:00:00.000000Z",
+                "expires_at": "2099-12-31T23:59:59.000000Z",
                 "project": {
                     "id": "proj-123",
                     "name": "admin-project",
@@ -532,7 +532,7 @@ mod tests {
     fn test_parse_token_no_catalog() {
         let json_str = r#"{
             "token": {
-                "expires_at": "2026-03-24T14:00:00.000000Z",
+                "expires_at": "2099-12-31T23:59:59.000000Z",
                 "roles": [{ "id": "r1", "name": "member" }]
             }
         }"#;
