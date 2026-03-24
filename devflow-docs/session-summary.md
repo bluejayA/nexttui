@@ -2,9 +2,9 @@
 
 ## Current State
 - **Phase**: CONSTRUCTION
-- **Stage**: code-generation (Unit 10: cinder-domain 완료)
+- **Stage**: code-generation 전체 완료 (15/15 units) → build-and-test 대기
 - **Complexity**: Comprehensive
-- **Commit**: 00a007a
+- **Commit**: a6cf04c
 
 ## Completed Work
 
@@ -116,7 +116,11 @@
   - SnapshotModule (List/Detail, yes-no delete)
   - R1 반영: attach/detach stub, qos_spec 필드명, char-based ID truncation, deleting arm 중복 제거
 
+- [x] Unit 11: glance-domain — GlanceHttpAdapter + ImageModule (24 tests)
+- [x] Unit 12: identity-domain — KeystoneHttpAdapter + ProjectModule + UserModule (35 tests)
+- [x] Unit 13: nova-admin-domain — AggregateModule, ComputeServiceModule, HypervisorModule, MigrationModule placeholder (16 tests)
+- [x] Unit 14: admin-monitoring — AgentModule (7 tests), UsageModule deferred to Phase 2
+- [x] Unit 15: integration — AdapterRegistry (2 tests), RBAC wiring deferred to Phase 2
+
 ## Next Steps
-1. Unit 11: glance-domain — ImageModule
-2. Unit 12: identity-domain — ProjectModule, UserModule
-3. 이후 Unit 13~15 순차 진행
+1. build-and-test — 전체 빌드 + 454 테스트 검증
