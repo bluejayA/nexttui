@@ -72,7 +72,7 @@ impl ServerModule {
             PendingAction::Delete { id, name } => Some(Action::DeleteServer { id, name }),
             PendingAction::Reboot { id, hard } => Some(Action::RebootServer { id, hard }),
             PendingAction::Stop { id } => Some(Action::StopServer { id }),
-            PendingAction::Submit => None,
+            _ => None,
         }
     }
 

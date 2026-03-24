@@ -23,10 +23,16 @@ pub enum Action {
 
     // Neutron
     FetchNetworks,
+    CreateNetwork(crate::port::types::NetworkCreateParams),
     FetchSecurityGroups,
+    CreateSecurityGroup(crate::port::types::SecurityGroupCreateParams),
+    DeleteSecurityGroup { id: String },
+    CreateSecurityGroupRule(crate::port::types::SecurityGroupRuleCreateParams),
+    DeleteSecurityGroupRule { rule_id: String },
     FetchFloatingIps,
     CreateFloatingIp { network_id: String },
     DeleteFloatingIp { id: String },
+    FetchSubnets { network_id: String },
     FetchAgents,
 
     // Cinder

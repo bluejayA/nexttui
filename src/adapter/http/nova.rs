@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use super::{Link, append_pagination_parts, build_pagination_query, encode_param, extract_next_marker};
 use crate::adapter::http::base::BaseHttpClient;
 use crate::models::nova::{Aggregate, ComputeService, Flavor, Hypervisor, Server};
 use crate::port::auth::AuthProvider;
@@ -52,12 +53,6 @@ struct NovaFlavorWrapper {
 struct NovaInstanceActionsResponse {
     #[serde(rename = "instanceActions")]
     instance_actions: Vec<ServerEvent>,
-}
-
-#[derive(Deserialize)]
-struct Link {
-    rel: String,
-    href: String,
 }
 
 #[derive(Serialize)]
@@ -110,22 +105,6 @@ struct NovaFlavorCreateInner {
 
 // --- Query builders ---
 
-/// Percent-encode a query parameter value (RFC 3986).
-fn encode_param(value: &str) -> String {
-    let mut encoded = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                encoded.push(byte as char);
-            }
-            _ => {
-                encoded.push_str(&format!("%{:02X}", byte));
-            }
-        }
-    }
-    encoded
-}
-
 fn build_server_query(filter: &ServerListFilter, pagination: &PaginationParams) -> String {
     let mut parts = Vec::new();
     if let Some(ref name) = filter.name {
@@ -145,48 +124,6 @@ fn build_server_query(filter: &ServerListFilter, pagination: &PaginationParams) 
     }
     append_pagination_parts(&mut parts, pagination);
     parts.join("&")
-}
-
-fn build_pagination_query(pagination: &PaginationParams) -> String {
-    let mut parts = Vec::new();
-    append_pagination_parts(&mut parts, pagination);
-    parts.join("&")
-}
-
-fn append_pagination_parts(parts: &mut Vec<String>, pagination: &PaginationParams) {
-    if let Some(ref marker) = pagination.marker {
-        parts.push(format!("marker={}", encode_param(marker)));
-    }
-    if let Some(limit) = pagination.limit {
-        parts.push(format!("limit={limit}"));
-    }
-    if let Some(ref key) = pagination.sort_key {
-        parts.push(format!("sort_key={}", encode_param(key)));
-    }
-    if let Some(ref dir) = pagination.sort_dir {
-        let dir_str = match dir {
-            SortDirection::Asc => "asc",
-            SortDirection::Desc => "desc",
-        };
-        parts.push(format!("sort_dir={dir_str}"));
-    }
-}
-
-fn extract_next_marker(links: &[Link]) -> Option<String> {
-    links
-        .iter()
-        .find(|l| l.rel == "next")
-        .and_then(|l| {
-            l.href
-                .split('?')
-                .nth(1)
-                .and_then(|query| {
-                    query
-                        .split('&')
-                        .find(|p| p.starts_with("marker="))
-                        .map(|p| p.trim_start_matches("marker=").to_string())
-                })
-        })
 }
 
 impl RebootType {

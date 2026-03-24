@@ -5,12 +5,15 @@ pub struct Network {
     pub id: String,
     pub name: String,
     pub status: String,
+    pub description: Option<String>,
     pub admin_state_up: bool,
     #[serde(rename = "router:external", default)]
     pub external: bool,
     #[serde(default)]
     pub shared: bool,
     pub mtu: Option<u32>,
+    #[serde(default)]
+    pub port_security_enabled: Option<bool>,
     #[serde(default)]
     pub subnets: Vec<String>,
     #[serde(rename = "provider:network_type")]
@@ -73,10 +76,12 @@ mod tests {
             "id": "net-001",
             "name": "private-net",
             "status": "ACTIVE",
+            "description": "Private network",
             "admin_state_up": true,
             "router:external": false,
             "shared": false,
             "mtu": 1500,
+            "port_security_enabled": true,
             "subnets": ["subnet-1", "subnet-2"],
             "provider:network_type": "vxlan",
             "provider:physical_network": null,
@@ -86,6 +91,8 @@ mod tests {
         assert_eq!(net.name, "private-net");
         assert!(!net.external);
         assert_eq!(net.mtu, Some(1500));
+        assert_eq!(net.description.as_deref(), Some("Private network"));
+        assert_eq!(net.port_security_enabled, Some(true));
         assert_eq!(net.provider_network_type.as_deref(), Some("vxlan"));
         assert_eq!(net.provider_segmentation_id, Some(100));
         assert_eq!(net.subnets.len(), 2);

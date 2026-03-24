@@ -1,4 +1,7 @@
 pub mod flavor;
+pub mod floating_ip;
+pub mod network;
+pub mod security_group;
 pub mod server;
 
 use crossterm::event::{KeyCode, KeyEvent};
@@ -21,6 +24,10 @@ pub enum PendingAction {
     Reboot { id: String, hard: bool },
     Stop { id: String },
     Submit,
+    // Neutron
+    DeleteSecurityGroup { id: String, name: String },
+    DeleteSecurityGroupRule { rule_id: String },
+    DeleteFloatingIp { id: String, ip: String },
 }
 
 /// Shared list navigation state. Extracts the common j/k/g/G/selection logic
@@ -157,8 +164,19 @@ mod tests {
             },
             PendingAction::Stop { id: "s1".into() },
             PendingAction::Submit,
+            PendingAction::DeleteSecurityGroup {
+                id: "sg1".into(),
+                name: "default".into(),
+            },
+            PendingAction::DeleteSecurityGroupRule {
+                rule_id: "rule1".into(),
+            },
+            PendingAction::DeleteFloatingIp {
+                id: "fip1".into(),
+                ip: "203.0.113.10".into(),
+            },
         ];
-        assert_eq!(actions.len(), 4);
+        assert_eq!(actions.len(), 7);
     }
 
     #[test]
