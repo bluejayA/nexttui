@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
-use crate::models::nova::{Address, Server, Flavor};
+use crate::models::nova::{Address, Server};
 use crate::ui::detail_view::{DetailData, DetailField, DetailSection};
-use crate::ui::form::{FieldDef, FormField};
+use crate::ui::form::FieldDef;
 use crate::ui::resource_list::{ColumnDef, ColumnWidth, Row, RowStyleHint};
 
 pub fn server_columns() -> Vec<ColumnDef> {
@@ -195,39 +195,6 @@ pub fn server_detail_data(server: &Server) -> DetailData {
     }
 }
 
-pub fn server_create_form(
-    flavors: &[Flavor],
-    images: &[String],
-    networks: &[String],
-    security_groups: &[String],
-) -> Vec<FormField> {
-    vec![
-        FormField::text("Name", true),
-        FormField::dropdown(
-            "Image",
-            images.to_vec(),
-            true,
-        ),
-        FormField::dropdown(
-            "Flavor",
-            flavors.iter().map(|f| format!("{} ({}vCPU/{}MB/{}GB)", f.name, f.vcpus, f.ram, f.disk)).collect(),
-            true,
-        ),
-        FormField::dropdown(
-            "Network",
-            networks.to_vec(),
-            true,
-        ),
-        FormField::dropdown(
-            "Security Group",
-            security_groups.to_vec(),
-            false,
-        ),
-        FormField::text("Key Pair", false),
-        FormField::text("Availability Zone", false),
-    ]
-}
-
 /// Create server form fields using new FieldDef API.
 /// Options for Image/Flavor/Network/SecurityGroup can be populated later via set_field_options.
 pub fn server_create_defs() -> Vec<FieldDef> {
@@ -282,7 +249,7 @@ pub fn format_ips(addresses: &HashMap<String, Vec<Address>>) -> String {
 mod tests {
     use super::*;
     use crate::models::nova::{FlavorRef, ImageRef};
-    use crate::ui::form::FormFieldType;
+    use crate::ui::form::Validation;
 
     fn make_server(status: &str) -> Server {
         Server {
@@ -387,18 +354,18 @@ mod tests {
     }
 
     #[test]
-    fn test_server_create_form_fields() {
-        let flavors = vec![Flavor {
-            id: "flv-1".into(),
-            name: "m1.small".into(),
-            vcpus: 1,
-            ram: 2048,
-            disk: 20,
-            is_public: true,
-        }];
-        let form = server_create_form(&flavors, &["img-1".into()], &["net-1".into()], &["default".into()]);
-        assert_eq!(form.len(), 7);
-        assert!(form[0].required); // Name
-        assert!(matches!(form[1].field_type, FormFieldType::Dropdown(_))); // Image
+    fn test_server_create_defs() {
+        let defs = server_create_defs();
+        assert_eq!(defs.len(), 7);
+        assert_eq!(defs[0].name(), "Name");
+        assert!(defs[0].validations().contains(&Validation::Required));
+        assert_eq!(defs[1].name(), "Image");
+        assert!(matches!(defs[1], FieldDef::Dropdown { .. }));
+        assert_eq!(defs[2].name(), "Flavor");
+        assert_eq!(defs[3].name(), "Network");
+        assert_eq!(defs[4].name(), "Security Group");
+        assert!(!defs[4].validations().contains(&Validation::Required));
+        assert_eq!(defs[5].name(), "Key Pair");
+        assert_eq!(defs[6].name(), "Availability Zone");
     }
 }

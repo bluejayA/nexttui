@@ -76,9 +76,18 @@ impl ServerModule {
     }
 
     fn open_create_form(&mut self) {
+        // Dropdown options (Image, Flavor, Network, SG) start empty.
+        // They are populated via set_field_options() when API data is loaded
+        // in handle_event(). Required validation on empty dropdowns prevents
+        // submission with blank values.
         let defs = server_create_defs();
         self.form = Some(FormWidget::new("Create Server", defs));
         self.view_state = ViewState::Create;
+    }
+
+    fn close_form(&mut self) {
+        self.form = None;
+        self.view_state = ViewState::List;
     }
 
     fn handle_list_key(&mut self, key: KeyEvent) -> Option<Action> {
@@ -158,7 +167,7 @@ impl ServerModule {
 
     fn handle_create_key(&mut self, key: KeyEvent) -> Option<Action> {
         let Some(form) = self.form.as_mut() else {
-            self.view_state = ViewState::List;
+            self.close_form();
             return None;
         };
 
@@ -217,8 +226,7 @@ impl ServerModule {
                         _ => None,
                     });
 
-                self.form = None;
-                self.view_state = ViewState::List;
+                self.close_form();
 
                 Some(Action::CreateServer(ServerCreateParams {
                     name,
@@ -234,8 +242,7 @@ impl ServerModule {
                 }))
             }
             FormAction::Cancel => {
-                self.form = None;
-                self.view_state = ViewState::List;
+                self.close_form();
                 None
             }
             FormAction::None => None,
@@ -299,6 +306,10 @@ impl Component for ServerModule {
             ViewState::Create => {
                 if let Some(form) = &self.form {
                     form.render(frame, area);
+                } else {
+                    // Defensive: form should always be Some in Create state.
+                    // If not, render list as fallback (next key press will fix state via close_form).
+                    self.resource_list.render(frame, area);
                 }
             }
         }
