@@ -46,6 +46,7 @@ pub enum Action {
 
     // Glance
     FetchImages,
+    CreateImage(crate::port::types::ImageCreateParams),
     DeleteImage { id: String },
 
     // Keystone Admin

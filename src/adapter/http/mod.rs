@@ -1,5 +1,6 @@
 pub mod base;
 pub mod cinder;
+pub mod glance;
 pub mod neutron;
 pub mod nova;
 

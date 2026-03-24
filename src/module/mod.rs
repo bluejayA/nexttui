@@ -1,5 +1,6 @@
 pub mod flavor;
 pub mod floating_ip;
+pub mod image;
 pub mod network;
 pub mod security_group;
 pub mod server;
@@ -33,6 +34,8 @@ pub enum PendingAction {
     // Cinder
     DeleteVolume { id: String, name: String },
     DeleteSnapshot { id: String, name: String },
+    // Glance
+    DeleteImage { id: String, name: String },
 }
 
 /// Shared list navigation state. Extracts the common j/k/g/G/selection logic
@@ -188,8 +191,12 @@ mod tests {
                 id: "snap1".into(),
                 name: "daily".into(),
             },
+            PendingAction::DeleteImage {
+                id: "img1".into(),
+                name: "ubuntu".into(),
+            },
         ];
-        assert_eq!(actions.len(), 9);
+        assert_eq!(actions.len(), 10);
     }
 
     #[test]

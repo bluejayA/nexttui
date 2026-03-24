@@ -44,6 +44,7 @@ pub enum AppEvent {
     VolumeExtended { id: String },
     SnapshotCreated(VolumeSnapshot),
     SnapshotDeleted { id: String },
+    ImageCreated(Image),
     ImageDeleted { id: String },
     FloatingIpCreated(FloatingIp),
     FloatingIpDeleted { id: String },
