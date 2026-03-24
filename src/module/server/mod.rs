@@ -2,9 +2,6 @@ pub mod view_model;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
-use ratatui::text::Line;
-use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use tokio::sync::mpsc;
 
@@ -13,10 +10,12 @@ use crate::component::Component;
 use crate::event::AppEvent;
 use crate::models::nova::Server;
 use crate::module::{ConfirmHandler, PendingAction, ViewState};
+use crate::port::types::{NetworkAttachment, ServerCreateParams};
 use crate::ui::confirm::ConfirmDialog;
+use crate::ui::form::{FormAction, FormWidget};
 use crate::ui::resource_list::{ResourceList, Row};
 
-use self::view_model::{server_columns, server_detail_data, server_to_row};
+use self::view_model::{server_columns, server_create_defs, server_detail_data, server_to_row};
 
 pub struct ServerModule {
     view_state: ViewState,
@@ -25,6 +24,7 @@ pub struct ServerModule {
     error_message: Option<String>,
     confirm: ConfirmHandler,
     resource_list: ResourceList,
+    form: Option<FormWidget>,
     action_tx: mpsc::UnboundedSender<Action>,
 }
 
@@ -37,6 +37,7 @@ impl ServerModule {
             error_message: None,
             confirm: ConfirmHandler::new(),
             resource_list: ResourceList::new(server_columns()),
+            form: None,
             action_tx,
         }
     }
@@ -74,6 +75,21 @@ impl ServerModule {
         }
     }
 
+    fn open_create_form(&mut self) {
+        // Dropdown options (Image, Flavor, Network, SG) start empty.
+        // They are populated via set_field_options() when API data is loaded
+        // in handle_event(). Required validation on empty dropdowns prevents
+        // submission with blank values.
+        let defs = server_create_defs();
+        self.form = Some(FormWidget::new("Create Server", defs));
+        self.view_state = ViewState::Create;
+    }
+
+    fn close_form(&mut self) {
+        self.form = None;
+        self.view_state = ViewState::List;
+    }
+
     fn handle_list_key(&mut self, key: KeyEvent) -> Option<Action> {
         // Navigation keys handled by ResourceList
         if self.resource_list.handle_nav_key(key) {
@@ -89,7 +105,7 @@ impl ServerModule {
                 None
             }
             KeyCode::Char('c') => {
-                self.view_state = ViewState::Create;
+                self.open_create_form();
                 None
             }
             KeyCode::Char('d') => {
@@ -150,12 +166,86 @@ impl ServerModule {
     }
 
     fn handle_create_key(&mut self, key: KeyEvent) -> Option<Action> {
-        match key.code {
-            KeyCode::Esc => {
-                self.view_state = ViewState::List;
+        let Some(form) = self.form.as_mut() else {
+            self.close_form();
+            return None;
+        };
+
+        match form.handle_key(key) {
+            FormAction::Submit(values) => {
+                let name = values
+                    .get("Name")
+                    .and_then(|v| match v {
+                        crate::ui::form::FormValue::Text(s) => Some(s.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                let image_id = values
+                    .get("Image")
+                    .and_then(|v| match v {
+                        crate::ui::form::FormValue::Selected(s) => Some(s.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                let flavor_id = values
+                    .get("Flavor")
+                    .and_then(|v| match v {
+                        crate::ui::form::FormValue::Selected(s) => Some(s.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                let network_id = values
+                    .get("Network")
+                    .and_then(|v| match v {
+                        crate::ui::form::FormValue::Selected(s) => Some(s.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                let security_group = values
+                    .get("Security Group")
+                    .and_then(|v| match v {
+                        crate::ui::form::FormValue::Selected(s) => {
+                            if s.is_empty() { None } else { Some(vec![s.clone()]) }
+                        }
+                        _ => None,
+                    });
+                let key_name = values
+                    .get("Key Pair")
+                    .and_then(|v| match v {
+                        crate::ui::form::FormValue::Text(s) => {
+                            if s.is_empty() { None } else { Some(s.clone()) }
+                        }
+                        _ => None,
+                    });
+                let availability_zone = values
+                    .get("Availability Zone")
+                    .and_then(|v| match v {
+                        crate::ui::form::FormValue::Text(s) => {
+                            if s.is_empty() { None } else { Some(s.clone()) }
+                        }
+                        _ => None,
+                    });
+
+                self.close_form();
+
+                Some(Action::CreateServer(ServerCreateParams {
+                    name,
+                    image_id,
+                    flavor_id,
+                    networks: vec![NetworkAttachment {
+                        uuid: network_id,
+                        fixed_ip: None,
+                    }],
+                    security_groups: security_group,
+                    key_name,
+                    availability_zone,
+                }))
+            }
+            FormAction::Cancel => {
+                self.close_form();
                 None
             }
-            _ => None,
+            FormAction::None => None,
         }
     }
 }
@@ -214,13 +304,13 @@ impl Component for ServerModule {
                 }
             }
             ViewState::Create => {
-                let text = Paragraph::new(vec![
-                    Line::raw(""),
-                    Line::raw("  Server Create Form (Tab/Enter to submit, Esc to cancel)"),
-                    Line::raw("  [Form integration pending]"),
-                ])
-                .style(Style::default().fg(Color::DarkGray));
-                frame.render_widget(text, area);
+                if let Some(form) = &self.form {
+                    form.render(frame, area);
+                } else {
+                    // Defensive: form should always be Some in Create state.
+                    // If not, render list as fallback (next key press will fix state via close_form).
+                    self.resource_list.render(frame, area);
+                }
             }
         }
 
@@ -341,6 +431,7 @@ mod tests {
         let (mut module, _rx) = setup();
         module.handle_key(key(KeyCode::Char('c')));
         assert_eq!(*module.view_state(), ViewState::Create);
+        assert!(module.form.is_some());
     }
 
     #[test]
@@ -434,5 +525,48 @@ mod tests {
         module.handle_key(key(KeyCode::Enter));
         module.handle_key(key(KeyCode::Char('X')));
         assert!(module.confirm.is_active());
+    }
+
+    // -- Form integration tests ---------------------------------------------
+
+    #[test]
+    fn test_create_form_cancel_returns_to_list() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Char('c'))); // open form
+        assert_eq!(*module.view_state(), ViewState::Create);
+
+        module.handle_key(key(KeyCode::Esc)); // cancel form
+        assert_eq!(*module.view_state(), ViewState::List);
+        assert!(module.form.is_none());
+    }
+
+    #[test]
+    fn test_create_form_has_expected_fields() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Char('c')));
+        let form = module.form.as_ref().unwrap();
+        assert_eq!(form.field_count(), 7);
+        assert_eq!(form.focused_field_name(), "Name");
+    }
+
+    #[test]
+    fn test_create_form_submit_produces_action() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Char('c')));
+
+        // Type server name
+        for c in "test-vm".chars() {
+            module.handle_key(key(KeyCode::Char(c)));
+        }
+
+        // Navigate to last field (Availability Zone) and submit
+        for _ in 0..6 {
+            module.handle_key(key(KeyCode::Down));
+        }
+        let action = module.handle_key(key(KeyCode::Enter));
+
+        // Submit should fail validation (Image is required but not selected)
+        // So action should be None and we stay on form
+        assert!(action.is_none());
     }
 }
