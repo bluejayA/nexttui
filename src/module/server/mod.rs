@@ -25,6 +25,11 @@ pub struct ServerModule {
     confirm: ConfirmHandler,
     resource_list: ResourceList,
     form: Option<FormWidget>,
+    // Cached dropdown options — populated by handle_event, applied to form on open/load
+    cached_flavor_opts: Vec<SelectOption>,
+    cached_image_opts: Vec<SelectOption>,
+    cached_network_opts: Vec<SelectOption>,
+    cached_sg_opts: Vec<SelectOption>,
     action_tx: mpsc::UnboundedSender<Action>,
 }
 
@@ -38,6 +43,10 @@ impl ServerModule {
             confirm: ConfirmHandler::new(),
             resource_list: ResourceList::new(server_columns()),
             form: None,
+            cached_flavor_opts: Vec::new(),
+            cached_image_opts: Vec::new(),
+            cached_network_opts: Vec::new(),
+            cached_sg_opts: Vec::new(),
             action_tx,
         }
     }
@@ -77,9 +86,23 @@ impl ServerModule {
 
     fn open_create_form(&mut self) {
         let defs = server_create_defs();
-        self.form = Some(FormWidget::new("Create Server", defs));
+        let mut form = FormWidget::new("Create Server", defs);
+        // Apply cached options if already loaded (e.g., demo mode pre-loads data)
+        if !self.cached_flavor_opts.is_empty() {
+            form.set_field_options("Flavor", self.cached_flavor_opts.clone());
+        }
+        if !self.cached_image_opts.is_empty() {
+            form.set_field_options("Image", self.cached_image_opts.clone());
+        }
+        if !self.cached_network_opts.is_empty() {
+            form.set_field_options("Network", self.cached_network_opts.clone());
+        }
+        if !self.cached_sg_opts.is_empty() {
+            form.set_field_options("Security Group", self.cached_sg_opts.clone());
+        }
+        self.form = Some(form);
         self.view_state = ViewState::Create;
-        // Request data for dropdown options — handle_event will populate via set_field_options
+        // Also request fresh data — handle_event will update if new data arrives
         let _ = self.action_tx.send(Action::FetchFlavors);
         let _ = self.action_tx.send(Action::FetchImages);
         let _ = self.action_tx.send(Action::FetchNetworks);
@@ -282,38 +305,42 @@ impl Component for ServerModule {
                 let _ = self.action_tx.send(Action::FetchServers);
             }
             AppEvent::FlavorsLoaded(flavors) => {
+                let opts: Vec<SelectOption> = flavors
+                    .iter()
+                    .map(|f| SelectOption::new(&f.id, format!("{} ({}vCPU/{}MB/{}GB)", f.name, f.vcpus, f.ram, f.disk)))
+                    .collect();
+                self.cached_flavor_opts = opts.clone();
                 if let Some(form) = &mut self.form {
-                    let opts: Vec<SelectOption> = flavors
-                        .iter()
-                        .map(|f| SelectOption::new(&f.id, format!("{} ({}vCPU/{}MB/{}GB)", f.name, f.vcpus, f.ram, f.disk)))
-                        .collect();
                     form.set_field_options("Flavor", opts);
                 }
             }
             AppEvent::ImagesLoaded(images) => {
+                let opts: Vec<SelectOption> = images
+                    .iter()
+                    .map(|img| SelectOption::new(&img.id, &img.name))
+                    .collect();
+                self.cached_image_opts = opts.clone();
                 if let Some(form) = &mut self.form {
-                    let opts: Vec<SelectOption> = images
-                        .iter()
-                        .map(|img| SelectOption::new(&img.id, &img.name))
-                        .collect();
                     form.set_field_options("Image", opts);
                 }
             }
             AppEvent::NetworksLoaded(networks) => {
+                let opts: Vec<SelectOption> = networks
+                    .iter()
+                    .map(|n| SelectOption::new(&n.id, &n.name))
+                    .collect();
+                self.cached_network_opts = opts.clone();
                 if let Some(form) = &mut self.form {
-                    let opts: Vec<SelectOption> = networks
-                        .iter()
-                        .map(|n| SelectOption::new(&n.id, &n.name))
-                        .collect();
                     form.set_field_options("Network", opts);
                 }
             }
             AppEvent::SecurityGroupsLoaded(sgs) => {
+                let opts: Vec<SelectOption> = sgs
+                    .iter()
+                    .map(|sg| SelectOption::new(&sg.id, &sg.name))
+                    .collect();
+                self.cached_sg_opts = opts.clone();
                 if let Some(form) = &mut self.form {
-                    let opts: Vec<SelectOption> = sgs
-                        .iter()
-                        .map(|sg| SelectOption::new(&sg.id, &sg.name))
-                        .collect();
                     form.set_field_options("Security Group", opts);
                 }
             }
@@ -643,6 +670,33 @@ mod tests {
         // Flavor dropdown should now have options
         if let (crate::ui::form::FieldDef::Dropdown { options, .. }, _) = &form.fields()[2] {
             assert_eq!(options.len(), 1);
+            assert_eq!(options[0].value, "flv-1");
+        } else {
+            panic!("Expected Dropdown for Flavor field");
+        }
+    }
+
+    #[test]
+    fn test_cached_options_applied_on_form_open() {
+        use crate::models::nova::Flavor;
+
+        let (mut module, _rx) = setup();
+        // Pre-load flavors before opening form
+        let flavors = vec![Flavor {
+            id: "flv-1".into(),
+            name: "m1.small".into(),
+            vcpus: 1,
+            ram: 2048,
+            disk: 20,
+            is_public: true,
+        }];
+        module.handle_event(&AppEvent::FlavorsLoaded(flavors));
+
+        // Now open form — cached options should be applied immediately
+        module.handle_key(key(KeyCode::Char('c')));
+        let form = module.form.as_ref().unwrap();
+        if let (crate::ui::form::FieldDef::Dropdown { options, .. }, _) = &form.fields()[2] {
+            assert_eq!(options.len(), 1, "Cached flavor options should be applied on form open");
             assert_eq!(options[0].value, "flv-1");
         } else {
             panic!("Expected Dropdown for Flavor field");

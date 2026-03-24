@@ -25,6 +25,7 @@ pub struct FloatingIpModule {
     confirm: ConfirmHandler,
     resource_list: ResourceList,
     form: Option<FormWidget>,
+    cached_ext_network_opts: Vec<SelectOption>,
     action_tx: mpsc::UnboundedSender<Action>,
 }
 
@@ -38,6 +39,7 @@ impl FloatingIpModule {
             confirm: ConfirmHandler::new(),
             resource_list: ResourceList::new(fip_columns()),
             form: None,
+            cached_ext_network_opts: Vec::new(),
             action_tx,
         }
     }
@@ -75,9 +77,12 @@ impl FloatingIpModule {
 
     fn open_create_form(&mut self) {
         let defs = fip_create_defs();
-        self.form = Some(FormWidget::new("Allocate Floating IP", defs));
+        let mut form = FormWidget::new("Allocate Floating IP", defs);
+        if !self.cached_ext_network_opts.is_empty() {
+            form.set_field_options("External Network", self.cached_ext_network_opts.clone());
+        }
+        self.form = Some(form);
         self.view_state = ViewState::Create;
-        // Request external networks for dropdown
         let _ = self.action_tx.send(Action::FetchNetworks);
     }
 
@@ -169,12 +174,13 @@ impl Component for FloatingIpModule {
                 let _ = self.action_tx.send(Action::FetchFloatingIps);
             }
             AppEvent::NetworksLoaded(networks) => {
+                let opts: Vec<SelectOption> = networks
+                    .iter()
+                    .filter(|n| n.external)
+                    .map(|n| SelectOption::new(&n.id, &n.name))
+                    .collect();
+                self.cached_ext_network_opts = opts.clone();
                 if let Some(form) = &mut self.form {
-                    let opts: Vec<SelectOption> = networks
-                        .iter()
-                        .filter(|n| n.external)
-                        .map(|n| SelectOption::new(&n.id, &n.name))
-                        .collect();
                     form.set_field_options("External Network", opts);
                 }
             }
