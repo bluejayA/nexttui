@@ -3,6 +3,8 @@ pub mod floating_ip;
 pub mod network;
 pub mod security_group;
 pub mod server;
+pub mod snapshot;
+pub mod volume;
 
 use crossterm::event::{KeyCode, KeyEvent};
 
@@ -28,6 +30,9 @@ pub enum PendingAction {
     DeleteSecurityGroup { id: String, name: String },
     DeleteSecurityGroupRule { rule_id: String },
     DeleteFloatingIp { id: String, ip: String },
+    // Cinder
+    DeleteVolume { id: String, name: String },
+    DeleteSnapshot { id: String, name: String },
 }
 
 /// Shared list navigation state. Extracts the common j/k/g/G/selection logic
@@ -175,8 +180,16 @@ mod tests {
                 id: "fip1".into(),
                 ip: "203.0.113.10".into(),
             },
+            PendingAction::DeleteVolume {
+                id: "vol1".into(),
+                name: "data-vol".into(),
+            },
+            PendingAction::DeleteSnapshot {
+                id: "snap1".into(),
+                name: "daily".into(),
+            },
         ];
-        assert_eq!(actions.len(), 7);
+        assert_eq!(actions.len(), 9);
     }
 
     #[test]

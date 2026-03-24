@@ -4,6 +4,7 @@ use serde::Deserialize;
 pub struct Volume {
     pub id: String,
     pub name: Option<String>,
+    pub description: Option<String>,
     pub status: String,
     pub size: u32,
     pub volume_type: Option<String>,

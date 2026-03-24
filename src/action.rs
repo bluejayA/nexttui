@@ -37,9 +37,12 @@ pub enum Action {
 
     // Cinder
     FetchVolumes,
-    FetchSnapshots,
+    CreateVolume(crate::port::types::VolumeCreateParams),
     DeleteVolume { id: String, force: bool },
     ExtendVolume { id: String, new_size: u32 },
+    FetchSnapshots,
+    CreateSnapshot(crate::port::types::SnapshotCreateParams),
+    DeleteSnapshot { id: String },
 
     // Glance
     FetchImages,
