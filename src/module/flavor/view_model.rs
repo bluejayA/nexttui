@@ -1,5 +1,5 @@
 use crate::models::nova::Flavor;
-use crate::ui::form::FormField;
+use crate::ui::form::FieldDef;
 use crate::ui::resource_list::{ColumnDef, ColumnWidth, Row, RowStyleHint};
 
 pub fn flavor_columns() -> Vec<ColumnDef> {
@@ -47,19 +47,20 @@ pub fn flavor_to_row(flavor: &Flavor) -> Row {
     }
 }
 
-pub fn flavor_create_form() -> Vec<FormField> {
+pub fn flavor_create_defs() -> Vec<FieldDef> {
     vec![
-        FormField::text("Name", true),
-        FormField::text("vCPU", true),
-        FormField::text("RAM (MB)", true),
-        FormField::text("Disk (GB)", true),
-        FormField::checkbox("Public"),
+        FieldDef::text("Name", true),
+        FieldDef::text("vCPU", true),
+        FieldDef::text("RAM (MB)", true),
+        FieldDef::text("Disk (GB)", true),
+        FieldDef::checkbox("Public"),
     ]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::form::Validation;
 
     fn make_flavor() -> Flavor {
         Flavor {
@@ -90,11 +91,18 @@ mod tests {
     }
 
     #[test]
-    fn test_flavor_create_form() {
-        let form = flavor_create_form();
-        assert_eq!(form.len(), 5);
-        assert!(form[0].required); // Name
-        assert!(form[1].required); // vCPU
-        assert!(!form[4].required); // Public checkbox
+    fn test_flavor_create_defs() {
+        let defs = flavor_create_defs();
+        assert_eq!(defs.len(), 5);
+        assert_eq!(defs[0].name(), "Name");
+        assert!(defs[0].validations().contains(&Validation::Required));
+        assert_eq!(defs[1].name(), "vCPU");
+        assert!(defs[1].validations().contains(&Validation::Required));
+        assert_eq!(defs[2].name(), "RAM (MB)");
+        assert!(defs[2].validations().contains(&Validation::Required));
+        assert_eq!(defs[3].name(), "Disk (GB)");
+        assert!(defs[3].validations().contains(&Validation::Required));
+        assert_eq!(defs[4].name(), "Public");
+        assert!(matches!(defs[4], FieldDef::Checkbox { .. }));
     }
 }

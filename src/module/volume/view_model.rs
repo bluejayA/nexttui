@@ -1,6 +1,6 @@
 use crate::models::cinder::Volume;
 use crate::ui::detail_view::{DetailData, DetailField, DetailSection};
-use crate::ui::form::FormField;
+use crate::ui::form::FieldDef;
 use crate::ui::resource_list::{ColumnDef, ColumnWidth, Row, RowStyleHint};
 
 pub fn volume_columns() -> Vec<ColumnDef> {
@@ -185,13 +185,13 @@ pub fn volume_detail_data(volume: &Volume) -> DetailData {
     }
 }
 
-pub fn volume_create_form() -> Vec<FormField> {
+pub fn volume_create_defs() -> Vec<FieldDef> {
     vec![
-        FormField::text("Name", true),
-        FormField::text("Size (GB)", true),
-        FormField::text("Type", false),
-        FormField::text("Description", false),
-        FormField::text("Availability Zone", false),
+        FieldDef::text("Name", true),
+        FieldDef::text("Size (GB)", true),
+        FieldDef::text("Type", false),
+        FieldDef::text("Description", false),
+        FieldDef::text("Availability Zone", false),
     ]
 }
 
@@ -199,6 +199,7 @@ pub fn volume_create_form() -> Vec<FormField> {
 mod tests {
     use super::*;
     use crate::models::cinder::VolumeAttachment;
+    use crate::ui::form::Validation;
 
     fn make_volume() -> Volume {
         Volume {
@@ -282,11 +283,16 @@ mod tests {
     }
 
     #[test]
-    fn test_volume_create_form() {
-        let form = volume_create_form();
-        assert_eq!(form.len(), 5);
-        assert!(form[0].required); // Name
-        assert!(form[1].required); // Size
-        assert!(!form[2].required); // Type
+    fn test_volume_create_defs() {
+        let defs = volume_create_defs();
+        assert_eq!(defs.len(), 5);
+        assert_eq!(defs[0].name(), "Name");
+        assert!(defs[0].validations().contains(&Validation::Required));
+        assert_eq!(defs[1].name(), "Size (GB)");
+        assert!(defs[1].validations().contains(&Validation::Required));
+        assert_eq!(defs[2].name(), "Type");
+        assert!(!defs[2].validations().contains(&Validation::Required));
+        assert_eq!(defs[3].name(), "Description");
+        assert_eq!(defs[4].name(), "Availability Zone");
     }
 }

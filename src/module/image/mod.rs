@@ -2,9 +2,6 @@ pub mod view_model;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
-use ratatui::text::Line;
-use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use tokio::sync::mpsc;
 
@@ -13,10 +10,12 @@ use crate::component::Component;
 use crate::event::AppEvent;
 use crate::models::glance::Image;
 use crate::module::{ConfirmHandler, PendingAction, ViewState};
+use crate::port::types::ImageCreateParams;
 use crate::ui::confirm::ConfirmDialog;
+use crate::ui::form::{FormAction, FormWidget};
 use crate::ui::resource_list::{ResourceList, Row};
 
-use self::view_model::{image_columns, image_detail_data, image_to_row};
+use self::view_model::{image_columns, image_create_defs, image_detail_data, image_to_row};
 
 pub struct ImageModule {
     view_state: ViewState,
@@ -27,6 +26,7 @@ pub struct ImageModule {
     error_message: Option<String>,
     confirm: ConfirmHandler,
     resource_list: ResourceList,
+    form: Option<FormWidget>,
     action_tx: mpsc::UnboundedSender<Action>,
 }
 
@@ -40,6 +40,7 @@ impl ImageModule {
             error_message: None,
             confirm: ConfirmHandler::new(),
             resource_list: ResourceList::new(image_columns()),
+            form: None,
             action_tx,
         }
     }
@@ -75,6 +76,17 @@ impl ImageModule {
         }
     }
 
+    fn open_create_form(&mut self) {
+        let defs = image_create_defs();
+        self.form = Some(FormWidget::new("Create Image", defs));
+        self.view_state = ViewState::Create;
+    }
+
+    fn close_form(&mut self) {
+        self.form = None;
+        self.view_state = ViewState::List;
+    }
+
     fn handle_list_key(&mut self, key: KeyEvent) -> Option<Action> {
         if self.resource_list.handle_nav_key(key) {
             return None;
@@ -89,7 +101,7 @@ impl ImageModule {
                 None
             }
             KeyCode::Char('c') if self.is_admin => {
-                self.view_state = ViewState::Create;
+                self.open_create_form();
                 None
             }
             KeyCode::Char('d') if self.is_admin => {
@@ -121,12 +133,71 @@ impl ImageModule {
     }
 
     fn handle_create_key(&mut self, key: KeyEvent) -> Option<Action> {
-        match key.code {
-            KeyCode::Esc => {
-                self.view_state = ViewState::List;
+        let Some(form) = self.form.as_mut() else {
+            self.close_form();
+            return None;
+        };
+
+        match form.handle_key(key) {
+            FormAction::Submit(values) => {
+                let name = values
+                    .get("Name")
+                    .and_then(|v| match v {
+                        crate::ui::form::FormValue::Text(s) => Some(s.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                let disk_format = values
+                    .get("Disk Format")
+                    .and_then(|v| match v {
+                        crate::ui::form::FormValue::Selected(s) => Some(s.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                let container_format = values
+                    .get("Container Format")
+                    .and_then(|v| match v {
+                        crate::ui::form::FormValue::Selected(s) => Some(s.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                let visibility = values
+                    .get("Visibility")
+                    .and_then(|v| match v {
+                        crate::ui::form::FormValue::Selected(s) => {
+                            if s.is_empty() { None } else { Some(s.clone()) }
+                        }
+                        _ => None,
+                    });
+                let min_disk = values
+                    .get("Min Disk (GB)")
+                    .and_then(|v| match v {
+                        crate::ui::form::FormValue::Text(s) => s.parse::<u32>().ok(),
+                        _ => None,
+                    });
+                let min_ram = values
+                    .get("Min RAM (MB)")
+                    .and_then(|v| match v {
+                        crate::ui::form::FormValue::Text(s) => s.parse::<u32>().ok(),
+                        _ => None,
+                    });
+
+                self.close_form();
+
+                Some(Action::CreateImage(ImageCreateParams {
+                    name,
+                    disk_format,
+                    container_format,
+                    visibility,
+                    min_disk,
+                    min_ram,
+                }))
+            }
+            FormAction::Cancel => {
+                self.close_form();
                 None
             }
-            _ => None,
+            FormAction::None => None,
         }
     }
 }
@@ -154,7 +225,7 @@ impl Component for ImageModule {
                 self.resource_list.set_rows(rows);
             }
             AppEvent::ImageCreated(_) => {
-                self.view_state = ViewState::List;
+                self.close_form();
                 let _ = self.action_tx.send(Action::FetchImages);
             }
             AppEvent::ImageDeleted { .. } => {
@@ -184,13 +255,11 @@ impl Component for ImageModule {
                 }
             }
             ViewState::Create => {
-                let text = Paragraph::new(vec![
-                    Line::raw(""),
-                    Line::raw("  Image Create Form (Tab/Enter to submit, Esc to cancel)"),
-                    Line::raw("  [Form integration pending]"),
-                ])
-                .style(Style::default().fg(Color::DarkGray));
-                frame.render_widget(text, area);
+                if let Some(form) = &self.form {
+                    form.render(frame, area);
+                } else {
+                    self.resource_list.render(frame, area);
+                }
             }
         }
 
@@ -272,10 +341,12 @@ mod tests {
         let (mut module, _rx) = setup(false);
         module.handle_key(key(KeyCode::Char('c')));
         assert_eq!(*module.view_state(), ViewState::List);
+        assert!(module.form.is_none());
 
         let (mut module, _rx) = setup(true);
         module.handle_key(key(KeyCode::Char('c')));
         assert_eq!(*module.view_state(), ViewState::Create);
+        assert!(module.form.is_some());
     }
 
     #[test]
@@ -340,5 +411,27 @@ mod tests {
             message: "forbidden".into(),
         });
         assert_eq!(module.error_message(), Some("delete: forbidden"));
+    }
+
+    // -- Form integration tests ---------------------------------------------
+
+    #[test]
+    fn test_create_form_cancel_returns_to_list() {
+        let (mut module, _rx) = setup(true);
+        module.handle_key(key(KeyCode::Char('c')));
+        assert_eq!(*module.view_state(), ViewState::Create);
+
+        module.handle_key(key(KeyCode::Esc));
+        assert_eq!(*module.view_state(), ViewState::List);
+        assert!(module.form.is_none());
+    }
+
+    #[test]
+    fn test_create_form_has_expected_fields() {
+        let (mut module, _rx) = setup(true);
+        module.handle_key(key(KeyCode::Char('c')));
+        let form = module.form.as_ref().unwrap();
+        assert_eq!(form.field_count(), 6);
+        assert_eq!(form.focused_field_name(), "Name");
     }
 }

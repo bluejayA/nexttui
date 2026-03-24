@@ -1,7 +1,7 @@
 use crate::models::neutron::Network;
 use crate::port::types::Subnet;
 use crate::ui::detail_view::{DetailData, DetailField, DetailSection};
-use crate::ui::form::FormField;
+use crate::ui::form::FieldDef;
 use crate::ui::resource_list::{ColumnDef, ColumnWidth, Row, RowStyleHint};
 
 pub fn network_columns() -> Vec<ColumnDef> {
@@ -206,19 +206,20 @@ pub fn network_detail_data(network: &Network, subnets: &[Subnet]) -> DetailData 
     }
 }
 
-pub fn network_create_form() -> Vec<FormField> {
+pub fn network_create_defs() -> Vec<FieldDef> {
     vec![
-        FormField::text("Name", true),
-        FormField::checkbox("Admin State Up"),
-        FormField::checkbox("Shared"),
-        FormField::checkbox("External"),
-        FormField::text("MTU", false),
+        FieldDef::text("Name", true),
+        FieldDef::checkbox("Admin State Up"),
+        FieldDef::checkbox("Shared"),
+        FieldDef::checkbox("External"),
+        FieldDef::text("MTU", false),
     ]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::form::Validation;
 
     fn make_network() -> Network {
         Network {
@@ -295,10 +296,18 @@ mod tests {
     }
 
     #[test]
-    fn test_network_create_form() {
-        let form = network_create_form();
-        assert_eq!(form.len(), 5);
-        assert!(form[0].required); // Name
-        assert!(!form[4].required); // MTU
+    fn test_network_create_defs() {
+        let defs = network_create_defs();
+        assert_eq!(defs.len(), 5);
+        assert_eq!(defs[0].name(), "Name");
+        assert!(defs[0].validations().contains(&Validation::Required));
+        assert_eq!(defs[1].name(), "Admin State Up");
+        assert!(matches!(defs[1], FieldDef::Checkbox { .. }));
+        assert_eq!(defs[2].name(), "Shared");
+        assert!(matches!(defs[2], FieldDef::Checkbox { .. }));
+        assert_eq!(defs[3].name(), "External");
+        assert!(matches!(defs[3], FieldDef::Checkbox { .. }));
+        assert_eq!(defs[4].name(), "MTU");
+        assert!(!defs[4].validations().contains(&Validation::Required));
     }
 }

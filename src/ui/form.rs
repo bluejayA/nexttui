@@ -1145,63 +1145,6 @@ fn is_valid_ipv4_cidr(s: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Legacy compatibility — remove after Unit 3 migration
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone)]
-pub enum FormFieldType {
-    Text,
-    Password,
-    Dropdown(Vec<String>),
-    Checkbox,
-}
-
-#[derive(Debug, Clone)]
-pub struct FormField {
-    pub label: String,
-    pub field_type: FormFieldType,
-    pub value: String,
-    pub required: bool,
-    pub selected_option: usize,
-    pub checked: bool,
-}
-
-impl FormField {
-    pub fn text(label: impl Into<String>, required: bool) -> Self {
-        Self {
-            label: label.into(),
-            field_type: FormFieldType::Text,
-            value: String::new(),
-            required,
-            selected_option: 0,
-            checked: false,
-        }
-    }
-
-    pub fn dropdown(label: impl Into<String>, options: Vec<String>, required: bool) -> Self {
-        Self {
-            label: label.into(),
-            field_type: FormFieldType::Dropdown(options),
-            value: String::new(),
-            required,
-            selected_option: 0,
-            checked: false,
-        }
-    }
-
-    pub fn checkbox(label: impl Into<String>) -> Self {
-        Self {
-            label: label.into(),
-            field_type: FormFieldType::Checkbox,
-            value: String::new(),
-            required: false,
-            selected_option: 0,
-            checked: false,
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -2064,15 +2007,6 @@ mod tests {
         assert!(!is_valid_ipv4_cidr("10.0.0.0/33"));     // prefix > 32
         assert!(!is_valid_ipv4_cidr("10.0.0/24"));       // only 3 octets
         assert!(!is_valid_ipv4_cidr("abc.0.0.0/24"));    // non-numeric
-    }
-
-    // -- Legacy compat ------------------------------------------------------
-
-    #[test]
-    fn test_legacy_form_field_builders() {
-        let _t = FormField::text("Name", true);
-        let _d = FormField::dropdown("Type", vec!["a".into()], true);
-        let _c = FormField::checkbox("Public");
     }
 
     // -- Render tests -------------------------------------------------------

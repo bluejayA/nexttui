@@ -2,9 +2,6 @@ pub mod view_model;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
-use ratatui::text::Line;
-use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use tokio::sync::mpsc;
 
@@ -13,20 +10,25 @@ use crate::component::Component;
 use crate::event::AppEvent;
 use crate::models::neutron::SecurityGroup;
 use crate::module::{ConfirmHandler, PendingAction, ViewState};
+use crate::port::types::{RuleDirection, SecurityGroupCreateParams, SecurityGroupRuleCreateParams};
 use crate::ui::confirm::ConfirmDialog;
+use crate::ui::form::{FormAction, FormWidget};
 use crate::ui::resource_list::{ResourceList, Row};
 
-use self::view_model::{sg_columns, sg_detail_data, sg_to_row};
+use self::view_model::{sg_columns, sg_create_defs, sg_detail_data, sg_rule_defs, sg_to_row};
 
 pub struct SecurityGroupModule {
     view_state: ViewState,
     security_groups: Vec<SecurityGroup>,
     rule_selected: usize,
+    /// When adding a rule from detail view, remembers which SG we're in.
+    detail_sg_id: Option<String>,
     #[allow(dead_code)] // Phase 2: set to true on Action dispatch, render loading spinner
     loading: bool,
     error_message: Option<String>,
     confirm: ConfirmHandler,
     resource_list: ResourceList,
+    form: Option<FormWidget>,
     action_tx: mpsc::UnboundedSender<Action>,
 }
 
@@ -36,10 +38,12 @@ impl SecurityGroupModule {
             view_state: ViewState::List,
             security_groups: Vec::new(),
             rule_selected: 0,
+            detail_sg_id: None,
             loading: false,
             error_message: None,
             confirm: ConfirmHandler::new(),
             resource_list: ResourceList::new(sg_columns()),
+            form: None,
             action_tx,
         }
     }
@@ -88,6 +92,24 @@ impl SecurityGroupModule {
         }
     }
 
+    fn open_create_form(&mut self) {
+        let defs = sg_create_defs();
+        self.form = Some(FormWidget::new("Create Security Group", defs));
+        self.view_state = ViewState::Create;
+    }
+
+    fn open_rule_form(&mut self, sg_id: String) {
+        self.detail_sg_id = Some(sg_id);
+        let defs = sg_rule_defs();
+        self.form = Some(FormWidget::new("Add Security Group Rule", defs));
+        self.view_state = ViewState::Create;
+    }
+
+    fn close_form(&mut self) {
+        self.form = None;
+        self.view_state = ViewState::List;
+    }
+
     fn handle_list_key(&mut self, key: KeyEvent) -> Option<Action> {
         if self.resource_list.handle_nav_key(key) {
             return None;
@@ -103,7 +125,7 @@ impl SecurityGroupModule {
                 None
             }
             KeyCode::Char('c') => {
-                self.view_state = ViewState::Create;
+                self.open_create_form();
                 None
             }
             KeyCode::Char('d') => {
@@ -148,6 +170,13 @@ impl SecurityGroupModule {
                 self.view_state = ViewState::List;
                 None
             }
+            KeyCode::Char('a') => {
+                if let Some(sg) = self.current_sg() {
+                    let sg_id = sg.id.clone();
+                    self.open_rule_form(sg_id);
+                }
+                None
+            }
             KeyCode::Char('d') => {
                 if let Some(sg) = self.current_sg() {
                     if let Some(rule) = sg
@@ -173,12 +202,118 @@ impl SecurityGroupModule {
     }
 
     fn handle_create_key(&mut self, key: KeyEvent) -> Option<Action> {
-        match key.code {
-            KeyCode::Esc => {
-                self.view_state = ViewState::List;
+        let Some(form) = self.form.as_mut() else {
+            self.close_form();
+            return None;
+        };
+
+        let is_rule_form = form.title() == "Add Security Group Rule";
+
+        match form.handle_key(key) {
+            FormAction::Submit(values) => {
+                if is_rule_form {
+                    // Extract rule fields
+                    let sg_id = self.detail_sg_id.clone().unwrap_or_default();
+                    let direction_str = values
+                        .get("Direction")
+                        .and_then(|v| match v {
+                            crate::ui::form::FormValue::Selected(s) => Some(s.clone()),
+                            _ => None,
+                        })
+                        .unwrap_or_default();
+                    let direction = if direction_str == "egress" {
+                        RuleDirection::Egress
+                    } else {
+                        RuleDirection::Ingress
+                    };
+                    let protocol = values
+                        .get("Protocol")
+                        .and_then(|v| match v {
+                            crate::ui::form::FormValue::Selected(s) => {
+                                if s.is_empty() { None } else { Some(s.clone()) }
+                            }
+                            _ => None,
+                        });
+                    let port_range_min = values
+                        .get("Port Min")
+                        .and_then(|v| match v {
+                            crate::ui::form::FormValue::Text(s) => s.parse::<u16>().ok(),
+                            _ => None,
+                        });
+                    let port_range_max = values
+                        .get("Port Max")
+                        .and_then(|v| match v {
+                            crate::ui::form::FormValue::Text(s) => s.parse::<u16>().ok(),
+                            _ => None,
+                        });
+                    let remote_ip_prefix = values
+                        .get("Source CIDR")
+                        .and_then(|v| match v {
+                            crate::ui::form::FormValue::Text(s) => {
+                                if s.is_empty() { None } else { Some(s.clone()) }
+                            }
+                            _ => None,
+                        });
+
+                    // Return to detail view, not list
+                    self.form = None;
+                    if let Some(sg_id) = self.detail_sg_id.take() {
+                        self.view_state = ViewState::Detail(sg_id.clone());
+                    } else {
+                        self.view_state = ViewState::List;
+                    }
+
+                    Some(Action::CreateSecurityGroupRule(SecurityGroupRuleCreateParams {
+                        security_group_id: sg_id,
+                        direction,
+                        protocol,
+                        port_range_min,
+                        port_range_max,
+                        remote_ip_prefix,
+                        remote_group_id: None,
+                        ethertype: None,
+                    }))
+                } else {
+                    // SG create form
+                    let name = values
+                        .get("Name")
+                        .and_then(|v| match v {
+                            crate::ui::form::FormValue::Text(s) => Some(s.clone()),
+                            _ => None,
+                        })
+                        .unwrap_or_default();
+                    let description = values
+                        .get("Description")
+                        .and_then(|v| match v {
+                            crate::ui::form::FormValue::Text(s) => {
+                                if s.is_empty() { None } else { Some(s.clone()) }
+                            }
+                            _ => None,
+                        });
+
+                    self.close_form();
+
+                    Some(Action::CreateSecurityGroup(SecurityGroupCreateParams {
+                        name,
+                        description,
+                    }))
+                }
+            }
+            FormAction::Cancel => {
+                if is_rule_form {
+                    // Return to detail view on cancel from rule form
+                    self.form = None;
+                    if let Some(sg_id) = self.detail_sg_id.take() {
+                        self.view_state = ViewState::Detail(sg_id);
+                    } else {
+                        self.view_state = ViewState::List;
+                    }
+                } else {
+                    self.close_form();
+                }
                 None
             }
-            _ => None,
+            FormAction::None => None,
         }
     }
 }
@@ -235,13 +370,11 @@ impl Component for SecurityGroupModule {
                 }
             }
             ViewState::Create => {
-                let text = Paragraph::new(vec![
-                    Line::raw(""),
-                    Line::raw("  Security Group Create Form (Tab/Enter, Esc to cancel)"),
-                    Line::raw("  [Form integration pending]"),
-                ])
-                .style(Style::default().fg(Color::DarkGray));
-                frame.render_widget(text, area);
+                if let Some(form) = &self.form {
+                    form.render(frame, area);
+                } else {
+                    self.resource_list.render(frame, area);
+                }
             }
         }
 
@@ -340,6 +473,7 @@ mod tests {
         let (mut module, _rx) = setup();
         module.handle_key(key(KeyCode::Char('c')));
         assert_eq!(*module.view_state(), ViewState::Create);
+        assert!(module.form.is_some());
     }
 
     #[test]
@@ -429,5 +563,46 @@ mod tests {
             message: "conflict".into(),
         });
         assert_eq!(module.error_message(), Some("delete: conflict"));
+    }
+
+    // -- Form integration tests -----------------------------------------------
+
+    #[test]
+    fn test_create_form_cancel_returns_to_list() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Char('c')));
+        assert_eq!(*module.view_state(), ViewState::Create);
+
+        module.handle_key(key(KeyCode::Esc));
+        assert_eq!(*module.view_state(), ViewState::List);
+        assert!(module.form.is_none());
+    }
+
+    #[test]
+    fn test_create_form_has_expected_fields() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Char('c')));
+        let form = module.form.as_ref().unwrap();
+        assert_eq!(form.field_count(), 2);
+        assert_eq!(form.focused_field_name(), "Name");
+    }
+
+    #[test]
+    fn test_create_form_submit_produces_action() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Char('c')));
+
+        // Type SG name
+        for c in "my-sg".chars() {
+            module.handle_key(key(KeyCode::Char(c)));
+        }
+
+        // Navigate to last field (Description) and submit
+        module.handle_key(key(KeyCode::Down));
+        let action = module.handle_key(key(KeyCode::Enter));
+
+        assert!(matches!(action, Some(Action::CreateSecurityGroup(_))));
+        assert_eq!(*module.view_state(), ViewState::List);
+        assert!(module.form.is_none());
     }
 }

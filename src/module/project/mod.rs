@@ -2,9 +2,6 @@ pub mod view_model;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
-use ratatui::text::Line;
-use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use tokio::sync::mpsc;
 
@@ -13,10 +10,12 @@ use crate::component::Component;
 use crate::event::AppEvent;
 use crate::models::keystone::Project;
 use crate::module::{ConfirmHandler, PendingAction, ViewState};
+use crate::port::types::ProjectCreateParams;
 use crate::ui::confirm::ConfirmDialog;
+use crate::ui::form::{FormAction, FormWidget};
 use crate::ui::resource_list::{ResourceList, Row};
 
-use self::view_model::{project_columns, project_detail_data, project_to_row};
+use self::view_model::{project_columns, project_create_defs, project_detail_data, project_to_row};
 
 pub struct ProjectModule {
     view_state: ViewState,
@@ -26,6 +25,7 @@ pub struct ProjectModule {
     error_message: Option<String>,
     confirm: ConfirmHandler,
     resource_list: ResourceList,
+    form: Option<FormWidget>,
     action_tx: mpsc::UnboundedSender<Action>,
 }
 
@@ -38,6 +38,7 @@ impl ProjectModule {
             error_message: None,
             confirm: ConfirmHandler::new(),
             resource_list: ResourceList::new(project_columns()),
+            form: None,
             action_tx,
         }
     }
@@ -62,6 +63,17 @@ impl ProjectModule {
         }
     }
 
+    fn open_create_form(&mut self) {
+        let defs = project_create_defs();
+        self.form = Some(FormWidget::new("Create Project", defs));
+        self.view_state = ViewState::Create;
+    }
+
+    fn close_form(&mut self) {
+        self.form = None;
+        self.view_state = ViewState::List;
+    }
+
     fn handle_list_key(&mut self, key: KeyEvent) -> Option<Action> {
         if self.resource_list.handle_nav_key(key) { return None; }
         match key.code {
@@ -71,7 +83,7 @@ impl ProjectModule {
                 }
                 None
             }
-            KeyCode::Char('c') => { self.view_state = ViewState::Create; None }
+            KeyCode::Char('c') => { self.open_create_form(); None }
             KeyCode::Char('d') => {
                 if let Some(proj) = self.selected_project() {
                     let id = proj.id.clone();
@@ -101,9 +113,56 @@ impl ProjectModule {
     }
 
     fn handle_create_key(&mut self, key: KeyEvent) -> Option<Action> {
-        match key.code {
-            KeyCode::Esc => { self.view_state = ViewState::List; None }
-            _ => None,
+        let Some(form) = self.form.as_mut() else {
+            self.close_form();
+            return None;
+        };
+
+        match form.handle_key(key) {
+            FormAction::Submit(values) => {
+                let name = values
+                    .get("Name")
+                    .and_then(|v| match v {
+                        crate::ui::form::FormValue::Text(s) => Some(s.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                let description = values
+                    .get("Description")
+                    .and_then(|v| match v {
+                        crate::ui::form::FormValue::Text(s) => {
+                            if s.is_empty() { None } else { Some(s.clone()) }
+                        }
+                        _ => None,
+                    });
+                let domain_id = values
+                    .get("Domain ID")
+                    .and_then(|v| match v {
+                        crate::ui::form::FormValue::Text(s) => Some(s.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                let enabled = values
+                    .get("Enabled")
+                    .and_then(|v| match v {
+                        crate::ui::form::FormValue::Bool(b) => Some(*b),
+                        _ => None,
+                    });
+
+                self.close_form();
+
+                Some(Action::CreateProject(ProjectCreateParams {
+                    name,
+                    description,
+                    domain_id,
+                    enabled,
+                }))
+            }
+            FormAction::Cancel => {
+                self.close_form();
+                None
+            }
+            FormAction::None => None,
         }
     }
 }
@@ -154,12 +213,11 @@ impl Component for ProjectModule {
                 }
             }
             ViewState::Create => {
-                let text = Paragraph::new(vec![
-                    Line::raw(""),
-                    Line::raw("  Project Create Form (Esc to cancel)"),
-                    Line::raw("  [Form integration pending]"),
-                ]).style(Style::default().fg(Color::DarkGray));
-                frame.render_widget(text, area);
+                if let Some(form) = &self.form {
+                    form.render(frame, area);
+                } else {
+                    self.resource_list.render(frame, area);
+                }
             }
         }
         self.confirm.render(frame, area);
@@ -186,7 +244,7 @@ mod tests {
     #[test] fn test_nav() { let (mut m, _) = setup(); m.handle_key(key(KeyCode::Char('j'))); assert_eq!(m.selected_index(), 1); }
     #[test] fn test_enter_detail() { let (mut m, _) = setup(); m.handle_key(key(KeyCode::Enter)); assert_eq!(*m.view_state(), ViewState::Detail("p1".into())); }
     #[test] fn test_esc_to_list() { let (mut m, _) = setup(); m.handle_key(key(KeyCode::Enter)); m.handle_key(key(KeyCode::Esc)); assert_eq!(*m.view_state(), ViewState::List); }
-    #[test] fn test_create() { let (mut m, _) = setup(); m.handle_key(key(KeyCode::Char('c'))); assert_eq!(*m.view_state(), ViewState::Create); }
+    #[test] fn test_create() { let (mut m, _) = setup(); m.handle_key(key(KeyCode::Char('c'))); assert_eq!(*m.view_state(), ViewState::Create); assert!(m.form.is_some()); }
     #[test] fn test_delete_confirm() { let (mut m, _) = setup(); m.handle_key(key(KeyCode::Char('d'))); assert!(m.confirm.is_active()); }
     #[test] fn test_confirm_delete() {
         let (mut m, _) = setup();
@@ -211,5 +269,48 @@ mod tests {
         let (mut m, mut rx) = setup();
         m.handle_event(&AppEvent::ProjectDeleted { id: "p1".into() });
         assert!(matches!(rx.try_recv().unwrap(), Action::FetchProjects));
+    }
+
+    // -- Form integration tests -----------------------------------------------
+
+    #[test]
+    fn test_create_form_cancel_returns_to_list() {
+        let (mut m, _) = setup();
+        m.handle_key(key(KeyCode::Char('c')));
+        assert_eq!(*m.view_state(), ViewState::Create);
+        m.handle_key(key(KeyCode::Esc));
+        assert_eq!(*m.view_state(), ViewState::List);
+        assert!(m.form.is_none());
+    }
+
+    #[test]
+    fn test_create_form_has_expected_fields() {
+        let (mut m, _) = setup();
+        m.handle_key(key(KeyCode::Char('c')));
+        let form = m.form.as_ref().unwrap();
+        assert_eq!(form.field_count(), 4);
+        assert_eq!(form.focused_field_name(), "Name");
+    }
+
+    #[test]
+    fn test_create_form_submit_blocked_by_validation() {
+        let (mut m, _) = setup();
+        m.handle_key(key(KeyCode::Char('c')));
+
+        // Type project name
+        for c in "test-proj".chars() {
+            m.handle_key(key(KeyCode::Char(c)));
+        }
+
+        // Skip Description (Down), go to Domain ID — leave empty
+        m.handle_key(key(KeyCode::Down));
+        m.handle_key(key(KeyCode::Down));
+
+        // Try to submit with Enter on Domain ID (required field is empty)
+        // Domain ID is a text field, but it's not the last field, so Enter shouldn't submit
+        let action = m.handle_key(key(KeyCode::Enter));
+        assert!(action.is_none());
+        // Still in create mode
+        assert_eq!(*m.view_state(), ViewState::Create);
     }
 }

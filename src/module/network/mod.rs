@@ -2,9 +2,6 @@ pub mod view_model;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
-use ratatui::text::Line;
-use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use tokio::sync::mpsc;
 
@@ -13,10 +10,11 @@ use crate::component::Component;
 use crate::event::AppEvent;
 use crate::models::neutron::Network;
 use crate::module::ViewState;
-use crate::port::types::Subnet;
+use crate::port::types::{NetworkCreateParams, Subnet};
+use crate::ui::form::{FormAction, FormWidget};
 use crate::ui::resource_list::{ResourceList, Row};
 
-use self::view_model::{network_columns, network_detail_data, network_to_row};
+use self::view_model::{network_columns, network_create_defs, network_detail_data, network_to_row};
 
 pub struct NetworkModule {
     view_state: ViewState,
@@ -26,6 +24,7 @@ pub struct NetworkModule {
     loading: bool,
     error_message: Option<String>,
     resource_list: ResourceList,
+    form: Option<FormWidget>,
     action_tx: mpsc::UnboundedSender<Action>,
 }
 
@@ -38,6 +37,7 @@ impl NetworkModule {
             loading: false,
             error_message: None,
             resource_list: ResourceList::new(network_columns()),
+            form: None,
             action_tx,
         }
     }
@@ -66,6 +66,17 @@ impl NetworkModule {
         self.networks.iter().map(network_to_row).collect()
     }
 
+    fn open_create_form(&mut self) {
+        let defs = network_create_defs();
+        self.form = Some(FormWidget::new("Create Network", defs));
+        self.view_state = ViewState::Create;
+    }
+
+    fn close_form(&mut self) {
+        self.form = None;
+        self.view_state = ViewState::List;
+    }
+
     fn handle_list_key(&mut self, key: KeyEvent) -> Option<Action> {
         if self.resource_list.handle_nav_key(key) {
             return None;
@@ -84,7 +95,7 @@ impl NetworkModule {
                 None
             }
             KeyCode::Char('c') => {
-                self.view_state = ViewState::Create;
+                self.open_create_form();
                 None
             }
             KeyCode::Char('r') => Some(Action::FetchNetworks),
@@ -105,12 +116,62 @@ impl NetworkModule {
     }
 
     fn handle_create_key(&mut self, key: KeyEvent) -> Option<Action> {
-        match key.code {
-            KeyCode::Esc => {
-                self.view_state = ViewState::List;
+        let Some(form) = self.form.as_mut() else {
+            self.close_form();
+            return None;
+        };
+
+        match form.handle_key(key) {
+            FormAction::Submit(values) => {
+                let name = values
+                    .get("Name")
+                    .and_then(|v| match v {
+                        crate::ui::form::FormValue::Text(s) => Some(s.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                let admin_state_up = values
+                    .get("Admin State Up")
+                    .and_then(|v| match v {
+                        crate::ui::form::FormValue::Bool(b) => Some(*b),
+                        _ => None,
+                    })
+                    .unwrap_or(true);
+                let shared = values
+                    .get("Shared")
+                    .and_then(|v| match v {
+                        crate::ui::form::FormValue::Bool(b) => Some(*b),
+                        _ => None,
+                    });
+                let external = values
+                    .get("External")
+                    .and_then(|v| match v {
+                        crate::ui::form::FormValue::Bool(b) => Some(*b),
+                        _ => None,
+                    });
+                let mtu = values
+                    .get("MTU")
+                    .and_then(|v| match v {
+                        crate::ui::form::FormValue::Text(s) => s.parse::<u32>().ok(),
+                        _ => None,
+                    });
+
+                self.close_form();
+
+                Some(Action::CreateNetwork(NetworkCreateParams {
+                    name,
+                    admin_state_up,
+                    shared,
+                    external,
+                    mtu,
+                    port_security_enabled: None,
+                }))
+            }
+            FormAction::Cancel => {
+                self.close_form();
                 None
             }
-            _ => None,
+            FormAction::None => None,
         }
     }
 }
@@ -141,6 +202,7 @@ impl Component for NetworkModule {
                 }
             }
             AppEvent::NetworkCreated(_) => {
+                self.close_form();
                 let _ = self.action_tx.send(Action::FetchNetworks);
             }
             AppEvent::ApiError {
@@ -167,13 +229,11 @@ impl Component for NetworkModule {
                 }
             }
             ViewState::Create => {
-                let text = Paragraph::new(vec![
-                    Line::raw(""),
-                    Line::raw("  Network Create Form (Tab/Enter to submit, Esc to cancel)"),
-                    Line::raw("  [Form integration pending]"),
-                ])
-                .style(Style::default().fg(Color::DarkGray));
-                frame.render_widget(text, area);
+                if let Some(form) = &self.form {
+                    form.render(frame, area);
+                } else {
+                    self.resource_list.render(frame, area);
+                }
             }
         }
     }
@@ -272,6 +332,7 @@ mod tests {
         let (mut module, _rx) = setup();
         module.handle_key(key(KeyCode::Char('c')));
         assert_eq!(*module.view_state(), ViewState::Create);
+        assert!(module.form.is_some());
     }
 
     #[test]
@@ -327,5 +388,27 @@ mod tests {
             message: "timeout".into(),
         });
         assert_eq!(module.error_message(), Some("list: timeout"));
+    }
+
+    // -- Form integration tests ---------------------------------------------
+
+    #[test]
+    fn test_create_form_cancel_returns_to_list() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Char('c')));
+        assert_eq!(*module.view_state(), ViewState::Create);
+
+        module.handle_key(key(KeyCode::Esc));
+        assert_eq!(*module.view_state(), ViewState::List);
+        assert!(module.form.is_none());
+    }
+
+    #[test]
+    fn test_create_form_has_expected_fields() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Char('c')));
+        let form = module.form.as_ref().unwrap();
+        assert_eq!(form.field_count(), 5);
+        assert_eq!(form.focused_field_name(), "Name");
     }
 }

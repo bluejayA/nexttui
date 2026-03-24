@@ -1,6 +1,6 @@
 use crate::models::keystone::Project;
 use crate::ui::detail_view::{DetailData, DetailField, DetailSection};
-use crate::ui::form::FormField;
+use crate::ui::form::FieldDef;
 use crate::ui::resource_list::{ColumnDef, ColumnWidth, Row, RowStyleHint};
 
 pub fn project_columns() -> Vec<ColumnDef> {
@@ -90,12 +90,12 @@ pub fn project_detail_data(proj: &Project) -> DetailData {
     }
 }
 
-pub fn project_create_form() -> Vec<FormField> {
+pub fn project_create_defs() -> Vec<FieldDef> {
     vec![
-        FormField::text("Name", true),
-        FormField::text("Description", false),
-        FormField::text("Domain ID", true),
-        FormField::checkbox("Enabled"),
+        FieldDef::text("Name", true),
+        FieldDef::text("Description", false),
+        FieldDef::text("Domain ID", true),
+        FieldDef::checkbox("Enabled"),
     ]
 }
 
@@ -145,10 +145,17 @@ mod tests {
     }
 
     #[test]
-    fn test_project_create_form() {
-        let form = project_create_form();
-        assert_eq!(form.len(), 4);
-        assert!(form[0].required);
-        assert!(form[2].required); // Domain ID
+    fn test_project_create_defs() {
+        use crate::ui::form::Validation;
+        let defs = project_create_defs();
+        assert_eq!(defs.len(), 4);
+        assert_eq!(defs[0].name(), "Name");
+        assert!(defs[0].validations().contains(&Validation::Required));
+        assert_eq!(defs[1].name(), "Description");
+        assert!(!defs[1].validations().contains(&Validation::Required));
+        assert_eq!(defs[2].name(), "Domain ID");
+        assert!(defs[2].validations().contains(&Validation::Required));
+        assert_eq!(defs[3].name(), "Enabled");
+        assert!(matches!(defs[3], FieldDef::Checkbox { .. }));
     }
 }

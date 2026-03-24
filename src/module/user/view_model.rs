@@ -1,5 +1,5 @@
 use crate::models::keystone::User;
-use crate::ui::form::FormField;
+use crate::ui::form::FieldDef;
 use crate::ui::resource_list::{ColumnDef, ColumnWidth, Row, RowStyleHint};
 
 pub fn user_columns() -> Vec<ColumnDef> {
@@ -39,13 +39,13 @@ pub fn user_to_row(user: &User) -> Row {
     }
 }
 
-pub fn user_create_form() -> Vec<FormField> {
+pub fn user_create_defs() -> Vec<FieldDef> {
     vec![
-        FormField::text("Username", true),
-        FormField::text("Password", true),
-        FormField::text("Email", false),
-        FormField::text("Domain ID", true),
-        FormField::checkbox("Enabled"),
+        FieldDef::text("Username", true),
+        FieldDef::text("Password", true),
+        FieldDef::text("Email", false),
+        FieldDef::text("Domain ID", true),
+        FieldDef::checkbox("Enabled"),
     ]
 }
 
@@ -75,10 +75,19 @@ mod tests {
         let mut u = make_user(); u.enabled = false;
         assert_eq!(user_to_row(&u).style_hint, Some(RowStyleHint::Disabled));
     }
-    #[test] fn test_user_create_form() {
-        let form = user_create_form();
-        assert_eq!(form.len(), 5);
-        assert!(form[0].required); // Username
-        assert!(form[1].required); // Password
+    #[test] fn test_user_create_defs() {
+        use crate::ui::form::Validation;
+        let defs = user_create_defs();
+        assert_eq!(defs.len(), 5);
+        assert_eq!(defs[0].name(), "Username");
+        assert!(defs[0].validations().contains(&Validation::Required));
+        assert_eq!(defs[1].name(), "Password");
+        assert!(defs[1].validations().contains(&Validation::Required));
+        assert_eq!(defs[2].name(), "Email");
+        assert!(!defs[2].validations().contains(&Validation::Required));
+        assert_eq!(defs[3].name(), "Domain ID");
+        assert!(defs[3].validations().contains(&Validation::Required));
+        assert_eq!(defs[4].name(), "Enabled");
+        assert!(matches!(defs[4], FieldDef::Checkbox { .. }));
     }
 }

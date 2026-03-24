@@ -1,6 +1,6 @@
 use crate::models::neutron::{SecurityGroup, SecurityGroupRule};
 use crate::ui::detail_view::{DetailData, DetailField, DetailSection};
-use crate::ui::form::FormField;
+use crate::ui::form::FieldDef;
 use crate::ui::resource_list::{ColumnDef, ColumnWidth, Row, RowStyleHint};
 
 pub fn sg_columns() -> Vec<ColumnDef> {
@@ -140,24 +140,24 @@ pub fn sg_detail_data(sg: &SecurityGroup) -> DetailData {
     }
 }
 
-pub fn sg_create_form() -> Vec<FormField> {
+pub fn sg_create_defs() -> Vec<FieldDef> {
     vec![
-        FormField::text("Name", true),
-        FormField::text("Description", false),
+        FieldDef::text("Name", true),
+        FieldDef::text("Description", false),
     ]
 }
 
-pub fn sg_rule_form() -> Vec<FormField> {
+pub fn sg_rule_defs() -> Vec<FieldDef> {
     vec![
-        FormField::dropdown("Direction", vec!["ingress".into(), "egress".into()], true),
-        FormField::dropdown(
+        FieldDef::dropdown("Direction", vec!["ingress".into(), "egress".into()], true),
+        FieldDef::dropdown(
             "Protocol",
             vec!["tcp".into(), "udp".into(), "icmp".into()],
             false,
         ),
-        FormField::text("Port Min", false),
-        FormField::text("Port Max", false),
-        FormField::text("Source CIDR", false),
+        FieldDef::text("Port Min", false),
+        FieldDef::text("Port Max", false),
+        FieldDef::text("Source CIDR", false),
     ]
 }
 
@@ -288,18 +288,28 @@ mod tests {
     }
 
     #[test]
-    fn test_sg_create_form() {
-        let form = sg_create_form();
-        assert_eq!(form.len(), 2);
-        assert!(form[0].required);
-        assert!(!form[1].required);
+    fn test_sg_create_defs() {
+        use crate::ui::form::Validation;
+        let defs = sg_create_defs();
+        assert_eq!(defs.len(), 2);
+        assert_eq!(defs[0].name(), "Name");
+        assert!(defs[0].validations().contains(&Validation::Required));
+        assert_eq!(defs[1].name(), "Description");
+        assert!(!defs[1].validations().contains(&Validation::Required));
     }
 
     #[test]
-    fn test_sg_rule_form() {
-        let form = sg_rule_form();
-        assert_eq!(form.len(), 5);
-        assert!(form[0].required); // Direction
-        assert!(!form[1].required); // Protocol
+    fn test_sg_rule_defs() {
+        use crate::ui::form::Validation;
+        let defs = sg_rule_defs();
+        assert_eq!(defs.len(), 5);
+        assert_eq!(defs[0].name(), "Direction");
+        assert!(defs[0].validations().contains(&Validation::Required));
+        assert!(matches!(defs[0], FieldDef::Dropdown { .. }));
+        assert_eq!(defs[1].name(), "Protocol");
+        assert!(!defs[1].validations().contains(&Validation::Required));
+        assert_eq!(defs[2].name(), "Port Min");
+        assert_eq!(defs[3].name(), "Port Max");
+        assert_eq!(defs[4].name(), "Source CIDR");
     }
 }

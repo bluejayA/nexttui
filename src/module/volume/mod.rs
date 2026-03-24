@@ -2,9 +2,6 @@ pub mod view_model;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
-use ratatui::text::Line;
-use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use tokio::sync::mpsc;
 
@@ -13,10 +10,12 @@ use crate::component::Component;
 use crate::event::AppEvent;
 use crate::models::cinder::Volume;
 use crate::module::{ConfirmHandler, PendingAction, ViewState};
+use crate::port::types::VolumeCreateParams;
 use crate::ui::confirm::ConfirmDialog;
+use crate::ui::form::{FormAction, FormWidget};
 use crate::ui::resource_list::{ResourceList, Row};
 
-use self::view_model::{volume_columns, volume_detail_data, volume_to_row};
+use self::view_model::{volume_columns, volume_create_defs, volume_detail_data, volume_to_row};
 
 pub struct VolumeModule {
     view_state: ViewState,
@@ -26,6 +25,7 @@ pub struct VolumeModule {
     error_message: Option<String>,
     confirm: ConfirmHandler,
     resource_list: ResourceList,
+    form: Option<FormWidget>,
     action_tx: mpsc::UnboundedSender<Action>,
 }
 
@@ -38,6 +38,7 @@ impl VolumeModule {
             error_message: None,
             confirm: ConfirmHandler::new(),
             resource_list: ResourceList::new(volume_columns()),
+            form: None,
             action_tx,
         }
     }
@@ -75,6 +76,17 @@ impl VolumeModule {
         }
     }
 
+    fn open_create_form(&mut self) {
+        let defs = volume_create_defs();
+        self.form = Some(FormWidget::new("Create Volume", defs));
+        self.view_state = ViewState::Create;
+    }
+
+    fn close_form(&mut self) {
+        self.form = None;
+        self.view_state = ViewState::List;
+    }
+
     fn handle_list_key(&mut self, key: KeyEvent) -> Option<Action> {
         if self.resource_list.handle_nav_key(key) {
             return None;
@@ -89,7 +101,7 @@ impl VolumeModule {
                 None
             }
             KeyCode::Char('c') => {
-                self.view_state = ViewState::Create;
+                self.open_create_form();
                 None
             }
             KeyCode::Char('d') => {
@@ -127,12 +139,67 @@ impl VolumeModule {
     }
 
     fn handle_create_key(&mut self, key: KeyEvent) -> Option<Action> {
-        match key.code {
-            KeyCode::Esc => {
-                self.view_state = ViewState::List;
+        let Some(form) = self.form.as_mut() else {
+            self.close_form();
+            return None;
+        };
+
+        match form.handle_key(key) {
+            FormAction::Submit(values) => {
+                let name = values
+                    .get("Name")
+                    .and_then(|v| match v {
+                        crate::ui::form::FormValue::Text(s) => Some(s.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                let size_gb = values
+                    .get("Size (GB)")
+                    .and_then(|v| match v {
+                        crate::ui::form::FormValue::Text(s) => s.parse::<u32>().ok(),
+                        _ => None,
+                    })
+                    .unwrap_or(1);
+                let volume_type = values
+                    .get("Type")
+                    .and_then(|v| match v {
+                        crate::ui::form::FormValue::Text(s) => {
+                            if s.is_empty() { None } else { Some(s.clone()) }
+                        }
+                        _ => None,
+                    });
+                let description = values
+                    .get("Description")
+                    .and_then(|v| match v {
+                        crate::ui::form::FormValue::Text(s) => {
+                            if s.is_empty() { None } else { Some(s.clone()) }
+                        }
+                        _ => None,
+                    });
+                let availability_zone = values
+                    .get("Availability Zone")
+                    .and_then(|v| match v {
+                        crate::ui::form::FormValue::Text(s) => {
+                            if s.is_empty() { None } else { Some(s.clone()) }
+                        }
+                        _ => None,
+                    });
+
+                self.close_form();
+
+                Some(Action::CreateVolume(VolumeCreateParams {
+                    name,
+                    size_gb,
+                    volume_type,
+                    description,
+                    availability_zone,
+                }))
+            }
+            FormAction::Cancel => {
+                self.close_form();
                 None
             }
-            _ => None,
+            FormAction::None => None,
         }
     }
 }
@@ -160,7 +227,7 @@ impl Component for VolumeModule {
                 self.resource_list.set_rows(rows);
             }
             AppEvent::VolumeCreated(_) => {
-                self.view_state = ViewState::List;
+                self.close_form();
                 let _ = self.action_tx.send(Action::FetchVolumes);
             }
             AppEvent::VolumeDeleted { .. } | AppEvent::VolumeExtended { .. } => {
@@ -190,13 +257,11 @@ impl Component for VolumeModule {
                 }
             }
             ViewState::Create => {
-                let text = Paragraph::new(vec![
-                    Line::raw(""),
-                    Line::raw("  Volume Create Form (Tab/Enter to submit, Esc to cancel)"),
-                    Line::raw("  [Form integration pending]"),
-                ])
-                .style(Style::default().fg(Color::DarkGray));
-                frame.render_widget(text, area);
+                if let Some(form) = &self.form {
+                    form.render(frame, area);
+                } else {
+                    self.resource_list.render(frame, area);
+                }
             }
         }
 
@@ -280,6 +345,7 @@ mod tests {
         let (mut module, _rx) = setup();
         module.handle_key(key(KeyCode::Char('c')));
         assert_eq!(*module.view_state(), ViewState::Create);
+        assert!(module.form.is_some());
     }
 
     #[test]
@@ -354,5 +420,27 @@ mod tests {
             message: "in-use".into(),
         });
         assert_eq!(module.error_message(), Some("delete: in-use"));
+    }
+
+    // -- Form integration tests ---------------------------------------------
+
+    #[test]
+    fn test_create_form_cancel_returns_to_list() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Char('c')));
+        assert_eq!(*module.view_state(), ViewState::Create);
+
+        module.handle_key(key(KeyCode::Esc));
+        assert_eq!(*module.view_state(), ViewState::List);
+        assert!(module.form.is_none());
+    }
+
+    #[test]
+    fn test_create_form_has_expected_fields() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Char('c')));
+        let form = module.form.as_ref().unwrap();
+        assert_eq!(form.field_count(), 5);
+        assert_eq!(form.focused_field_name(), "Name");
     }
 }

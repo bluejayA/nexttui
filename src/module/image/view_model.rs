@@ -1,6 +1,6 @@
 use crate::models::glance::Image;
 use crate::ui::detail_view::{DetailData, DetailField, DetailSection};
-use crate::ui::form::FormField;
+use crate::ui::form::FieldDef;
 use crate::ui::resource_list::{ColumnDef, ColumnWidth, Row, RowStyleHint};
 
 pub fn image_columns() -> Vec<ColumnDef> {
@@ -167,10 +167,10 @@ pub fn image_detail_data(image: &Image) -> DetailData {
     }
 }
 
-pub fn image_create_form() -> Vec<FormField> {
+pub fn image_create_defs() -> Vec<FieldDef> {
     vec![
-        FormField::text("Name", true),
-        FormField::dropdown(
+        FieldDef::text("Name", true),
+        FieldDef::dropdown(
             "Disk Format",
             vec![
                 "qcow2".into(),
@@ -181,12 +181,12 @@ pub fn image_create_form() -> Vec<FormField> {
             ],
             true,
         ),
-        FormField::dropdown(
+        FieldDef::dropdown(
             "Container Format",
             vec!["bare".into(), "docker".into(), "ova".into()],
             true,
         ),
-        FormField::dropdown(
+        FieldDef::dropdown(
             "Visibility",
             vec![
                 "private".into(),
@@ -196,14 +196,15 @@ pub fn image_create_form() -> Vec<FormField> {
             ],
             false,
         ),
-        FormField::text("Min Disk (GB)", false),
-        FormField::text("Min RAM (MB)", false),
+        FieldDef::text("Min Disk (GB)", false),
+        FieldDef::text("Min RAM (MB)", false),
     ]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::form::Validation;
 
     fn make_image() -> Image {
         Image {
@@ -264,11 +265,19 @@ mod tests {
     }
 
     #[test]
-    fn test_image_create_form() {
-        let form = image_create_form();
-        assert_eq!(form.len(), 6);
-        assert!(form[0].required); // Name
-        assert!(form[1].required); // Disk Format
-        assert!(!form[3].required); // Visibility
+    fn test_image_create_defs() {
+        let defs = image_create_defs();
+        assert_eq!(defs.len(), 6);
+        assert_eq!(defs[0].name(), "Name");
+        assert!(defs[0].validations().contains(&Validation::Required));
+        assert_eq!(defs[1].name(), "Disk Format");
+        assert!(defs[1].validations().contains(&Validation::Required));
+        assert!(matches!(defs[1], FieldDef::Dropdown { .. }));
+        assert_eq!(defs[2].name(), "Container Format");
+        assert!(defs[2].validations().contains(&Validation::Required));
+        assert_eq!(defs[3].name(), "Visibility");
+        assert!(!defs[3].validations().contains(&Validation::Required));
+        assert_eq!(defs[4].name(), "Min Disk (GB)");
+        assert_eq!(defs[5].name(), "Min RAM (MB)");
     }
 }

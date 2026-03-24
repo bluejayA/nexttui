@@ -2,9 +2,6 @@ pub mod view_model;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
-use ratatui::text::Line;
-use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use tokio::sync::mpsc;
 
@@ -14,9 +11,10 @@ use crate::event::AppEvent;
 use crate::models::neutron::FloatingIp;
 use crate::module::{ConfirmHandler, PendingAction, ViewState};
 use crate::ui::confirm::ConfirmDialog;
+use crate::ui::form::{FormAction, FormWidget};
 use crate::ui::resource_list::{ResourceList, Row};
 
-use self::view_model::{fip_columns, fip_to_row};
+use self::view_model::{fip_columns, fip_create_defs, fip_to_row};
 
 pub struct FloatingIpModule {
     view_state: ViewState,
@@ -26,6 +24,7 @@ pub struct FloatingIpModule {
     error_message: Option<String>,
     confirm: ConfirmHandler,
     resource_list: ResourceList,
+    form: Option<FormWidget>,
     action_tx: mpsc::UnboundedSender<Action>,
 }
 
@@ -38,6 +37,7 @@ impl FloatingIpModule {
             error_message: None,
             confirm: ConfirmHandler::new(),
             resource_list: ResourceList::new(fip_columns()),
+            form: None,
             action_tx,
         }
     }
@@ -73,6 +73,17 @@ impl FloatingIpModule {
         }
     }
 
+    fn open_create_form(&mut self) {
+        let defs = fip_create_defs();
+        self.form = Some(FormWidget::new("Allocate Floating IP", defs));
+        self.view_state = ViewState::Create;
+    }
+
+    fn close_form(&mut self) {
+        self.form = None;
+        self.view_state = ViewState::List;
+    }
+
     fn handle_list_key(&mut self, key: KeyEvent) -> Option<Action> {
         if self.resource_list.handle_nav_key(key) {
             return None;
@@ -80,7 +91,7 @@ impl FloatingIpModule {
 
         match key.code {
             KeyCode::Char('c') => {
-                self.view_state = ViewState::Create;
+                self.open_create_form();
                 None
             }
             KeyCode::Char('d') => {
@@ -102,12 +113,30 @@ impl FloatingIpModule {
     }
 
     fn handle_create_key(&mut self, key: KeyEvent) -> Option<Action> {
-        match key.code {
-            KeyCode::Esc => {
-                self.view_state = ViewState::List;
+        let Some(form) = self.form.as_mut() else {
+            self.close_form();
+            return None;
+        };
+
+        match form.handle_key(key) {
+            FormAction::Submit(values) => {
+                let network_id = values
+                    .get("External Network")
+                    .and_then(|v| match v {
+                        crate::ui::form::FormValue::Selected(s) => Some(s.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+
+                self.close_form();
+
+                Some(Action::CreateFloatingIp { network_id })
+            }
+            FormAction::Cancel => {
+                self.close_form();
                 None
             }
-            _ => None,
+            FormAction::None => None,
         }
     }
 }
@@ -153,13 +182,11 @@ impl Component for FloatingIpModule {
                 self.resource_list.render(frame, area);
             }
             ViewState::Create => {
-                let text = Paragraph::new(vec![
-                    Line::raw(""),
-                    Line::raw("  Floating IP Create (select external network, Esc to cancel)"),
-                    Line::raw("  [Form integration pending]"),
-                ])
-                .style(Style::default().fg(Color::DarkGray));
-                frame.render_widget(text, area);
+                if let Some(form) = &self.form {
+                    form.render(frame, area);
+                } else {
+                    self.resource_list.render(frame, area);
+                }
             }
             ViewState::Detail(_) => {}
         }
@@ -225,6 +252,7 @@ mod tests {
         let (mut module, _rx) = setup();
         module.handle_key(key(KeyCode::Char('c')));
         assert_eq!(*module.view_state(), ViewState::Create);
+        assert!(module.form.is_some());
     }
 
     #[test]
@@ -285,5 +313,27 @@ mod tests {
             message: "pool exhausted".into(),
         });
         assert_eq!(module.error_message(), Some("create: pool exhausted"));
+    }
+
+    // -- Form integration tests -----------------------------------------------
+
+    #[test]
+    fn test_create_form_cancel_returns_to_list() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Char('c')));
+        assert_eq!(*module.view_state(), ViewState::Create);
+
+        module.handle_key(key(KeyCode::Esc));
+        assert_eq!(*module.view_state(), ViewState::List);
+        assert!(module.form.is_none());
+    }
+
+    #[test]
+    fn test_create_form_has_expected_fields() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Char('c')));
+        let form = module.form.as_ref().unwrap();
+        assert_eq!(form.field_count(), 1);
+        assert_eq!(form.focused_field_name(), "External Network");
     }
 }

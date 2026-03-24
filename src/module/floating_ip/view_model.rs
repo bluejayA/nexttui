@@ -1,4 +1,5 @@
 use crate::models::neutron::FloatingIp;
+use crate::ui::form::FieldDef;
 use crate::ui::resource_list::{ColumnDef, ColumnWidth, Row, RowStyleHint};
 
 pub fn fip_columns() -> Vec<ColumnDef> {
@@ -39,6 +40,14 @@ pub fn fip_to_row(fip: &FloatingIp) -> Row {
         ],
         style_hint: Some(style),
     }
+}
+
+/// Create floating IP form fields using FieldDef API.
+/// The External Network dropdown options can be populated later via set_field_options.
+pub fn fip_create_defs() -> Vec<FieldDef> {
+    vec![
+        FieldDef::dropdown("External Network", vec![], true),
+    ]
 }
 
 pub fn fip_status_display(status: &str) -> (&'static str, RowStyleHint) {
@@ -89,6 +98,16 @@ mod tests {
         fip.fixed_ip_address = None;
         let row = fip_to_row(&fip);
         assert_eq!(row.cells[2], "-");
+    }
+
+    #[test]
+    fn test_fip_create_defs() {
+        use crate::ui::form::Validation;
+        let defs = fip_create_defs();
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].name(), "External Network");
+        assert!(defs[0].validations().contains(&Validation::Required));
+        assert!(matches!(defs[0], FieldDef::Dropdown { .. }));
     }
 
     #[test]
