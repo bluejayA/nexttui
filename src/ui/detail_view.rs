@@ -170,6 +170,19 @@ impl DetailView {
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
             )));
+
+            // Calculate max key width for aligned columns within this section
+            let key_width = section
+                .fields
+                .iter()
+                .map(|f| match f {
+                    DetailField::KeyValue { key, .. } => key.len(),
+                    DetailField::ResourceLink { key, .. } => key.len(),
+                    DetailField::NestedTable { label, .. } => label.len(),
+                })
+                .max()
+                .unwrap_or(0);
+
             for field in &section.fields {
                 match field {
                     DetailField::KeyValue { key, value, style } => {
@@ -179,7 +192,7 @@ impl DetailView {
                             .unwrap_or(Color::White);
                         lines.push(Line::from(vec![
                             Span::styled(
-                                format!("  {key}: "),
+                                format!("  {:>width$}: ", key, width = key_width),
                                 Style::default().fg(Color::DarkGray),
                             ),
                             Span::styled(value, Style::default().fg(val_color)),
@@ -191,23 +204,24 @@ impl DetailView {
                         rows,
                     } => {
                         lines.push(Line::from(Span::styled(
-                            format!("  {label}:"),
+                            format!("  {:>width$}:", label, width = key_width),
                             Style::default().fg(Color::DarkGray),
                         )));
+                        let col_padding = " ".repeat(key_width + 4);
                         let header = columns.join(" | ");
                         lines.push(Line::from(Span::styled(
-                            format!("    {header}"),
+                            format!("{col_padding}{header}"),
                             Style::default().add_modifier(Modifier::UNDERLINED),
                         )));
                         for row in rows {
                             let row_str = row.join(" | ");
-                            lines.push(Line::from(format!("    {row_str}")));
+                            lines.push(Line::from(format!("{col_padding}{row_str}")));
                         }
                     }
                     DetailField::ResourceLink { key, display, .. } => {
                         lines.push(Line::from(vec![
                             Span::styled(
-                                format!("  {key}: "),
+                                format!("  {:>width$}: ", key, width = key_width),
                                 Style::default().fg(Color::DarkGray),
                             ),
                             Span::styled(
