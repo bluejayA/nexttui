@@ -266,3 +266,14 @@ fn demo_projects() -> Vec<Project> {
         Project { id: "proj-old".into(), name: "legacy-app".into(), description: Some("Deprecated project".into()), enabled: false, domain_id: Some("default".into()) },
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_demo_app_is_admin() {
+        let (app, _rx) = create_demo_app();
+        assert!(app.rbac.is_admin());
+    }
+}
