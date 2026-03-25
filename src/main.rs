@@ -24,10 +24,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
     let demo_mode = args.iter().any(|a| a == "--demo");
 
-    let (mut app, event_rx) = if demo_mode {
+    // Keep _event_tx alive so event_rx doesn't immediately return None in demo mode
+    let (mut app, event_rx, _keep_alive_tx) = if demo_mode {
         let (app, _action_rx) = create_demo_app();
-        let (_event_tx, event_rx) = mpsc::unbounded_channel::<AppEvent>();
-        (app, event_rx)
+        let (event_tx, event_rx) = mpsc::unbounded_channel::<AppEvent>();
+        (app, event_rx, Some(event_tx))
     } else {
         let config = match Config::load() {
             Ok(c) => c,
@@ -109,7 +110,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = action_tx.send(nexttui::action::Action::FetchProjects);
         let _ = action_tx.send(nexttui::action::Action::FetchUsers);
 
-        (app, event_rx)
+        (app, event_rx, None)
     };
 
     // Setup terminal
