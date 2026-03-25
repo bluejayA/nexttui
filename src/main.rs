@@ -74,13 +74,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             cloud.region_name.clone(),
         ));
 
-        // Spawn background worker
-        tokio::spawn(run_worker(registry, action_rx, event_tx));
-
         // Build module registry and create app
+        let rbac = std::sync::Arc::new(nexttui::infra::rbac::RbacGuard::new());
         let mut module_registry = nexttui::registry::ModuleRegistry::new();
         nexttui::registry::register_all_modules(&mut module_registry, &action_tx);
-        let (app, initial_actions) = App::from_registry(config, action_tx.clone(), module_registry);
+        let (app, initial_actions) = App::from_registry(config, action_tx.clone(), module_registry, rbac.clone());
+
+        // Spawn background worker
+        tokio::spawn(run_worker(registry, rbac, action_rx, event_tx));
 
         // Trigger initial data load
         for action in initial_actions {

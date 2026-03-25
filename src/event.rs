@@ -59,8 +59,11 @@ pub enum AppEvent {
     ApiError { operation: String, message: String },
 
     // Auth
-    TokenRefreshed,
+    TokenRefreshed(Vec<crate::port::types::TokenRole>),
     AuthFailed(String),
+
+    // RBAC
+    PermissionDenied { operation: String },
 
     // System
     CloudSwitched(String),
@@ -91,10 +94,35 @@ mod tests {
                 operation: "delete".into(),
                 message: "not found".into(),
             },
-            AppEvent::TokenRefreshed,
+            AppEvent::TokenRefreshed(vec![]),
             AppEvent::AuthFailed("expired".into()),
             AppEvent::CloudSwitched("prod".into()),
         ];
         assert!(events.len() >= 12);
+    }
+
+    #[test]
+    fn test_token_refreshed_carries_roles() {
+        use crate::port::types::TokenRole;
+        let role = TokenRole { id: "r1".into(), name: "admin".into() };
+        let event = AppEvent::TokenRefreshed(vec![role]);
+        match event {
+            AppEvent::TokenRefreshed(roles) => {
+                assert_eq!(roles.len(), 1);
+                assert_eq!(roles[0].name, "admin");
+            }
+            _ => panic!("expected TokenRefreshed"),
+        }
+    }
+
+    #[test]
+    fn test_permission_denied_event() {
+        let event = AppEvent::PermissionDenied { operation: "CreateServer".into() };
+        match event {
+            AppEvent::PermissionDenied { operation } => {
+                assert_eq!(operation, "CreateServer");
+            }
+            _ => panic!("expected PermissionDenied"),
+        }
     }
 }

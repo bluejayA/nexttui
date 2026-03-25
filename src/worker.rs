@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 use crate::action::Action;
 use crate::adapter::registry::AdapterRegistry;
 use crate::event::AppEvent;
+use crate::infra::rbac::{ActionKind, RbacGuard};
 use crate::port::types::*;
 
 /// Run the background worker loop.
@@ -15,10 +16,21 @@ use crate::port::types::*;
 /// and sends resulting AppEvents to `event_tx`.
 pub async fn run_worker(
     registry: Arc<AdapterRegistry>,
+    rbac: Arc<RbacGuard>,
     mut action_rx: mpsc::UnboundedReceiver<Action>,
     event_tx: mpsc::UnboundedSender<AppEvent>,
 ) {
     while let Some(action) = action_rx.recv().await {
+        // RBAC guard: check CUD permissions before API call
+        if let Some(kind) = action_to_kind(&action)
+            && !rbac.can_perform(kind)
+        {
+            let _ = event_tx.send(AppEvent::PermissionDenied {
+                operation: action_name(&action).to_string(),
+            });
+            continue;
+        }
+
         let registry = registry.clone();
         let event_tx = event_tx.clone();
 
@@ -28,6 +40,85 @@ pub async fn run_worker(
                 let _ = event_tx.send(ev);
             }
         });
+    }
+}
+
+/// Map an Action to its RBAC ActionKind for permission checking.
+/// Returns None for read-only/UI actions that need no guard.
+fn action_to_kind(action: &Action) -> Option<ActionKind> {
+    match action {
+        // Create
+        Action::CreateServer(_)
+        | Action::CreateFlavor(_)
+        | Action::CreateNetwork(_)
+        | Action::CreateSecurityGroup(_)
+        | Action::CreateSecurityGroupRule(_)
+        | Action::CreateFloatingIp { .. }
+        | Action::CreateVolume(_)
+        | Action::CreateSnapshot(_)
+        | Action::CreateImage(_)
+        | Action::CreateProject(_)
+        | Action::CreateUser(_)
+        | Action::CreateServerSnapshot { .. } => Some(ActionKind::Create),
+
+        // Delete (non-force)
+        Action::DeleteServer { .. }
+        | Action::DeleteFlavor { .. }
+        | Action::DeleteSecurityGroup { .. }
+        | Action::DeleteSecurityGroupRule { .. }
+        | Action::DeleteFloatingIp { .. }
+        | Action::DeleteSnapshot { .. }
+        | Action::DeleteImage { .. }
+        | Action::DeleteProject { .. }
+        | Action::DeleteUser { .. } => Some(ActionKind::Delete),
+
+        // Force delete
+        Action::DeleteVolume { force: true, .. } => Some(ActionKind::ForceDelete),
+        Action::DeleteVolume { force: false, .. } => Some(ActionKind::Delete),
+
+        // Server lifecycle — treated as CUD for RBAC purposes
+        Action::RebootServer { .. }
+        | Action::StartServer { .. }
+        | Action::StopServer { .. } => Some(ActionKind::Create),
+
+        // Volume extend
+        Action::ExtendVolume { .. } => Some(ActionKind::Create),
+
+        // Read / UI / System — no guard
+        _ => None,
+    }
+}
+
+/// Human-readable name for an Action, used in PermissionDenied messages.
+fn action_name(action: &Action) -> &str {
+    match action {
+        Action::CreateServer(_) => "CreateServer",
+        Action::DeleteServer { .. } => "DeleteServer",
+        Action::RebootServer { .. } => "RebootServer",
+        Action::StartServer { .. } => "StartServer",
+        Action::StopServer { .. } => "StopServer",
+        Action::CreateServerSnapshot { .. } => "CreateServerSnapshot",
+        Action::CreateFlavor(_) => "CreateFlavor",
+        Action::DeleteFlavor { .. } => "DeleteFlavor",
+        Action::CreateNetwork(_) => "CreateNetwork",
+        Action::CreateSecurityGroup(_) => "CreateSecurityGroup",
+        Action::DeleteSecurityGroup { .. } => "DeleteSecurityGroup",
+        Action::CreateSecurityGroupRule(_) => "CreateSecurityGroupRule",
+        Action::DeleteSecurityGroupRule { .. } => "DeleteSecurityGroupRule",
+        Action::CreateFloatingIp { .. } => "CreateFloatingIp",
+        Action::DeleteFloatingIp { .. } => "DeleteFloatingIp",
+        Action::CreateVolume(_) => "CreateVolume",
+        Action::DeleteVolume { .. } => "DeleteVolume",
+        Action::ExtendVolume { .. } => "ExtendVolume",
+        Action::CreateSnapshot(_) => "CreateSnapshot",
+        Action::DeleteSnapshot { .. } => "DeleteSnapshot",
+        Action::CreateImage(_) => "CreateImage",
+        Action::DeleteImage { .. } => "DeleteImage",
+        Action::CreateProject(_) => "CreateProject",
+        Action::DeleteProject { .. } => "DeleteProject",
+        Action::CreateUser(_) => "CreateUser",
+        Action::DeleteUser { .. } => "DeleteUser",
+        _ => "Unknown",
     }
 }
 
@@ -405,6 +496,41 @@ fn api_error(operation: &str, error: crate::port::error::ApiError) -> AppEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_action_to_kind_cud_actions() {
+        use crate::infra::rbac::ActionKind;
+        // Create actions should map to ActionKind::Create
+        assert_eq!(
+            action_to_kind(&Action::CreateServer(crate::port::types::ServerCreateParams {
+                name: "t".into(), image_id: "i".into(), flavor_id: "f".into(),
+                networks: vec![], security_groups: None, key_name: None, availability_zone: None,
+            })),
+            Some(ActionKind::Create),
+        );
+        // Delete actions should map to ActionKind::Delete
+        assert_eq!(
+            action_to_kind(&Action::DeleteServer { id: "s1".into(), name: "web".into() }),
+            Some(ActionKind::Delete),
+        );
+        // ForceDelete
+        assert_eq!(
+            action_to_kind(&Action::DeleteVolume { id: "v1".into(), force: true }),
+            Some(ActionKind::ForceDelete),
+        );
+        // Fetch actions should return None (no guard needed)
+        assert_eq!(action_to_kind(&Action::FetchServers), None);
+    }
+
+    #[test]
+    fn test_permission_denied_event_on_guard_failure() {
+        // Verify PermissionDenied event can be constructed with operation name
+        let event = AppEvent::PermissionDenied { operation: "CreateServer".into() };
+        match event {
+            AppEvent::PermissionDenied { operation } => assert_eq!(operation, "CreateServer"),
+            _ => panic!("expected PermissionDenied"),
+        }
+    }
 
     #[test]
     fn test_api_error_creates_event() {

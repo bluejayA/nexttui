@@ -23,7 +23,12 @@ pub fn create_demo_app() -> (App, mpsc::UnboundedReceiver<Action>) {
 
     let mut registry = ModuleRegistry::new();
     register_all_modules(&mut registry, &action_tx);
-    let (mut app, _initial_actions) = App::from_registry(config, action_tx, registry);
+    let rbac = std::sync::Arc::new(crate::infra::rbac::RbacGuard::new());
+    rbac.update_roles(
+        vec![crate::port::types::TokenRole { id: "r1".into(), name: "admin".into() }],
+        None,
+    );
+    let (mut app, _initial_actions) = App::from_registry(config, action_tx, registry, rbac);
 
     // Inject demo data via events
     app.handle_event(AppEvent::ServersLoaded(demo_servers()));
@@ -260,4 +265,15 @@ fn demo_projects() -> Vec<Project> {
         Project { id: "proj-staging".into(), name: "staging".into(), description: Some("Staging environment".into()), enabled: true, domain_id: Some("default".into()) },
         Project { id: "proj-old".into(), name: "legacy-app".into(), description: Some("Deprecated project".into()), enabled: false, domain_id: Some("default".into()) },
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_demo_app_is_admin() {
+        let (app, _rx) = create_demo_app();
+        assert!(app.rbac.is_admin());
+    }
 }
