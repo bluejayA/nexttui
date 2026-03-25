@@ -12,6 +12,7 @@ use crate::background::BackgroundTracker;
 use crate::component::{Component, InputMode};
 use crate::config::Config;
 use crate::event::AppEvent;
+use crate::infra::rbac::RbacGuard;
 use crate::models::common::Route;
 use crate::router::Router;
 use crate::ui::header::{Header, HeaderContext};
@@ -36,6 +37,7 @@ pub struct App {
     background_tracker: BackgroundTracker,
     action_tx: mpsc::UnboundedSender<Action>,
 
+    pub rbac: Arc<RbacGuard>,
     config: Arc<Config>,
     layout: LayoutManager,
     sidebar: Sidebar,
@@ -55,6 +57,7 @@ impl App {
             components: HashMap::new(),
             background_tracker: BackgroundTracker::new(),
             action_tx,
+            rbac: Arc::new(RbacGuard::new()),
             config: Arc::new(config),
             layout: LayoutManager::new(),
             sidebar: Sidebar::new(Vec::new()),
@@ -68,6 +71,7 @@ impl App {
         config: Config,
         action_tx: mpsc::UnboundedSender<Action>,
         registry: crate::registry::ModuleRegistry,
+        rbac: Arc<RbacGuard>,
     ) -> (Self, Vec<Action>) {
         let parts = registry.into_parts();
         let mut app = Self {
@@ -79,6 +83,7 @@ impl App {
             components: parts.components,
             background_tracker: BackgroundTracker::new(),
             action_tx,
+            rbac,
             config: Arc::new(config),
             layout: LayoutManager::new(),
             sidebar: Sidebar::new(parts.sidebar_items),
@@ -88,7 +93,16 @@ impl App {
         };
         // Store sidebar items for number-key navigation
         app.sidebar.sync_active(&Route::Servers, false);
+        app.broadcast_admin();
         (app, parts.initial_actions)
+    }
+
+    /// Broadcast current admin status to all registered modules.
+    pub fn broadcast_admin(&mut self) {
+        let is_admin = self.rbac.is_admin();
+        for component in self.components.values_mut() {
+            component.set_admin(is_admin);
+        }
     }
 
     pub fn route_label(&self, route: &Route) -> &str {
@@ -137,7 +151,7 @@ impl App {
                 }
                 KeyCode::Char(c @ '1'..='9') | KeyCode::Char(c @ '0') => {
                     let idx = if c == '0' { 9 } else { (c as usize) - ('1' as usize) };
-                    if let Some(route) = self.sidebar.route_at(idx, true) {
+                    if let Some(route) = self.sidebar.route_at(idx, self.rbac.is_admin()) {
                         self.dispatch_action(Action::Navigate(route));
                     }
                     return true;
@@ -177,7 +191,7 @@ impl App {
         // Delegate based on focus pane
         if self.input_mode == InputMode::Normal {
             if self.focus == FocusPane::Sidebar && self.sidebar_visible {
-                if let Some(action) = self.sidebar.handle_key(key, true) {
+                if let Some(action) = self.sidebar.handle_key(key, self.rbac.is_admin()) {
                     self.dispatch_action(action);
                 }
                 return true;
@@ -205,7 +219,7 @@ impl App {
         match action {
             Action::Navigate(route) => {
                 self.router.navigate(route);
-                self.sidebar.sync_active(&self.router.current(), true);
+                self.sidebar.sync_active(&self.router.current(), self.rbac.is_admin());
                 self.focus = FocusPane::Content;
             }
             Action::Back => {
@@ -237,6 +251,11 @@ impl App {
     /// Handle background event — broadcast to all registered components and generate toasts.
     /// Events like ServersLoaded must reach ServerModule even if the user is on a different view.
     pub fn handle_event(&mut self, event: AppEvent) {
+        // RBAC: update roles on token refresh
+        if let AppEvent::TokenRefreshed(ref roles) = event {
+            self.rbac.update_roles(roles.clone(), None);
+            self.broadcast_admin();
+        }
         self.generate_toast(&event);
         for component in self.components.values_mut() {
             component.handle_event(&event);
@@ -321,6 +340,7 @@ impl App {
             // Errors
             AppEvent::ApiError { operation, message } => (format!("{operation} failed: {message}"), ToastLevel::Error),
             AppEvent::AuthFailed(msg) => (format!("Auth failed: {msg}"), ToastLevel::Error),
+            AppEvent::PermissionDenied { operation } => (format!("Permission denied: {operation}"), ToastLevel::Error),
             // Data loaded / system events — no toast
             _ => return,
         };
@@ -351,7 +371,7 @@ impl App {
         // Sidebar
         if let Some(sidebar_area) = areas.sidebar {
             let sidebar_focused = self.focus == FocusPane::Sidebar;
-            self.sidebar.render(frame, sidebar_area, true, &self.router.current(), sidebar_focused);
+            self.sidebar.render(frame, sidebar_area, self.rbac.is_admin(), &self.router.current(), sidebar_focused);
         }
 
         // Content
@@ -587,5 +607,55 @@ mod tests {
         assert_eq!(toasts.len(), 1);
         assert_eq!(toasts[0].level, crate::background::ToastLevel::Error);
         assert!(toasts[0].message.contains("quota exceeded"));
+    }
+
+    #[test]
+    fn test_app_rbac_is_admin() {
+        let app = make_app();
+        assert!(!app.rbac.is_admin());
+    }
+
+    #[test]
+    fn test_app_broadcast_admin() {
+        let mut app = make_app();
+        app.register_component(Route::Servers, Box::new(MockComponent::new()));
+        app.broadcast_admin();
+    }
+
+    #[test]
+    fn test_app_sidebar_uses_rbac() {
+        use crate::ui::sidebar::SidebarItem;
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let config = test_config();
+        let mut app = App::new(config, tx);
+        // App with default RbacGuard (not admin)
+        app.sidebar = Sidebar::new(vec![
+            SidebarItem { label: "Servers".into(), route: Route::Servers, shortcut: "1".into(), admin_only: false },
+            SidebarItem { label: "Projects".into(), route: Route::Projects, shortcut: "2".into(), admin_only: true },
+        ]);
+        // Key '2' maps to index 1. With is_admin=true, visible_items has 2 items, index 1 = Projects.
+        // With is_admin=false (rbac default), visible_items has 1 item, index 1 = None.
+        app.handle_key(make_key(KeyCode::Char('2')));
+        // Should NOT navigate to Projects when not admin
+        assert_eq!(app.router().current(), Route::Servers);
+    }
+
+    #[test]
+    fn test_handle_token_refreshed_updates_rbac() {
+        let mut app = make_app();
+        assert!(!app.rbac.is_admin());
+        let roles = vec![crate::port::types::TokenRole { id: "r1".into(), name: "admin".into() }];
+        app.handle_event(AppEvent::TokenRefreshed(roles));
+        assert!(app.rbac.is_admin());
+    }
+
+    #[test]
+    fn test_handle_permission_denied_adds_toast() {
+        let mut app = make_app();
+        app.handle_event(AppEvent::PermissionDenied { operation: "CreateServer".into() });
+        let toasts = app.background_tracker().active_toasts();
+        assert_eq!(toasts.len(), 1);
+        assert_eq!(toasts[0].level, crate::background::ToastLevel::Error);
+        assert!(toasts[0].message.contains("Permission denied"));
     }
 }

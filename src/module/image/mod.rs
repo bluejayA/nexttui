@@ -31,11 +31,11 @@ pub struct ImageModule {
 }
 
 impl ImageModule {
-    pub fn new(action_tx: mpsc::UnboundedSender<Action>, is_admin: bool) -> Self {
+    pub fn new(action_tx: mpsc::UnboundedSender<Action>) -> Self {
         Self {
             view_state: ViewState::List,
             images: Vec::new(),
-            is_admin,
+            is_admin: false,
             loading: false,
             error_message: None,
             confirm: ConfirmHandler::new(),
@@ -203,6 +203,10 @@ impl ImageModule {
 }
 
 impl Component for ImageModule {
+    fn set_admin(&mut self, is_admin: bool) {
+        self.is_admin = is_admin;
+    }
+
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
         if let Some(result) = self.confirm.handle_key(key, Self::resolve_action) {
             return result;
@@ -293,7 +297,8 @@ mod tests {
 
     fn setup(is_admin: bool) -> (ImageModule, mpsc::UnboundedReceiver<Action>) {
         let (tx, rx) = mpsc::unbounded_channel();
-        let mut module = ImageModule::new(tx, is_admin);
+        let mut module = ImageModule::new(tx);
+        module.set_admin(is_admin);
         let images = vec![
             make_image("img-1", "Ubuntu 22.04", "active"),
             make_image("img-2", "CentOS 9", "active"),
@@ -306,7 +311,7 @@ mod tests {
     #[test]
     fn test_initial_state_is_list() {
         let (tx, _rx) = mpsc::unbounded_channel();
-        let module = ImageModule::new(tx, false);
+        let module = ImageModule::new(tx);
         assert_eq!(*module.view_state(), ViewState::List);
         assert!(module.images().is_empty());
     }
@@ -378,7 +383,7 @@ mod tests {
     #[test]
     fn test_handle_event_images_loaded() {
         let (tx, _rx) = mpsc::unbounded_channel();
-        let mut module = ImageModule::new(tx, false);
+        let mut module = ImageModule::new(tx);
         let images = vec![make_image("img-1", "test", "active")];
         module.handle_event(&AppEvent::ImagesLoaded(images));
         assert_eq!(module.images().len(), 1);

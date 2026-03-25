@@ -23,7 +23,12 @@ pub fn create_demo_app() -> (App, mpsc::UnboundedReceiver<Action>) {
 
     let mut registry = ModuleRegistry::new();
     register_all_modules(&mut registry, &action_tx);
-    let (mut app, _initial_actions) = App::from_registry(config, action_tx, registry);
+    let rbac = std::sync::Arc::new(crate::infra::rbac::RbacGuard::new());
+    rbac.update_roles(
+        vec![crate::port::types::TokenRole { id: "r1".into(), name: "admin".into() }],
+        None,
+    );
+    let (mut app, _initial_actions) = App::from_registry(config, action_tx, registry, rbac);
 
     // Inject demo data via events
     app.handle_event(AppEvent::ServersLoaded(demo_servers()));

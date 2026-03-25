@@ -80,7 +80,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Build module registry and create app
         let mut module_registry = nexttui::registry::ModuleRegistry::new();
         nexttui::registry::register_all_modules(&mut module_registry, &action_tx);
-        let (app, initial_actions) = App::from_registry(config, action_tx.clone(), module_registry);
+        let rbac = std::sync::Arc::new(nexttui::infra::rbac::RbacGuard::new());
+        let (app, initial_actions) = App::from_registry(config, action_tx.clone(), module_registry, rbac);
 
         // Trigger initial data load
         for action in initial_actions {

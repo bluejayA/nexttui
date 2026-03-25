@@ -102,7 +102,7 @@ pub fn register_all_modules(
         },
         ModuleEntry {
             sidebar: SidebarItem { label: "Flavors".into(), route: Route::Flavors, shortcut: "2".into(), admin_only: false },
-            component: Box::new(FlavorModule::new(action_tx.clone(), true)),
+            component: Box::new(FlavorModule::new(action_tx.clone())),
             initial_action: Some(Action::FetchFlavors),
             related_routes: &[],
             display_name: "Flavors",
@@ -144,7 +144,7 @@ pub fn register_all_modules(
         },
         ModuleEntry {
             sidebar: SidebarItem { label: "Images".into(), route: Route::Images, shortcut: "8".into(), admin_only: false },
-            component: Box::new(ImageModule::new(action_tx.clone(), true)),
+            component: Box::new(ImageModule::new(action_tx.clone())),
             initial_action: Some(Action::FetchImages),
             related_routes: &[Route::ImageDetail],
             display_name: "Images",

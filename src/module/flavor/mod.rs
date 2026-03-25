@@ -30,13 +30,13 @@ pub struct FlavorModule {
 }
 
 impl FlavorModule {
-    pub fn new(action_tx: mpsc::UnboundedSender<Action>, is_admin: bool) -> Self {
+    pub fn new(action_tx: mpsc::UnboundedSender<Action>) -> Self {
         Self {
             view_state: ViewState::List,
             flavors: Vec::new(),
             loading: false,
             error_message: None,
-            is_admin,
+            is_admin: false,
             confirm: ConfirmHandler::new(),
             resource_list: ResourceList::new(flavor_columns()),
             form: None,
@@ -260,7 +260,8 @@ mod tests {
 
     fn setup(is_admin: bool) -> (FlavorModule, mpsc::UnboundedReceiver<Action>) {
         let (tx, rx) = mpsc::unbounded_channel();
-        let mut module = FlavorModule::new(tx, is_admin);
+        let mut module = FlavorModule::new(tx);
+        module.set_admin(is_admin);
         let flavors = vec![
             make_flavor("f1", "m1.small"),
             make_flavor("f2", "m1.medium"),
@@ -273,7 +274,7 @@ mod tests {
     #[test]
     fn test_initial_state_is_list() {
         let (tx, _rx) = mpsc::unbounded_channel();
-        let module = FlavorModule::new(tx, false);
+        let module = FlavorModule::new(tx);
         assert_eq!(*module.view_state(), ViewState::List);
         assert!(module.flavors().is_empty());
     }
@@ -325,7 +326,7 @@ mod tests {
     #[test]
     fn test_handle_event_flavors_loaded() {
         let (tx, _rx) = mpsc::unbounded_channel();
-        let mut module = FlavorModule::new(tx, false);
+        let mut module = FlavorModule::new(tx);
         assert!(module.flavors().is_empty());
 
         let flavors = vec![make_flavor("f1", "test")];
