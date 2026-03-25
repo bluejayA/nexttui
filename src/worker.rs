@@ -22,14 +22,13 @@ pub async fn run_worker(
 ) {
     while let Some(action) = action_rx.recv().await {
         // RBAC guard: check CUD permissions before API call
-        if let Some(kind) = action_to_kind(&action) {
-            if !rbac.can_perform(kind) {
-                let op = format!("{:?}", action).split('(').next()
-                    .unwrap_or("Unknown").split('{').next()
-                    .unwrap_or("Unknown").trim().to_string();
-                let _ = event_tx.send(AppEvent::PermissionDenied { operation: op });
-                continue;
-            }
+        if let Some(kind) = action_to_kind(&action)
+            && !rbac.can_perform(kind)
+        {
+            let _ = event_tx.send(AppEvent::PermissionDenied {
+                operation: action_name(&action).to_string(),
+            });
+            continue;
         }
 
         let registry = registry.clone();
@@ -77,16 +76,49 @@ fn action_to_kind(action: &Action) -> Option<ActionKind> {
         Action::DeleteVolume { force: true, .. } => Some(ActionKind::ForceDelete),
         Action::DeleteVolume { force: false, .. } => Some(ActionKind::Delete),
 
-        // Server lifecycle (read-like, no RBAC guard for now)
+        // Server lifecycle — treated as CUD for RBAC purposes
         Action::RebootServer { .. }
         | Action::StartServer { .. }
-        | Action::StopServer { .. } => Some(ActionKind::Create), // Treat as CUD
+        | Action::StopServer { .. } => Some(ActionKind::Create),
 
         // Volume extend
         Action::ExtendVolume { .. } => Some(ActionKind::Create),
 
         // Read / UI / System — no guard
         _ => None,
+    }
+}
+
+/// Human-readable name for an Action, used in PermissionDenied messages.
+fn action_name(action: &Action) -> &str {
+    match action {
+        Action::CreateServer(_) => "CreateServer",
+        Action::DeleteServer { .. } => "DeleteServer",
+        Action::RebootServer { .. } => "RebootServer",
+        Action::StartServer { .. } => "StartServer",
+        Action::StopServer { .. } => "StopServer",
+        Action::CreateServerSnapshot { .. } => "CreateServerSnapshot",
+        Action::CreateFlavor(_) => "CreateFlavor",
+        Action::DeleteFlavor { .. } => "DeleteFlavor",
+        Action::CreateNetwork(_) => "CreateNetwork",
+        Action::CreateSecurityGroup(_) => "CreateSecurityGroup",
+        Action::DeleteSecurityGroup { .. } => "DeleteSecurityGroup",
+        Action::CreateSecurityGroupRule(_) => "CreateSecurityGroupRule",
+        Action::DeleteSecurityGroupRule { .. } => "DeleteSecurityGroupRule",
+        Action::CreateFloatingIp { .. } => "CreateFloatingIp",
+        Action::DeleteFloatingIp { .. } => "DeleteFloatingIp",
+        Action::CreateVolume(_) => "CreateVolume",
+        Action::DeleteVolume { .. } => "DeleteVolume",
+        Action::ExtendVolume { .. } => "ExtendVolume",
+        Action::CreateSnapshot(_) => "CreateSnapshot",
+        Action::DeleteSnapshot { .. } => "DeleteSnapshot",
+        Action::CreateImage(_) => "CreateImage",
+        Action::DeleteImage { .. } => "DeleteImage",
+        Action::CreateProject(_) => "CreateProject",
+        Action::DeleteProject { .. } => "DeleteProject",
+        Action::CreateUser(_) => "CreateUser",
+        Action::DeleteUser { .. } => "DeleteUser",
+        _ => "Unknown",
     }
 }
 

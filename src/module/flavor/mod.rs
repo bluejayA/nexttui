@@ -56,10 +56,6 @@ impl FlavorModule {
         self.resource_list.selected_index()
     }
 
-    pub fn set_admin(&mut self, is_admin: bool) {
-        self.is_admin = is_admin;
-    }
-
     fn selected_flavor(&self) -> Option<&Flavor> {
         self.flavors.get(self.resource_list.selected_index())
     }
@@ -182,6 +178,10 @@ impl FlavorModule {
 }
 
 impl Component for FlavorModule {
+    fn set_admin(&mut self, is_admin: bool) {
+        self.is_admin = is_admin;
+    }
+
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
         if let Some(result) = self.confirm.handle_key(key, Self::resolve_action) {
             return result;
@@ -369,5 +369,16 @@ mod tests {
         let form = module.form.as_ref().unwrap();
         assert_eq!(form.field_count(), 5);
         assert_eq!(form.focused_field_name(), "Name");
+    }
+
+    #[test]
+    fn test_set_admin_via_trait_dispatch() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut module = FlavorModule::new(tx);
+        // Call via trait object — same path as App::broadcast_admin
+        let component: &mut dyn Component = &mut module;
+        component.set_admin(true);
+        // Verify the trait dispatch actually reached FlavorModule's override
+        assert!(module.is_admin);
     }
 }
