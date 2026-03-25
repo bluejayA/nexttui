@@ -354,6 +354,15 @@ impl FormWidget {
         self.phase
     }
 
+    fn label_width(&self, max_width: u16) -> usize {
+        self.fields
+            .iter()
+            .map(|(d, _)| d.label().chars().count())
+            .max()
+            .unwrap_or(0)
+            .min(max_width as usize / 3)
+    }
+
     pub fn fields(&self) -> &[(FieldDef, FieldState)] {
         &self.fields
     }
@@ -555,6 +564,9 @@ impl FormWidget {
 
     /// Confirm and submit from Confirming phase. Returns Submit with built values.
     pub fn confirm_submit(&mut self) -> FormAction {
+        if self.phase != FormPhase::Confirming {
+            return FormAction::None;
+        }
         let values = self.build_values();
         self.phase = FormPhase::Editing;
         FormAction::Submit(values)
@@ -840,13 +852,7 @@ impl FormWidget {
             return;
         }
 
-        let label_width = self
-            .fields
-            .iter()
-            .map(|(d, _)| d.label().chars().count())
-            .max()
-            .unwrap_or(0)
-            .min(inner.width as usize / 3);
+        let label_width = self.label_width(inner.width);
 
         let mut y = inner.y;
         let error_map: HashMap<&str, &str> = self
@@ -913,9 +919,9 @@ impl FormWidget {
         if hint_y > y {
             let has_required = self.fields.iter().any(|(d, _)| d.validations().contains(&Validation::Required));
             let hint_text = if has_required {
-                " ↑↓ Navigate  ←/Esc Cancel  Enter Submit  * = required "
+                " ↑↓ Navigate  ←/Esc Cancel  Enter Review  * = required"
             } else {
-                " ↑↓ Navigate  ←/Esc Cancel  Enter Submit "
+                " ↑↓ Navigate  ←/Esc Cancel  Enter Review"
             };
             let hint = Line::from(Span::styled(
                 hint_text,
@@ -1181,13 +1187,7 @@ impl FormWidget {
             return;
         }
 
-        let label_width = self
-            .fields
-            .iter()
-            .map(|(d, _)| d.label().chars().count())
-            .max()
-            .unwrap_or(0)
-            .min(inner.width as usize / 3);
+        let label_width = self.label_width(inner.width);
 
         let mut y = inner.y;
 
@@ -1220,8 +1220,14 @@ impl FormWidget {
 
     fn confirm_value_text(&self, def: &FieldDef, state: &FieldState) -> String {
         match (def, state) {
-            (FieldDef::Text { .. }, FieldState::Text { value, .. }) => {
-                if value.is_empty() { "(empty)".into() } else { value.clone() }
+            (FieldDef::Text { password, .. }, FieldState::Text { value, .. }) => {
+                if value.is_empty() {
+                    "(empty)".into()
+                } else if *password {
+                    "*".repeat(value.chars().count())
+                } else {
+                    value.clone()
+                }
             }
             (FieldDef::Dropdown { options, .. }, FieldState::Dropdown { selected, .. }) => {
                 selected
@@ -2367,6 +2373,21 @@ mod tests {
         assert!(output.contains("az"), "Confirm view should show Zone value");
         // Should show confirm-specific hint (different from editing hint)
         assert!(output.contains("Enter Confirm"), "Confirm view should show Enter Confirm hint");
+    }
+
+    #[test]
+    fn test_confirm_view_masks_password() {
+        let mut form = FormWidget::new("Test", vec![
+            FieldDef::password("Secret", true),
+        ]);
+        for c in "abc".chars() {
+            form.handle_key(key(KeyCode::Char(c)));
+        }
+        form.handle_key(key(KeyCode::Enter)); // Confirming
+        assert_eq!(form.phase(), FormPhase::Confirming);
+        let output = render_to_buffer(&form, 50, 10);
+        assert!(output.contains("***"), "Password should be masked in confirm view");
+        assert!(!output.contains("abc"), "Password plaintext should not appear");
     }
 
     #[test]
