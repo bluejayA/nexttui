@@ -124,9 +124,15 @@ impl Sidebar {
             })
             .collect();
 
+        let border_style = if focused {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
         let block = Block::default()
             .title(" Modules ")
-            .borders(Borders::RIGHT);
+            .borders(Borders::RIGHT)
+            .border_style(border_style);
         let list = List::new(items).block(block);
         let mut state = ListState::default();
         state.select(Some(self.selected_index));

@@ -3,6 +3,8 @@ use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
+use ratatui::style::{Color, Style};
+use ratatui::widgets::{Block, Borders};
 use tokio::sync::mpsc;
 
 use crate::action::Action;
@@ -322,7 +324,18 @@ impl App {
 
         // Content
         if let Some(component) = self.components.get(&self.router.current()) {
-            component.render(frame, areas.content);
+            let content_focused = self.focus == FocusPane::Content;
+            let content_border_style = if content_focused {
+                Style::default().fg(Color::Cyan)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+            let content_block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(content_border_style);
+            let content_inner = content_block.inner(areas.content);
+            frame.render_widget(content_block, areas.content);
+            component.render(frame, content_inner);
         }
 
         // Status bar
