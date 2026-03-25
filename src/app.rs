@@ -192,17 +192,105 @@ impl App {
                 self.should_quit = true;
             }
             other => {
+                if let Some(msg) = Self::progress_toast_text(&other) {
+                    self.background_tracker.add_toast(msg, crate::background::ToastLevel::Info);
+                }
                 let _ = self.action_tx.send(other);
             }
         }
     }
 
-    /// Handle background event — broadcast to all registered components.
+    /// Handle background event — broadcast to all registered components and generate toasts.
     /// Events like ServersLoaded must reach ServerModule even if the user is on a different view.
     pub fn handle_event(&mut self, event: AppEvent) {
+        self.generate_toast(&event);
         for component in self.components.values_mut() {
             component.handle_event(&event);
         }
+    }
+
+    fn progress_toast_text(action: &Action) -> Option<String> {
+        match action {
+            Action::CreateServer(_) => Some("Creating server...".into()),
+            Action::DeleteServer { name, .. } => Some(format!("Deleting server '{name}'...")),
+            Action::RebootServer { .. } => Some("Rebooting server...".into()),
+            Action::StartServer { .. } => Some("Starting server...".into()),
+            Action::StopServer { .. } => Some("Stopping server...".into()),
+            Action::CreateServerSnapshot { .. } => Some("Creating snapshot...".into()),
+            Action::CreateFlavor(_) => Some("Creating flavor...".into()),
+            Action::DeleteFlavor { .. } => Some("Deleting flavor...".into()),
+            Action::CreateNetwork(_) => Some("Creating network...".into()),
+            Action::CreateSecurityGroup(_) => Some("Creating security group...".into()),
+            Action::DeleteSecurityGroup { .. } => Some("Deleting security group...".into()),
+            Action::CreateSecurityGroupRule(_) => Some("Creating rule...".into()),
+            Action::DeleteSecurityGroupRule { .. } => Some("Deleting rule...".into()),
+            Action::CreateFloatingIp { .. } => Some("Creating floating IP...".into()),
+            Action::DeleteFloatingIp { .. } => Some("Deleting floating IP...".into()),
+            Action::CreateVolume(_) => Some("Creating volume...".into()),
+            Action::DeleteVolume { .. } => Some("Deleting volume...".into()),
+            Action::ExtendVolume { .. } => Some("Extending volume...".into()),
+            Action::CreateSnapshot(_) => Some("Creating snapshot...".into()),
+            Action::DeleteSnapshot { .. } => Some("Deleting snapshot...".into()),
+            Action::CreateImage(_) => Some("Creating image...".into()),
+            Action::DeleteImage { .. } => Some("Deleting image...".into()),
+            Action::CreateProject(_) => Some("Creating project...".into()),
+            Action::DeleteProject { .. } => Some("Deleting project...".into()),
+            Action::CreateUser(_) => Some("Creating user...".into()),
+            Action::DeleteUser { .. } => Some("Deleting user...".into()),
+            _ => None,
+        }
+    }
+
+    fn truncate_name(name: &str, max_len: usize) -> &str {
+        if name.len() <= max_len {
+            name
+        } else {
+            let mut end = max_len;
+            while end > 0 && !name.is_char_boundary(end) {
+                end -= 1;
+            }
+            &name[..end]
+        }
+    }
+
+    fn generate_toast(&mut self, event: &AppEvent) {
+        use crate::background::ToastLevel;
+        const MAX_NAME: usize = 64;
+        let (msg, level) = match event {
+            // CUD success
+            AppEvent::ServerCreated(s) => (format!("Server '{}' created", Self::truncate_name(&s.name, MAX_NAME)), ToastLevel::Success),
+            AppEvent::ServerDeleted { name, .. } => (format!("Server '{}' deleted", Self::truncate_name(name, MAX_NAME)), ToastLevel::Success),
+            AppEvent::ServerRebooted { id } => (format!("Server {id} rebooted"), ToastLevel::Success),
+            AppEvent::ServerStarted { id } => (format!("Server {id} started"), ToastLevel::Success),
+            AppEvent::ServerStopped { id } => (format!("Server {id} stopped"), ToastLevel::Success),
+            AppEvent::ServerSnapshotCreated { server_id, .. } => (format!("Snapshot created for {server_id}"), ToastLevel::Success),
+            AppEvent::FlavorCreated(f) => (format!("Flavor '{}' created", Self::truncate_name(&f.name, MAX_NAME)), ToastLevel::Success),
+            AppEvent::FlavorDeleted { id } => (format!("Flavor {id} deleted"), ToastLevel::Success),
+            AppEvent::NetworkCreated(n) => (format!("Network '{}' created", Self::truncate_name(&n.name, MAX_NAME)), ToastLevel::Success),
+            AppEvent::SecurityGroupCreated(sg) => (format!("Security group '{}' created", Self::truncate_name(&sg.name, MAX_NAME)), ToastLevel::Success),
+            AppEvent::SecurityGroupDeleted { id } => (format!("Security group {id} deleted"), ToastLevel::Success),
+            AppEvent::SecurityGroupRuleCreated(_) => ("Security group rule created".into(), ToastLevel::Success),
+            AppEvent::SecurityGroupRuleDeleted { .. } => ("Security group rule deleted".into(), ToastLevel::Success),
+            AppEvent::VolumeCreated(v) => (format!("Volume '{}' created", Self::truncate_name(v.name.as_deref().unwrap_or(&v.id), MAX_NAME)), ToastLevel::Success),
+            AppEvent::VolumeDeleted { id } => (format!("Volume {id} deleted"), ToastLevel::Success),
+            AppEvent::VolumeExtended { id } => (format!("Volume {id} extended"), ToastLevel::Success),
+            AppEvent::SnapshotCreated(s) => (format!("Snapshot '{}' created", Self::truncate_name(s.name.as_deref().unwrap_or(&s.id), MAX_NAME)), ToastLevel::Success),
+            AppEvent::SnapshotDeleted { id } => (format!("Snapshot {id} deleted"), ToastLevel::Success),
+            AppEvent::ImageCreated(i) => (format!("Image '{}' created", Self::truncate_name(&i.name, MAX_NAME)), ToastLevel::Success),
+            AppEvent::ImageDeleted { id } => (format!("Image {id} deleted"), ToastLevel::Success),
+            AppEvent::FloatingIpCreated(f) => (format!("Floating IP '{}' created", Self::truncate_name(&f.floating_ip_address, MAX_NAME)), ToastLevel::Success),
+            AppEvent::FloatingIpDeleted { id } => (format!("Floating IP {id} deleted"), ToastLevel::Success),
+            AppEvent::ProjectCreated(p) => (format!("Project '{}' created", Self::truncate_name(&p.name, MAX_NAME)), ToastLevel::Success),
+            AppEvent::ProjectDeleted { id } => (format!("Project {id} deleted"), ToastLevel::Success),
+            AppEvent::UserCreated(u) => (format!("User '{}' created", Self::truncate_name(&u.name, MAX_NAME)), ToastLevel::Success),
+            AppEvent::UserDeleted { id } => (format!("User {id} deleted"), ToastLevel::Success),
+            // Errors
+            AppEvent::ApiError { operation, message } => (format!("{operation} failed: {message}"), ToastLevel::Error),
+            AppEvent::AuthFailed(msg) => (format!("Auth failed: {msg}"), ToastLevel::Error),
+            // Data loaded / system events — no toast
+            _ => return,
+        };
+        self.background_tracker.add_toast(msg, level);
     }
 
     /// Tick handler: toast expiry, background tracker GC.
@@ -244,7 +332,23 @@ impl App {
             item_count: None,
             selected_index: None,
         };
-        self.status_bar.render(frame, areas.status_bar, &info, &[]);
+        let toast_messages: Vec<crate::ui::toast::ToastMessage> = self
+            .background_tracker
+            .active_toasts()
+            .iter()
+            .map(|t| {
+                let severity = match t.level {
+                    crate::background::ToastLevel::Success => crate::ui::toast::ToastSeverity::Success,
+                    crate::background::ToastLevel::Error => crate::ui::toast::ToastSeverity::Error,
+                    crate::background::ToastLevel::Info => crate::ui::toast::ToastSeverity::Info,
+                };
+                crate::ui::toast::ToastMessage {
+                    text: t.message.clone(),
+                    severity,
+                }
+            })
+            .collect();
+        self.status_bar.render(frame, areas.status_bar, &info, &toast_messages);
     }
 
     pub fn router(&self) -> &Router {
@@ -429,5 +533,50 @@ mod tests {
         assert!(needs_render);
         // Verify component is still registered (not consumed)
         assert!(app.components.contains_key(&Route::Servers));
+    }
+
+    #[test]
+    fn test_dispatch_cud_action_adds_progress_toast() {
+        let mut app = make_app();
+        app.dispatch_action(Action::CreateServer(crate::port::types::ServerCreateParams {
+            name: "web-01".into(),
+            image_id: "img-1".into(),
+            flavor_id: "flv-1".into(),
+            networks: vec![],
+            security_groups: None,
+            key_name: None,
+            availability_zone: None,
+        }));
+        let toasts = app.background_tracker().active_toasts();
+        assert!(toasts.iter().any(|t| t.message.contains("Creating server")));
+        assert!(toasts.iter().any(|t| t.level == crate::background::ToastLevel::Info));
+    }
+
+    #[test]
+    fn test_handle_event_server_created_adds_toast() {
+        let mut app = make_app();
+        assert!(app.background_tracker().active_toasts().is_empty());
+        let server: crate::models::nova::Server = serde_json::from_str(r#"{
+            "id": "s1", "name": "web-01", "status": "ACTIVE",
+            "addresses": {}, "flavor": {"id": "f1"}, "created": "2026-01-01"
+        }"#).unwrap();
+        app.handle_event(AppEvent::ServerCreated(server));
+        let toasts = app.background_tracker().active_toasts();
+        assert_eq!(toasts.len(), 1);
+        assert_eq!(toasts[0].level, crate::background::ToastLevel::Success);
+        assert!(toasts[0].message.contains("web-01"));
+    }
+
+    #[test]
+    fn test_handle_event_api_error_adds_toast() {
+        let mut app = make_app();
+        app.handle_event(AppEvent::ApiError {
+            operation: "CreateServer".into(),
+            message: "quota exceeded".into(),
+        });
+        let toasts = app.background_tracker().active_toasts();
+        assert_eq!(toasts.len(), 1);
+        assert_eq!(toasts[0].level, crate::background::ToastLevel::Error);
+        assert!(toasts[0].message.contains("quota exceeded"));
     }
 }
