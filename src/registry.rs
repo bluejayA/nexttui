@@ -22,15 +22,21 @@ pub struct RegistryParts {
 
 pub struct ModuleRegistry {
     entries: Vec<ModuleEntry>,
+    extra_labels: Vec<(Route, &'static str)>,
 }
 
 impl ModuleRegistry {
     pub fn new() -> Self {
-        Self { entries: Vec::new() }
+        Self { entries: Vec::new(), extra_labels: Vec::new() }
     }
 
     pub fn register(&mut self, entry: ModuleEntry) {
         self.entries.push(entry);
+    }
+
+    /// Add a display label for a route that has no module yet.
+    pub fn add_route_label(&mut self, route: Route, label: &'static str) {
+        self.extra_labels.push((route, label));
     }
 
     pub fn into_parts(self) -> RegistryParts {
@@ -41,8 +47,10 @@ impl ModuleRegistry {
 
         for entry in self.entries {
             let route = entry.sidebar.route;
+            debug_assert!(!components.contains_key(&route), "Duplicate route registered: {:?}", route);
             route_labels.insert(route, entry.display_name);
             for &related in entry.related_routes {
+                debug_assert!(!route_labels.contains_key(&related), "Duplicate related route: {:?}", related);
                 route_labels.insert(related, entry.display_name);
             }
             sidebar_items.push(entry.sidebar);
@@ -50,6 +58,11 @@ impl ModuleRegistry {
                 initial_actions.push(action);
             }
             components.insert(route, entry.component);
+        }
+
+        // Add extra labels for routes without modules
+        for (route, label) in self.extra_labels {
+            route_labels.entry(route).or_insert(label);
         }
 
         RegistryParts {
@@ -155,6 +168,14 @@ pub fn register_all_modules(
     for entry in entries {
         registry.register(entry);
     }
+
+    // Routes with no module yet — display name only (no sidebar, no component)
+    registry.add_route_label(Route::Migrations, "Migrations");
+    registry.add_route_label(Route::Aggregates, "Aggregates");
+    registry.add_route_label(Route::ComputeServices, "Compute Services");
+    registry.add_route_label(Route::Hypervisors, "Hypervisors");
+    registry.add_route_label(Route::Agents, "Agents");
+    registry.add_route_label(Route::Usage, "Usage");
 }
 
 #[cfg(test)]

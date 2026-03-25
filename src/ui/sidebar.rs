@@ -81,9 +81,9 @@ impl Sidebar {
         self.selected_index
     }
 
-    /// Get the route at a given index (for number-key navigation).
-    pub fn route_at(&self, index: usize) -> Option<Route> {
-        self.items.get(index).map(|item| item.route)
+    /// Get the route at a given index (for number-key navigation), respecting admin visibility.
+    pub fn route_at(&self, index: usize, is_admin: bool) -> Option<Route> {
+        self.visible_items(is_admin).get(index).map(|item| item.route)
     }
 
     pub fn render(

@@ -95,7 +95,8 @@ impl App {
         self.route_labels.get(route).copied().unwrap_or("Unknown")
     }
 
-    /// Register a domain module component for a given route.
+    /// Register a domain module component for a given route (test use only).
+    #[cfg(test)]
     pub fn register_component(&mut self, route: Route, component: Box<dyn Component>) {
         self.components.insert(route, component);
     }
@@ -136,7 +137,7 @@ impl App {
                 }
                 KeyCode::Char(c @ '1'..='9') | KeyCode::Char(c @ '0') => {
                     let idx = if c == '0' { 9 } else { (c as usize) - ('1' as usize) };
-                    if let Some(route) = self.sidebar.route_at(idx) {
+                    if let Some(route) = self.sidebar.route_at(idx, true) {
                         self.dispatch_action(Action::Navigate(route));
                     }
                     return true;
