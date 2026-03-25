@@ -81,6 +81,11 @@ impl Sidebar {
         self.selected_index
     }
 
+    /// Get the route at a given index (for number-key navigation).
+    pub fn route_at(&self, index: usize) -> Option<Route> {
+        self.items.get(index).map(|item| item.route)
+    }
+
     pub fn render(
         &self,
         frame: &mut Frame,
