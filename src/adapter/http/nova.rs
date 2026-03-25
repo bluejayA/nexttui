@@ -39,6 +39,16 @@ struct NovaServerWrapper {
 }
 
 #[derive(Deserialize)]
+struct NovaServerCreateResponse {
+    server: NovaServerCreateResult,
+}
+
+#[derive(Deserialize)]
+struct NovaServerCreateResult {
+    id: String,
+}
+
+#[derive(Deserialize)]
 struct NovaFlavorsResponse {
     flavors: Vec<Flavor>,
     flavors_links: Option<Vec<Link>>,
@@ -208,8 +218,11 @@ impl NovaPort for NovaHttpAdapter {
             },
         };
         let req = self.base.post("/servers").await?.json(&body);
-        let resp: NovaServerWrapper = self.base.send_json(req).await?;
-        Ok(resp.server)
+        let resp: NovaServerCreateResponse = self.base.send_json(req).await?;
+        // Create response has minimal fields; fetch full server detail
+        let detail_req = self.base.get(&format!("/servers/{}", resp.server.id)).await?;
+        let detail: NovaServerWrapper = self.base.send_json(detail_req).await?;
+        Ok(detail.server)
     }
 
     async fn delete_server(&self, server_id: &str) -> ApiResult<()> {

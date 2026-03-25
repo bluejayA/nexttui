@@ -48,7 +48,6 @@ pub async fn run_event_loop(
             event = event_rx.recv() => {
                 match event {
                     Some(ev) => {
-                        eprintln!("[event_loop] Received: {:?}", std::mem::discriminant(&ev));
                         app.handle_event(ev);
                     }
                     None => {
