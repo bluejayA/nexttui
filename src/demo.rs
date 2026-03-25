@@ -14,34 +14,16 @@ use crate::models::neutron::{FloatingIp, Network, SecurityGroup, SecurityGroupRu
 use crate::models::nova::{
     Address, Flavor, FlavorRef, ImageRef, Server,
 };
-use crate::module::floating_ip::FloatingIpModule;
-use crate::module::image::ImageModule;
-use crate::module::network::NetworkModule;
-use crate::module::security_group::SecurityGroupModule;
-use crate::module::server::ServerModule;
-use crate::module::flavor::FlavorModule;
-use crate::module::volume::VolumeModule;
-use crate::module::snapshot::SnapshotModule;
-use crate::module::project::ProjectModule;
-use crate::models::common::Route;
+use crate::registry::{ModuleRegistry, register_all_modules};
 
 /// Create a fully wired App with demo data.
 pub fn create_demo_app() -> (App, mpsc::UnboundedReceiver<Action>) {
     let config = demo_config();
     let (action_tx, action_rx) = mpsc::unbounded_channel();
 
-    let mut app = App::new(config, action_tx.clone());
-
-    // Register modules
-    app.register_component(Route::Servers, Box::new(ServerModule::new(action_tx.clone())));
-    app.register_component(Route::Flavors, Box::new(FlavorModule::new(action_tx.clone(), true)));
-    app.register_component(Route::Networks, Box::new(NetworkModule::new(action_tx.clone())));
-    app.register_component(Route::SecurityGroups, Box::new(SecurityGroupModule::new(action_tx.clone())));
-    app.register_component(Route::FloatingIps, Box::new(FloatingIpModule::new(action_tx.clone())));
-    app.register_component(Route::Volumes, Box::new(VolumeModule::new(action_tx.clone())));
-    app.register_component(Route::Snapshots, Box::new(SnapshotModule::new(action_tx.clone())));
-    app.register_component(Route::Images, Box::new(ImageModule::new(action_tx.clone(), true)));
-    app.register_component(Route::Projects, Box::new(ProjectModule::new(action_tx.clone())));
+    let mut registry = ModuleRegistry::new();
+    register_all_modules(&mut registry, &action_tx);
+    let (mut app, _initial_actions) = App::from_registry(config, action_tx, registry);
 
     // Inject demo data via events
     app.handle_event(AppEvent::ServersLoaded(demo_servers()));

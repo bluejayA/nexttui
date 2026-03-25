@@ -77,38 +77,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Spawn background worker
         tokio::spawn(run_worker(registry, action_rx, event_tx));
 
-        let mut app = App::new(config, action_tx.clone());
-
-        // Register all modules
-        use nexttui::models::common::Route;
-        use nexttui::module::{
-            server::ServerModule, flavor::FlavorModule, network::NetworkModule,
-            security_group::SecurityGroupModule, floating_ip::FloatingIpModule,
-            volume::VolumeModule, snapshot::SnapshotModule, image::ImageModule,
-            project::ProjectModule, user::UserModule,
-        };
-        app.register_component(Route::Servers, Box::new(ServerModule::new(action_tx.clone())));
-        app.register_component(Route::Flavors, Box::new(FlavorModule::new(action_tx.clone(), true)));
-        app.register_component(Route::Networks, Box::new(NetworkModule::new(action_tx.clone())));
-        app.register_component(Route::SecurityGroups, Box::new(SecurityGroupModule::new(action_tx.clone())));
-        app.register_component(Route::FloatingIps, Box::new(FloatingIpModule::new(action_tx.clone())));
-        app.register_component(Route::Volumes, Box::new(VolumeModule::new(action_tx.clone())));
-        app.register_component(Route::Snapshots, Box::new(SnapshotModule::new(action_tx.clone())));
-        app.register_component(Route::Images, Box::new(ImageModule::new(action_tx.clone(), true)));
-        app.register_component(Route::Projects, Box::new(ProjectModule::new(action_tx.clone())));
-        app.register_component(Route::Users, Box::new(UserModule::new(action_tx.clone())));
+        // Build module registry and create app
+        let mut module_registry = nexttui::registry::ModuleRegistry::new();
+        nexttui::registry::register_all_modules(&mut module_registry, &action_tx);
+        let (app, initial_actions) = App::from_registry(config, action_tx.clone(), module_registry);
 
         // Trigger initial data load
-        let _ = action_tx.send(nexttui::action::Action::FetchServers);
-        let _ = action_tx.send(nexttui::action::Action::FetchFlavors);
-        let _ = action_tx.send(nexttui::action::Action::FetchNetworks);
-        let _ = action_tx.send(nexttui::action::Action::FetchSecurityGroups);
-        let _ = action_tx.send(nexttui::action::Action::FetchFloatingIps);
-        let _ = action_tx.send(nexttui::action::Action::FetchVolumes);
-        let _ = action_tx.send(nexttui::action::Action::FetchSnapshots);
-        let _ = action_tx.send(nexttui::action::Action::FetchImages);
-        let _ = action_tx.send(nexttui::action::Action::FetchProjects);
-        let _ = action_tx.send(nexttui::action::Action::FetchUsers);
+        for action in initial_actions {
+            let _ = action_tx.send(action);
+        }
 
         (app, event_rx, None)
     };

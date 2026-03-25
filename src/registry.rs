@@ -67,6 +67,96 @@ impl Default for ModuleRegistry {
     }
 }
 
+/// Register all standard modules. Shared by main.rs and demo.rs.
+pub fn register_all_modules(
+    registry: &mut ModuleRegistry,
+    action_tx: &tokio::sync::mpsc::UnboundedSender<Action>,
+) {
+    use crate::module::{
+        server::ServerModule, flavor::FlavorModule, network::NetworkModule,
+        security_group::SecurityGroupModule, floating_ip::FloatingIpModule,
+        volume::VolumeModule, snapshot::SnapshotModule, image::ImageModule,
+        project::ProjectModule, user::UserModule,
+    };
+
+    let entries = vec![
+        ModuleEntry {
+            sidebar: SidebarItem { label: "Servers".into(), route: Route::Servers, shortcut: "1".into(), admin_only: false },
+            component: Box::new(ServerModule::new(action_tx.clone())),
+            initial_action: Some(Action::FetchServers),
+            related_routes: &[Route::ServerDetail, Route::ServerCreate],
+            display_name: "Servers",
+        },
+        ModuleEntry {
+            sidebar: SidebarItem { label: "Flavors".into(), route: Route::Flavors, shortcut: "2".into(), admin_only: false },
+            component: Box::new(FlavorModule::new(action_tx.clone(), true)),
+            initial_action: Some(Action::FetchFlavors),
+            related_routes: &[],
+            display_name: "Flavors",
+        },
+        ModuleEntry {
+            sidebar: SidebarItem { label: "Networks".into(), route: Route::Networks, shortcut: "3".into(), admin_only: false },
+            component: Box::new(NetworkModule::new(action_tx.clone())),
+            initial_action: Some(Action::FetchNetworks),
+            related_routes: &[Route::NetworkDetail],
+            display_name: "Networks",
+        },
+        ModuleEntry {
+            sidebar: SidebarItem { label: "Security Groups".into(), route: Route::SecurityGroups, shortcut: "4".into(), admin_only: false },
+            component: Box::new(SecurityGroupModule::new(action_tx.clone())),
+            initial_action: Some(Action::FetchSecurityGroups),
+            related_routes: &[Route::SecurityGroupDetail],
+            display_name: "Security Groups",
+        },
+        ModuleEntry {
+            sidebar: SidebarItem { label: "Floating IPs".into(), route: Route::FloatingIps, shortcut: "5".into(), admin_only: false },
+            component: Box::new(FloatingIpModule::new(action_tx.clone())),
+            initial_action: Some(Action::FetchFloatingIps),
+            related_routes: &[],
+            display_name: "Floating IPs",
+        },
+        ModuleEntry {
+            sidebar: SidebarItem { label: "Volumes".into(), route: Route::Volumes, shortcut: "6".into(), admin_only: false },
+            component: Box::new(VolumeModule::new(action_tx.clone())),
+            initial_action: Some(Action::FetchVolumes),
+            related_routes: &[Route::VolumeDetail, Route::VolumeCreate],
+            display_name: "Volumes",
+        },
+        ModuleEntry {
+            sidebar: SidebarItem { label: "Snapshots".into(), route: Route::Snapshots, shortcut: "7".into(), admin_only: false },
+            component: Box::new(SnapshotModule::new(action_tx.clone())),
+            initial_action: Some(Action::FetchSnapshots),
+            related_routes: &[],
+            display_name: "Snapshots",
+        },
+        ModuleEntry {
+            sidebar: SidebarItem { label: "Images".into(), route: Route::Images, shortcut: "8".into(), admin_only: false },
+            component: Box::new(ImageModule::new(action_tx.clone(), true)),
+            initial_action: Some(Action::FetchImages),
+            related_routes: &[Route::ImageDetail],
+            display_name: "Images",
+        },
+        ModuleEntry {
+            sidebar: SidebarItem { label: "Projects".into(), route: Route::Projects, shortcut: "9".into(), admin_only: true },
+            component: Box::new(ProjectModule::new(action_tx.clone())),
+            initial_action: Some(Action::FetchProjects),
+            related_routes: &[],
+            display_name: "Projects",
+        },
+        ModuleEntry {
+            sidebar: SidebarItem { label: "Users".into(), route: Route::Users, shortcut: "0".into(), admin_only: true },
+            component: Box::new(UserModule::new(action_tx.clone())),
+            initial_action: Some(Action::FetchUsers),
+            related_routes: &[],
+            display_name: "Users",
+        },
+    ];
+
+    for entry in entries {
+        registry.register(entry);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
