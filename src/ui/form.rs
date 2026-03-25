@@ -297,6 +297,16 @@ pub enum FormAction {
 }
 
 // ---------------------------------------------------------------------------
+// FormPhase
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FormPhase {
+    Editing,
+    Confirming,
+}
+
+// ---------------------------------------------------------------------------
 // FormWidget
 // ---------------------------------------------------------------------------
 
@@ -305,6 +315,7 @@ pub struct FormWidget {
     fields: Vec<(FieldDef, FieldState)>,
     focused: usize,
     errors: Vec<FieldError>,
+    phase: FormPhase,
 }
 
 impl FormWidget {
@@ -331,11 +342,16 @@ impl FormWidget {
             fields,
             focused: 0,
             errors: Vec::new(),
+            phase: FormPhase::Editing,
         }
     }
 
     pub fn title(&self) -> &str {
         &self.title
+    }
+
+    pub fn phase(&self) -> FormPhase {
+        self.phase
     }
 
     pub fn fields(&self) -> &[(FieldDef, FieldState)] {
@@ -532,7 +548,19 @@ impl FormWidget {
             return FormAction::None;
         }
 
-        // Build FormValues
+        // Transition to Confirming phase instead of immediate submit
+        self.phase = FormPhase::Confirming;
+        FormAction::None
+    }
+
+    /// Confirm and submit from Confirming phase. Returns Submit with built values.
+    pub fn confirm_submit(&mut self) -> FormAction {
+        let values = self.build_values();
+        self.phase = FormPhase::Editing;
+        FormAction::Submit(values)
+    }
+
+    fn build_values(&self) -> FormValues {
         let mut values = FormValues::new();
         for (def, state) in &self.fields {
             let val = match (def, state) {
@@ -568,8 +596,7 @@ impl FormWidget {
             };
             values.insert(def.name().to_string(), val);
         }
-
-        FormAction::Submit(values)
+        values
     }
 
     // -- Key handling -------------------------------------------------------
@@ -587,10 +614,24 @@ impl FormWidget {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> FormAction {
+        if self.phase == FormPhase::Confirming {
+            return self.handle_confirming_key(key);
+        }
         if self.is_any_popup_open() {
             self.handle_popup_key(key)
         } else {
             self.handle_form_key(key)
+        }
+    }
+
+    fn handle_confirming_key(&mut self, key: KeyEvent) -> FormAction {
+        match key.code {
+            KeyCode::Enter => self.confirm_submit(),
+            KeyCode::Esc | KeyCode::Left => {
+                self.phase = FormPhase::Editing;
+                FormAction::None
+            }
+            _ => FormAction::None,
         }
     }
 
@@ -785,6 +826,9 @@ impl FormWidget {
     // -- Rendering ----------------------------------------------------------
 
     pub fn render(&self, frame: &mut Frame, area: Rect) {
+        if self.phase == FormPhase::Confirming {
+            return self.render_confirm_view(frame, area);
+        }
         let block = Block::default()
             .title(format!(" {} ", self.title))
             .borders(Borders::ALL)
@@ -825,7 +869,12 @@ impl FormWidget {
                 Style::default().fg(Color::Gray)
             };
 
-            let label_text = format!("{:>width$}: ", def.label(), width = label_width);
+            let is_required = def.validations().contains(&Validation::Required);
+            let label_text = if is_required {
+                format!("* {:>width$}: ", def.label(), width = label_width.saturating_sub(2))
+            } else {
+                format!("{:>width$}: ", def.label(), width = label_width)
+            };
             let value_width = inner
                 .width
                 .saturating_sub(label_text.chars().count() as u16);
@@ -862,8 +911,14 @@ impl FormWidget {
         // Render hint at bottom
         let hint_y = (inner.y + inner.height).saturating_sub(1);
         if hint_y > y {
+            let has_required = self.fields.iter().any(|(d, _)| d.validations().contains(&Validation::Required));
+            let hint_text = if has_required {
+                " ↑↓ Navigate  ←/Esc Cancel  Enter Submit  * = required "
+            } else {
+                " ↑↓ Navigate  ←/Esc Cancel  Enter Submit "
+            };
             let hint = Line::from(Span::styled(
-                " ↑↓ Navigate  ←/Esc Cancel  Enter Submit ",
+                hint_text,
                 Style::default().fg(Color::DarkGray),
             ));
             let hint_area = Rect::new(inner.x, hint_y, inner.width, 1);
@@ -1111,6 +1166,82 @@ impl FormWidget {
                 frame.render_widget(widget, popup_area);
             }
             _ => {}
+        }
+    }
+
+    fn render_confirm_view(&self, frame: &mut Frame, area: Rect) {
+        let block = Block::default()
+            .title(format!(" Confirm {} ", self.title))
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Yellow));
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        if inner.height == 0 || inner.width == 0 {
+            return;
+        }
+
+        let label_width = self
+            .fields
+            .iter()
+            .map(|(d, _)| d.label().chars().count())
+            .max()
+            .unwrap_or(0)
+            .min(inner.width as usize / 3);
+
+        let mut y = inner.y;
+
+        for (def, state) in &self.fields {
+            if y >= inner.y + inner.height.saturating_sub(1) {
+                break;
+            }
+            let label_text = format!("{:>width$}: ", def.label(), width = label_width);
+            let value_text = self.confirm_value_text(def, state);
+            let line = Line::from(vec![
+                Span::styled(label_text, Style::default().fg(Color::Cyan)),
+                Span::styled(value_text, Style::default().fg(Color::White)),
+            ]);
+            let line_area = Rect::new(inner.x, y, inner.width, 1);
+            frame.render_widget(Paragraph::new(line), line_area);
+            y += 1;
+        }
+
+        // Confirm hint at bottom
+        let hint_y = (inner.y + inner.height).saturating_sub(1);
+        if hint_y > y {
+            let hint = Line::from(Span::styled(
+                " Enter Confirm  Esc Back ",
+                Style::default().fg(Color::DarkGray),
+            ));
+            let hint_area = Rect::new(inner.x, hint_y, inner.width, 1);
+            frame.render_widget(Paragraph::new(hint), hint_area);
+        }
+    }
+
+    fn confirm_value_text(&self, def: &FieldDef, state: &FieldState) -> String {
+        match (def, state) {
+            (FieldDef::Text { .. }, FieldState::Text { value, .. }) => {
+                if value.is_empty() { "(empty)".into() } else { value.clone() }
+            }
+            (FieldDef::Dropdown { options, .. }, FieldState::Dropdown { selected, .. }) => {
+                selected
+                    .and_then(|i| options.get(i))
+                    .map(|o| o.display.clone())
+                    .unwrap_or_else(|| "(none)".into())
+            }
+            (FieldDef::MultiSelect { options, .. }, FieldState::MultiSelect { selected, .. }) => {
+                let vals: Vec<&str> = options
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| selected.get(*i).copied().unwrap_or(false))
+                    .map(|(_, o)| o.display.as_str())
+                    .collect();
+                if vals.is_empty() { "(none)".into() } else { vals.join(", ") }
+            }
+            (FieldDef::Checkbox { .. }, FieldState::Checkbox { checked }) => {
+                if *checked { "Yes".into() } else { "No".into() }
+            }
+            _ => String::new(),
         }
     }
 }
@@ -1584,7 +1715,9 @@ mod tests {
         for c in "10.0.0.0/24".chars() {
             form.handle_key(key(KeyCode::Char(c)));
         }
-        let action = form.validate_and_submit();
+        form.validate_and_submit();
+        assert_eq!(form.phase(), FormPhase::Confirming);
+        let action = form.confirm_submit();
         assert!(matches!(action, FormAction::Submit(_)));
     }
 
@@ -1629,7 +1762,8 @@ mod tests {
             FieldDef::checkbox("Public"),
         ]);
         form.handle_key(key(KeyCode::Char('x')));
-        let action = form.validate_and_submit();
+        form.validate_and_submit();
+        let action = form.confirm_submit();
         if let FormAction::Submit(values) = action {
             assert_eq!(values.get("Name"), Some(&FormValue::Text("x".into())));
             assert_eq!(values.get("Public"), Some(&FormValue::Bool(false)));
@@ -1649,7 +1783,8 @@ mod tests {
         form.handle_key(key(KeyCode::Down)); // selects index 1 ("large")
         form.handle_key(key(KeyCode::Right)); // close without submit
 
-        let action = form.validate_and_submit();
+        form.validate_and_submit();
+        let action = form.confirm_submit();
         if let FormAction::Submit(values) = action {
             assert_eq!(values.get("Flavor"), Some(&FormValue::Selected("large".into())));
         } else {
@@ -1673,7 +1808,8 @@ mod tests {
         form.handle_key(key(KeyCode::Char(' ')));
         form.handle_key(key(KeyCode::Enter));
 
-        let action = form.validate_and_submit();
+        form.validate_and_submit();
+        let action = form.confirm_submit();
         if let FormAction::Submit(values) = action {
             assert_eq!(
                 values.get("Nets"),
@@ -1722,12 +1858,13 @@ mod tests {
     }
 
     #[test]
-    fn test_enter_on_last_field_submits() {
+    fn test_enter_on_last_field_enters_confirming() {
         let mut form = FormWidget::new("Test", vec![
             FieldDef::text("Name", false),
         ]);
         let action = form.handle_key(key(KeyCode::Enter));
-        assert!(matches!(action, FormAction::Submit(_)));
+        assert!(matches!(action, FormAction::None));
+        assert_eq!(form.phase(), FormPhase::Confirming);
     }
 
     // -- set_field_options / set_field_value ---------------------------------
@@ -1863,7 +2000,8 @@ mod tests {
         form.handle_key(key(KeyCode::Char(' ')));
         form.handle_key(key(KeyCode::Enter));
 
-        let action = form.validate_and_submit();
+        form.validate_and_submit();
+        let action = form.confirm_submit();
         assert!(matches!(action, FormAction::Submit(_)));
     }
 
@@ -1933,9 +2071,10 @@ mod tests {
         form.handle_key(key(KeyCode::Down));
         // Open dropdown
         form.handle_key(key(KeyCode::Enter));
-        // Select first option and close with Enter — should also submit
+        // Select first option and close with Enter — enters confirming
         let action = form.handle_key(key(KeyCode::Enter));
-        assert!(matches!(action, FormAction::Submit(_)));
+        assert!(matches!(action, FormAction::None));
+        assert_eq!(form.phase(), FormPhase::Confirming);
     }
 
     #[test]
@@ -1945,9 +2084,9 @@ mod tests {
         ]);
         // Toggle checkbox (Enter toggles but doesn't submit for checkbox)
         form.handle_key(key(KeyCode::Enter));
-        // Enter again on last field — checkbox is already toggled,
         // but we need a way to submit. Use Tab to stay, then test validate_and_submit directly.
-        let action = form.validate_and_submit();
+        form.validate_and_submit();
+        let action = form.confirm_submit();
         assert!(matches!(action, FormAction::Submit(_)));
     }
 
@@ -1981,7 +2120,8 @@ mod tests {
         form.handle_key(key(KeyCode::Char('가')));
         form.handle_key(key(KeyCode::Char('나')));
         form.handle_key(key(KeyCode::Char('다')));
-        let action = form.validate_and_submit();
+        form.validate_and_submit();
+        let action = form.confirm_submit();
         assert!(matches!(action, FormAction::Submit(_)));
     }
 
@@ -2137,5 +2277,104 @@ mod tests {
         form.handle_key(key(KeyCode::Char('i')));
         let output = render_to_buffer(&form, 40, 8);
         assert!(output.contains('h'), "Text value not rendered");
+    }
+
+    #[test]
+    fn test_render_required_asterisk() {
+        let form = FormWidget::new("Test", vec![
+            FieldDef::text("Name", true),
+            FieldDef::text("Description", false),
+        ]);
+        let output = render_to_buffer(&form, 60, 10);
+        // Check that Name line has * but Description line doesn't
+        let name_line = output.lines().find(|l| l.contains("Name")).expect("Name line not found");
+        assert!(name_line.contains("*"), "Required Name field missing * indicator");
+        let desc_line = output.lines().find(|l| l.contains("Description")).expect("Desc line not found");
+        assert!(!desc_line.contains("*"), "Optional Description should not have *");
+    }
+
+    #[test]
+    fn test_form_initial_phase_is_editing() {
+        let form = FormWidget::new("Test", vec![
+            FieldDef::text("Name", true),
+        ]);
+        assert_eq!(form.phase(), FormPhase::Editing);
+    }
+
+    #[test]
+    fn test_submit_enters_confirming_phase() {
+        let mut form = FormWidget::new("Test", vec![
+            FieldDef::text("Name", true),
+        ]);
+        // Type a value so validation passes
+        form.handle_key(key(KeyCode::Char('s')));
+        form.handle_key(key(KeyCode::Char('v')));
+        // Enter on last field triggers submit flow
+        let action = form.handle_key(key(KeyCode::Enter));
+        // Should NOT submit yet — should enter Confirming phase
+        assert!(matches!(action, FormAction::None), "Should not submit directly");
+        assert_eq!(form.phase(), FormPhase::Confirming, "Should be in Confirming phase");
+    }
+
+    #[test]
+    fn test_confirming_enter_submits() {
+        let mut form = FormWidget::new("Test", vec![
+            FieldDef::text("Name", false),
+        ]);
+        form.handle_key(key(KeyCode::Char('x')));
+        form.handle_key(key(KeyCode::Enter)); // enters Confirming
+        assert_eq!(form.phase(), FormPhase::Confirming);
+        let action = form.handle_key(key(KeyCode::Enter)); // confirms
+        assert!(matches!(action, FormAction::Submit(_)));
+        if let FormAction::Submit(values) = action {
+            assert_eq!(values.get("Name"), Some(&FormValue::Text("x".into())));
+        }
+    }
+
+    #[test]
+    fn test_confirming_esc_returns_to_editing() {
+        let mut form = FormWidget::new("Test", vec![
+            FieldDef::text("Name", false),
+        ]);
+        form.handle_key(key(KeyCode::Enter)); // enters Confirming
+        assert_eq!(form.phase(), FormPhase::Confirming);
+        let action = form.handle_key(key(KeyCode::Esc)); // cancel
+        assert!(matches!(action, FormAction::None));
+        assert_eq!(form.phase(), FormPhase::Editing);
+    }
+
+    #[test]
+    fn test_render_confirm_view_shows_values() {
+        let mut form = FormWidget::new("Create Server", vec![
+            FieldDef::text("Name", true),
+            FieldDef::text("Zone", false),
+        ]);
+        form.handle_key(key(KeyCode::Char('w')));
+        form.handle_key(key(KeyCode::Char('e')));
+        form.handle_key(key(KeyCode::Char('b')));
+        // Move to Zone
+        form.handle_key(key(KeyCode::Down));
+        form.handle_key(key(KeyCode::Char('a')));
+        form.handle_key(key(KeyCode::Char('z')));
+        // Enter on last field → Confirming
+        form.handle_key(key(KeyCode::Enter));
+        assert_eq!(form.phase(), FormPhase::Confirming);
+        let output = render_to_buffer(&form, 60, 15);
+        // Confirm view should show "Confirm" in title
+        assert!(output.contains("Confirm"), "Confirm view should show Confirm title");
+        // Confirm view should show field values
+        assert!(output.contains("web"), "Confirm view should show Name value");
+        assert!(output.contains("az"), "Confirm view should show Zone value");
+        // Should show confirm-specific hint (different from editing hint)
+        assert!(output.contains("Enter Confirm"), "Confirm view should show Enter Confirm hint");
+    }
+
+    #[test]
+    fn test_render_hint_shows_required_legend() {
+        let form = FormWidget::new("Test", vec![
+            FieldDef::text("Name", true),
+        ]);
+        let output = render_to_buffer(&form, 60, 10);
+        assert!(output.contains("* = required"), "Required legend not shown in hint");
     }
 }

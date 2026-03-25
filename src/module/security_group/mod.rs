@@ -599,9 +599,10 @@ mod tests {
             module.handle_key(key(KeyCode::Char(c)));
         }
 
-        // Navigate to last field (Description) and submit
+        // Navigate to last field (Description) and trigger confirm
         module.handle_key(key(KeyCode::Down));
-        let action = module.handle_key(key(KeyCode::Enter));
+        module.handle_key(key(KeyCode::Enter)); // enters Confirming phase
+        let action = module.handle_key(key(KeyCode::Enter)); // confirms submit
 
         // Submit now returns ExitFormMode; CreateSecurityGroup is sent via action_tx
         assert!(matches!(action, Some(Action::ExitFormMode)));
