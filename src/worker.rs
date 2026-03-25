@@ -23,18 +23,7 @@ pub async fn run_worker(
         let event_tx = event_tx.clone();
 
         tokio::spawn(async move {
-            let action_name = format!("{:?}", action).chars().take(60).collect::<String>();
-            eprintln!("[worker] Processing: {action_name}");
             let event = handle_action(&registry, action).await;
-            match &event {
-                Some(AppEvent::ApiError { operation, message }) => {
-                    eprintln!("[worker] ERROR {operation}: {message}");
-                }
-                Some(ev) => {
-                    eprintln!("[worker] OK: {:?}", std::mem::discriminant(ev));
-                }
-                None => {}
-            }
             if let Some(ev) = event {
                 let _ = event_tx.send(ev);
             }

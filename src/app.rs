@@ -3,6 +3,8 @@ use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
+use ratatui::style::{Color, Style};
+use ratatui::widgets::{Block, Borders};
 use tokio::sync::mpsc;
 
 use crate::action::Action;
@@ -14,7 +16,7 @@ use crate::models::common::Route;
 use crate::router::Router;
 use crate::ui::header::{Header, HeaderContext};
 use crate::ui::layout::LayoutManager;
-use crate::ui::sidebar::{Sidebar, SidebarItem};
+use crate::ui::sidebar::Sidebar;
 use crate::ui::status_bar::{StatusBar, StatusInfo};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,11 +41,11 @@ pub struct App {
     sidebar: Sidebar,
     header: Header,
     status_bar: StatusBar,
+    route_labels: HashMap<Route, &'static str>,
 }
 
 impl App {
     pub fn new(config: Config, action_tx: mpsc::UnboundedSender<Action>) -> Self {
-        let sidebar = Sidebar::new(default_sidebar_items());
         Self {
             should_quit: false,
             input_mode: InputMode::Normal,
@@ -55,13 +57,46 @@ impl App {
             action_tx,
             config: Arc::new(config),
             layout: LayoutManager::new(),
-            sidebar,
+            sidebar: Sidebar::new(Vec::new()),
             header: Header::new(),
             status_bar: StatusBar::new(),
+            route_labels: HashMap::new(),
         }
     }
 
-    /// Register a domain module component for a given route.
+    pub fn from_registry(
+        config: Config,
+        action_tx: mpsc::UnboundedSender<Action>,
+        registry: crate::registry::ModuleRegistry,
+    ) -> (Self, Vec<Action>) {
+        let parts = registry.into_parts();
+        let mut app = Self {
+            should_quit: false,
+            input_mode: InputMode::Normal,
+            sidebar_visible: true,
+            focus: FocusPane::Content,
+            router: Router::new(Route::Servers),
+            components: parts.components,
+            background_tracker: BackgroundTracker::new(),
+            action_tx,
+            config: Arc::new(config),
+            layout: LayoutManager::new(),
+            sidebar: Sidebar::new(parts.sidebar_items),
+            header: Header::new(),
+            status_bar: StatusBar::new(),
+            route_labels: parts.route_labels,
+        };
+        // Store sidebar items for number-key navigation
+        app.sidebar.sync_active(&Route::Servers, false);
+        (app, parts.initial_actions)
+    }
+
+    pub fn route_label(&self, route: &Route) -> &str {
+        self.route_labels.get(route).copied().unwrap_or("Unknown")
+    }
+
+    /// Register a domain module component for a given route (test use only).
+    #[cfg(test)]
     pub fn register_component(&mut self, route: Route, component: Box<dyn Component>) {
         self.components.insert(route, component);
     }
@@ -101,10 +136,9 @@ impl App {
                     return true;
                 }
                 KeyCode::Char(c @ '1'..='9') | KeyCode::Char(c @ '0') => {
-                    let items = default_sidebar_items();
                     let idx = if c == '0' { 9 } else { (c as usize) - ('1' as usize) };
-                    if let Some(item) = items.get(idx) {
-                        self.dispatch_action(Action::Navigate(item.route));
+                    if let Some(route) = self.sidebar.route_at(idx, true) {
+                        self.dispatch_action(Action::Navigate(route));
                     }
                     return true;
                 }
@@ -304,7 +338,7 @@ impl App {
         let areas = self.layout.calculate(frame.area());
 
         // Header
-        let route_label = route_display_name(&self.router.current());
+        let route_label = self.route_label(&self.router.current());
         let cloud_name = self.config.active_cloud_name().to_string();
         let region = self.config.active_cloud_config()
             .region_name.as_deref().unwrap_or("default").to_string();
@@ -322,7 +356,18 @@ impl App {
 
         // Content
         if let Some(component) = self.components.get(&self.router.current()) {
-            component.render(frame, areas.content);
+            let content_focused = self.focus == FocusPane::Content;
+            let content_border_style = if content_focused {
+                Style::default().fg(Color::Cyan)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+            let content_block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(content_border_style);
+            let content_inner = content_block.inner(areas.content);
+            frame.render_widget(content_block, areas.content);
+            component.render(frame, content_inner);
         }
 
         // Status bar
@@ -373,42 +418,6 @@ impl App {
 
     pub fn action_tx(&self) -> &mpsc::UnboundedSender<Action> {
         &self.action_tx
-    }
-}
-
-fn default_sidebar_items() -> Vec<SidebarItem> {
-    vec![
-        SidebarItem { label: "Servers".into(), route: Route::Servers, shortcut: "1".into(), admin_only: false },
-        SidebarItem { label: "Flavors".into(), route: Route::Flavors, shortcut: "2".into(), admin_only: false },
-        SidebarItem { label: "Networks".into(), route: Route::Networks, shortcut: "3".into(), admin_only: false },
-        SidebarItem { label: "Security Groups".into(), route: Route::SecurityGroups, shortcut: "4".into(), admin_only: false },
-        SidebarItem { label: "Floating IPs".into(), route: Route::FloatingIps, shortcut: "5".into(), admin_only: false },
-        SidebarItem { label: "Volumes".into(), route: Route::Volumes, shortcut: "6".into(), admin_only: false },
-        SidebarItem { label: "Snapshots".into(), route: Route::Snapshots, shortcut: "7".into(), admin_only: false },
-        SidebarItem { label: "Images".into(), route: Route::Images, shortcut: "8".into(), admin_only: false },
-        SidebarItem { label: "Projects".into(), route: Route::Projects, shortcut: "9".into(), admin_only: true },
-        SidebarItem { label: "Users".into(), route: Route::Users, shortcut: "0".into(), admin_only: true },
-    ]
-}
-
-fn route_display_name(route: &Route) -> &'static str {
-    match route {
-        Route::Servers | Route::ServerDetail | Route::ServerCreate => "Servers",
-        Route::Flavors => "Flavors",
-        Route::Networks | Route::NetworkDetail => "Networks",
-        Route::SecurityGroups | Route::SecurityGroupDetail => "Security Groups",
-        Route::FloatingIps => "Floating IPs",
-        Route::Volumes | Route::VolumeDetail | Route::VolumeCreate => "Volumes",
-        Route::Snapshots => "Snapshots",
-        Route::Images | Route::ImageDetail => "Images",
-        Route::Projects => "Projects",
-        Route::Users => "Users",
-        Route::Migrations => "Migrations",
-        Route::Aggregates => "Aggregates",
-        Route::ComputeServices => "Compute Services",
-        Route::Hypervisors => "Hypervisors",
-        Route::Agents => "Agents",
-        Route::Usage => "Usage",
     }
 }
 

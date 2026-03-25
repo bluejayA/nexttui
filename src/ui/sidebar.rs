@@ -81,6 +81,11 @@ impl Sidebar {
         self.selected_index
     }
 
+    /// Get the route at a given index (for number-key navigation), respecting admin visibility.
+    pub fn route_at(&self, index: usize, is_admin: bool) -> Option<Route> {
+        self.visible_items(is_admin).get(index).map(|item| item.route)
+    }
+
     pub fn render(
         &self,
         frame: &mut Frame,
@@ -124,9 +129,15 @@ impl Sidebar {
             })
             .collect();
 
+        let border_style = if focused {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
         let block = Block::default()
             .title(" Modules ")
-            .borders(Borders::RIGHT);
+            .borders(Borders::RIGHT)
+            .border_style(border_style);
         let list = List::new(items).block(block);
         let mut state = ListState::default();
         state.select(Some(self.selected_index));

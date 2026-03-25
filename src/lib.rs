@@ -13,6 +13,7 @@ pub mod input;
 pub mod models;
 pub mod module;
 pub mod port;
+pub mod registry;
 pub mod router;
 pub mod ui;
 pub mod worker;
