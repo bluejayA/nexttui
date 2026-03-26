@@ -111,11 +111,12 @@ impl RbacGuard {
     }
 
     /// Check if current user can access a route (for sidebar filtering).
+    /// Admin: all routes. Member/Reader: non-admin routes only.
     pub fn can_access_route(&self, route: &Route) -> bool {
-        if self.is_admin() {
-            return true;
+        match self.effective_role() {
+            EffectiveRole::Admin => true,
+            _ => !Self::is_admin_only_route(route),
         }
-        !Self::is_admin_only_route(route)
     }
 
     /// Check if current user can perform a specific action.
@@ -130,7 +131,9 @@ impl RbacGuard {
 
     /// Capability-based permission check.
     /// If capabilities are populated, checks against them.
-    /// Otherwise falls back to role-based check (admin = all).
+    /// Otherwise falls back to role-based check: Admin = all, Member/Reader = denied.
+    /// Note: Member permissions without capabilities should use `can_perform()` instead.
+    /// Phase 2 will populate capabilities for Member via `update_capabilities()`.
     pub fn has_capability(&self, resource: &str, action: &str) -> bool {
         if let Ok(s) = self.state.read() {
             if !s.capabilities.is_empty() {
@@ -247,6 +250,14 @@ mod tests {
         );
         assert_eq!(
             EffectiveRole::from_roles(&[role("member"), role("admin")]),
+            EffectiveRole::Admin
+        );
+        assert_eq!(
+            EffectiveRole::from_roles(&[role("reader"), role("admin")]),
+            EffectiveRole::Admin
+        );
+        assert_eq!(
+            EffectiveRole::from_roles(&[role("operator"), role("admin")]),
             EffectiveRole::Admin
         );
     }
@@ -385,6 +396,9 @@ mod tests {
         assert!(!guard.can_perform(ActionKind::Delete));
         assert!(!guard.can_perform(ActionKind::ForceDelete));
         assert!(!guard.can_perform(ActionKind::Migrate));
+        assert!(!guard.can_perform(ActionKind::Evacuate));
+        assert!(!guard.can_perform(ActionKind::EnableDisable));
+        assert!(!guard.can_perform(ActionKind::ManageQuota));
     }
 
     // --- filter ---
