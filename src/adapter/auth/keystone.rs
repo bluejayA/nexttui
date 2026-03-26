@@ -351,6 +351,9 @@ impl AuthProvider for KeystoneAuthAdapter {
     /// Uses a Mutex to prevent thundering herd — only one refresh at a time.
     #[tracing::instrument(skip(self))]
     async fn get_token(&self) -> ApiResult<String> {
+        // Ensure refresh loop is running (idempotent — handles cached token from disk)
+        self.start_refresh_loop().await;
+
         // Fast path: token is still valid
         {
             let current = self.current_token.read().await;

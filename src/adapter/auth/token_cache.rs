@@ -3,20 +3,33 @@
 //! Cache location: `~/.cache/nexttui/auth/{cache_key}`
 //! File permissions: 0o600 (Unix only)
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use crate::port::types::Token;
 
-/// Compute a cache key from cloud config fields.
-/// Uses auth_url + username + project_name to create a unique hash per cloud.
+/// Compute a deterministic cache key from cloud config fields.
+/// Uses a simple FNV-1a 64-bit hash (stable across Rust versions, no external deps).
 pub fn compute_cache_key(auth_url: &str, username: &str, project_name: Option<&str>) -> String {
-    let mut hasher = DefaultHasher::new();
-    auth_url.hash(&mut hasher);
-    username.hash(&mut hasher);
-    project_name.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
+    let input = format!(
+        "{}|{}|{}",
+        auth_url,
+        username,
+        project_name.unwrap_or("")
+    );
+    let hash = fnv1a_64(input.as_bytes());
+    format!("{hash:016x}")
+}
+
+/// FNV-1a 64-bit hash — deterministic, no external dependency.
+fn fnv1a_64(data: &[u8]) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x00000100000001B3;
+    let mut hash = FNV_OFFSET;
+    for &byte in data {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
 }
 
 /// Resolve the cache file path for a given cache key.
@@ -29,19 +42,34 @@ pub fn cache_file_path(cache_key: &str) -> PathBuf {
 }
 
 /// Save a token to the cache file.
-/// Creates parent directories if needed. Sets file permissions to 0o600 on Unix.
+/// Creates parent directories if needed.
+/// On Unix, creates the file with 0o600 permissions atomically (no TOCTOU window).
 pub fn save_token(token: &Token, path: &Path) -> Result<(), std::io::Error> {
+    use std::io::Write;
+
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     let data = serde_json::to_vec(token)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    std::fs::write(path, &data)?;
 
+    // NOTE: Token ID is stored in plaintext JSON. File permissions (0o600) provide
+    // basic protection. Encryption (AES-GCM / OS keychain) is tracked as BL-P2-016.
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        file.write_all(&data)?;
+    }
+
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, &data)?;
     }
 
     tracing::info!(path = %path.display(), "token cached to disk");
