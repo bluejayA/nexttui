@@ -3,11 +3,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use super::{build_pagination_query, encode_param};
+use super::{build_pagination_query, encode_param, extract_marker_from_url, paginated_list};
 use crate::adapter::http::base::BaseHttpClient;
 use crate::models::keystone::{Project, Role, RoleAssignment, User};
 use crate::port::auth::AuthProvider;
-use crate::port::error::ApiResult;
+use crate::port::error::{ApiError, ApiResult};
 use crate::port::keystone::KeystonePort;
 use crate::port::types::*;
 
@@ -16,10 +16,10 @@ pub struct KeystoneHttpAdapter {
 }
 
 impl KeystoneHttpAdapter {
-    pub fn new(auth: Arc<dyn AuthProvider>, region: Option<String>) -> Self {
-        Self {
-            base: BaseHttpClient::new(auth, "identity", EndpointInterface::Public, region),
-        }
+    pub fn new(auth: Arc<dyn AuthProvider>, region: Option<String>) -> Result<Self, ApiError> {
+        Ok(Self {
+            base: BaseHttpClient::new(auth, "identity", EndpointInterface::Public, region)?,
+        })
     }
 }
 
@@ -69,18 +69,7 @@ struct KeystoneLinks {
 }
 
 fn extract_keystone_marker(links: &Option<KeystoneLinks>) -> Option<String> {
-    links.as_ref().and_then(|l| {
-        l.next.as_deref().and_then(|url| {
-            url.split('?')
-                .nth(1)
-                .and_then(|query| {
-                    query
-                        .split('&')
-                        .find(|p| p.starts_with("marker="))
-                        .map(|p| p.trim_start_matches("marker=").to_string())
-                })
-        })
-    })
+    links.as_ref().and_then(|l| l.next.as_deref().and_then(extract_marker_from_url))
 }
 
 // --- Serialize structs ---
@@ -161,20 +150,10 @@ impl KeystonePort for KeystoneHttpAdapter {
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<Project>> {
         let query = build_pagination_query(pagination);
-        let path = if query.is_empty() {
-            "/v3/projects".to_string()
-        } else {
-            format!("/v3/projects?{query}")
-        };
-        let req = self.base.get(&path).await?;
-        let resp: KeystoneProjectsResponse = self.base.send_json(req).await?;
-        let next_marker = extract_keystone_marker(&resp.links);
-        let has_more = next_marker.is_some();
-        Ok(PaginatedResponse {
-            items: resp.projects,
-            next_marker,
-            has_more,
-        })
+        paginated_list(&self.base, "/v3/projects", &query, |resp: KeystoneProjectsResponse| {
+            let next = extract_keystone_marker(&resp.links);
+            (resp.projects, next)
+        }).await
     }
 
     async fn get_project(&self, project_id: &str) -> ApiResult<Project> {
@@ -236,20 +215,10 @@ impl KeystonePort for KeystoneHttpAdapter {
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<User>> {
         let query = build_pagination_query(pagination);
-        let path = if query.is_empty() {
-            "/v3/users".to_string()
-        } else {
-            format!("/v3/users?{query}")
-        };
-        let req = self.base.get(&path).await?;
-        let resp: KeystoneUsersResponse = self.base.send_json(req).await?;
-        let next_marker = extract_keystone_marker(&resp.links);
-        let has_more = next_marker.is_some();
-        Ok(PaginatedResponse {
-            items: resp.users,
-            next_marker,
-            has_more,
-        })
+        paginated_list(&self.base, "/v3/users", &query, |resp: KeystoneUsersResponse| {
+            let next = extract_keystone_marker(&resp.links);
+            (resp.users, next)
+        }).await
     }
 
     async fn get_user(&self, user_id: &str) -> ApiResult<User> {

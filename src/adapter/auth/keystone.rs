@@ -138,21 +138,20 @@ pub struct KeystoneAuthAdapter {
 }
 
 impl KeystoneAuthAdapter {
-    pub fn new(credential: AuthCredential) -> Self {
+    pub fn new(credential: AuthCredential) -> Result<Self, ApiError> {
         let (token_tx, _) = broadcast::channel::<Token>(16);
-        Self {
+        Ok(Self {
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(30))
                 .connect_timeout(Duration::from_secs(10))
-                .build()
-                .expect("failed to build HTTP client"),
+                .build()?,
             credential,
             current_token: Arc::new(RwLock::new(None)),
             token_tx,
             refresh_handle: Mutex::new(None),
             refresh_started: AtomicBool::new(false),
             refresh_lock: Mutex::new(()),
-        }
+        })
     }
 
     /// Start the background token refresh loop. Idempotent — only spawns once.
@@ -554,7 +553,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_endpoint_from_token() {
-        let adapter = KeystoneAuthAdapter::new(sample_credential_password());
+        let adapter = KeystoneAuthAdapter::new(sample_credential_password()).unwrap();
         let resp: KeystoneTokenResponse =
             serde_json::from_str(sample_keystone_response_json()).unwrap();
         let token = parse_token("tok-1".to_string(), resp);
@@ -583,7 +582,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_has_role() {
-        let adapter = KeystoneAuthAdapter::new(sample_credential_password());
+        let adapter = KeystoneAuthAdapter::new(sample_credential_password()).unwrap();
         let resp: KeystoneTokenResponse =
             serde_json::from_str(sample_keystone_response_json()).unwrap();
         let token = parse_token("tok-1".to_string(), resp);
@@ -599,7 +598,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_authenticate_request_injects_token() {
-        let adapter = KeystoneAuthAdapter::new(sample_credential_password());
+        let adapter = KeystoneAuthAdapter::new(sample_credential_password()).unwrap();
         let resp: KeystoneTokenResponse =
             serde_json::from_str(sample_keystone_response_json()).unwrap();
         let token = parse_token("tok-xyz".to_string(), resp);
@@ -621,14 +620,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_token_info_not_authenticated() {
-        let adapter = KeystoneAuthAdapter::new(sample_credential_password());
+        let adapter = KeystoneAuthAdapter::new(sample_credential_password()).unwrap();
         let err = adapter.get_token_info().await;
         assert!(err.is_err());
     }
 
     #[tokio::test]
     async fn test_get_catalog() {
-        let adapter = KeystoneAuthAdapter::new(sample_credential_password());
+        let adapter = KeystoneAuthAdapter::new(sample_credential_password()).unwrap();
         let resp: KeystoneTokenResponse =
             serde_json::from_str(sample_keystone_response_json()).unwrap();
         let token = parse_token("tok-1".to_string(), resp);
@@ -644,7 +643,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_refresh_loop_idempotent() {
-        let adapter = KeystoneAuthAdapter::new(sample_credential_password());
+        let adapter = KeystoneAuthAdapter::new(sample_credential_password()).unwrap();
         assert!(!adapter.refresh_started.load(Ordering::SeqCst));
 
         // Simulate first start

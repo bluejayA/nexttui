@@ -3,11 +3,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use super::{append_pagination_parts, encode_param};
+use super::{append_pagination_parts, encode_param, extract_marker_from_url, paginated_list};
 use crate::adapter::http::base::BaseHttpClient;
 use crate::models::glance::Image;
 use crate::port::auth::AuthProvider;
-use crate::port::error::ApiResult;
+use crate::port::error::{ApiError, ApiResult};
 use crate::port::glance::GlancePort;
 use crate::port::types::*;
 
@@ -16,10 +16,10 @@ pub struct GlanceHttpAdapter {
 }
 
 impl GlanceHttpAdapter {
-    pub fn new(auth: Arc<dyn AuthProvider>, region: Option<String>) -> Self {
-        Self {
-            base: BaseHttpClient::new(auth, "image", EndpointInterface::Public, region),
-        }
+    pub fn new(auth: Arc<dyn AuthProvider>, region: Option<String>) -> Result<Self, ApiError> {
+        Ok(Self {
+            base: BaseHttpClient::new(auth, "image", EndpointInterface::Public, region)?,
+        })
     }
 }
 
@@ -32,19 +32,8 @@ struct GlanceImagesResponse {
     next: Option<String>,
 }
 
-// Glance uses `next` URL field instead of `*_links` pattern.
-// We extract marker from the next URL if present.
 fn extract_glance_marker(next: Option<&str>) -> Option<String> {
-    next.and_then(|url| {
-        url.split('?')
-            .nth(1)
-            .and_then(|query| {
-                query
-                    .split('&')
-                    .find(|p| p.starts_with("marker="))
-                    .map(|p| p.trim_start_matches("marker=").to_string())
-            })
-    })
+    next.and_then(extract_marker_from_url)
 }
 
 // --- Serialize structs ---
@@ -99,20 +88,10 @@ impl GlancePort for GlanceHttpAdapter {
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<Image>> {
         let query = build_image_query(filter, pagination);
-        let path = if query.is_empty() {
-            "/v2/images".to_string()
-        } else {
-            format!("/v2/images?{query}")
-        };
-        let req = self.base.get(&path).await?;
-        let resp: GlanceImagesResponse = self.base.send_json(req).await?;
-        let next_marker = extract_glance_marker(resp.next.as_deref());
-        let has_more = next_marker.is_some();
-        Ok(PaginatedResponse {
-            items: resp.images,
-            next_marker,
-            has_more,
-        })
+        paginated_list(&self.base, "/v2/images", &query, |resp: GlanceImagesResponse| {
+            let next = extract_glance_marker(resp.next.as_deref());
+            (resp.images, next)
+        }).await
     }
 
     async fn get_image(&self, image_id: &str) -> ApiResult<Image> {

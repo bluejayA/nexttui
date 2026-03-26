@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use super::{Link, append_pagination_parts, build_pagination_query, encode_param, extract_next_marker};
+use super::{Link, append_pagination_parts, build_pagination_query, encode_param, extract_next_marker, paginated_list};
 use crate::adapter::http::base::BaseHttpClient;
 use crate::models::nova::{Aggregate, ComputeService, Flavor, Hypervisor, Server};
 use crate::port::auth::AuthProvider;
@@ -18,10 +18,10 @@ pub struct NovaHttpAdapter {
 }
 
 impl NovaHttpAdapter {
-    pub fn new(auth: Arc<dyn AuthProvider>, region: Option<String>) -> Self {
-        Self {
-            base: BaseHttpClient::new(auth, "compute", EndpointInterface::Public, region),
-        }
+    pub fn new(auth: Arc<dyn AuthProvider>, region: Option<String>) -> Result<Self, ApiError> {
+        Ok(Self {
+            base: BaseHttpClient::new(auth, "compute", EndpointInterface::Public, region)?,
+        })
     }
 }
 
@@ -169,23 +169,10 @@ impl NovaPort for NovaHttpAdapter {
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<Server>> {
         let query = build_server_query(filter, pagination);
-        let path = if query.is_empty() {
-            "/servers/detail".to_string()
-        } else {
-            format!("/servers/detail?{query}")
-        };
-        let req = self.base.get(&path).await?;
-        let resp: NovaServersResponse = self.base.send_json(req).await?;
-        let next_marker = resp
-            .servers_links
-            .as_deref()
-            .and_then(extract_next_marker);
-        let has_more = next_marker.is_some();
-        Ok(PaginatedResponse {
-            items: resp.servers,
-            next_marker,
-            has_more,
-        })
+        paginated_list(&self.base, "/servers/detail", &query, |resp: NovaServersResponse| {
+            let next = resp.servers_links.as_deref().and_then(extract_next_marker);
+            (resp.servers, next)
+        }).await
     }
 
     async fn get_server(&self, server_id: &str) -> ApiResult<Server> {
@@ -351,23 +338,10 @@ impl NovaPort for NovaHttpAdapter {
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<Flavor>> {
         let query = build_pagination_query(pagination);
-        let path = if query.is_empty() {
-            "/flavors/detail".to_string()
-        } else {
-            format!("/flavors/detail?{query}")
-        };
-        let req = self.base.get(&path).await?;
-        let resp: NovaFlavorsResponse = self.base.send_json(req).await?;
-        let next_marker = resp
-            .flavors_links
-            .as_deref()
-            .and_then(extract_next_marker);
-        let has_more = next_marker.is_some();
-        Ok(PaginatedResponse {
-            items: resp.flavors,
-            next_marker,
-            has_more,
-        })
+        paginated_list(&self.base, "/flavors/detail", &query, |resp: NovaFlavorsResponse| {
+            let next = resp.flavors_links.as_deref().and_then(extract_next_marker);
+            (resp.flavors, next)
+        }).await
     }
 
     async fn get_flavor(&self, flavor_id: &str) -> ApiResult<Flavor> {

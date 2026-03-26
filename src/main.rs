@@ -26,7 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Keep _event_tx alive so event_rx doesn't immediately return None in demo mode
     let (mut app, event_rx, _keep_alive_tx) = if demo_mode {
-        let (app, _action_rx) = create_demo_app();
+        let (app, _action_rx) = create_demo_app()?;
         let (event_tx, event_rx) = mpsc::unbounded_channel::<AppEvent>();
         (app, event_rx, Some(event_tx))
     } else {
@@ -68,11 +68,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }),
         };
 
-        let auth_provider = Arc::new(KeystoneAuthAdapter::new(credential));
+        let auth_provider = Arc::new(KeystoneAuthAdapter::new(credential)?);
         let registry = Arc::new(AdapterRegistry::new_http(
             auth_provider,
             cloud.region_name.clone(),
-        ));
+        )?);
 
         // Build module registry and create app
         let rbac = std::sync::Arc::new(nexttui::infra::rbac::RbacGuard::new());
