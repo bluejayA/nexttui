@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -130,38 +131,32 @@ fn parse_interface(s: &str) -> EndpointInterface {
 pub struct KeystoneAuthAdapter {
     client: reqwest::Client,
     credential: AuthCredential,
-    current_token: Arc<RwLock<Option<Token>>>,
+    token_map: Arc<RwLock<HashMap<TokenScope, Token>>>,
+    active_scope: TokenScope,
     token_tx: broadcast::Sender<Token>,
     refresh_handle: Mutex<Option<JoinHandle<()>>>,
     /// Guard to ensure refresh loop is started only once.
     refresh_started: AtomicBool,
     /// Mutex to serialize concurrent refresh attempts (prevents thundering herd).
     refresh_lock: Mutex<()>,
-    /// File path for token cache persistence.
-    cache_path: PathBuf,
+    /// Directory for scope-keyed token cache files.
+    cache_dir: PathBuf,
 }
 
 impl KeystoneAuthAdapter {
     pub fn new(credential: AuthCredential) -> Result<Self, ApiError> {
         use super::token_cache;
 
-        let (username, project_name) = match &credential.method {
-            AuthMethod::Password { username, .. } => {
-                (username.clone(), credential.project_scope.as_ref().map(|p| p.name.clone()))
-            }
-            AuthMethod::ApplicationCredential { id, .. } => {
-                (id.clone(), credential.project_scope.as_ref().map(|p| p.name.clone()))
-            }
+        let username = match &credential.method {
+            AuthMethod::Password { username, .. } => username.clone(),
+            AuthMethod::ApplicationCredential { id, .. } => id.clone(),
         };
-        let cache_key = token_cache::compute_cache_key(
-            &credential.auth_url,
-            &username,
-            project_name.as_deref(),
-        );
-        let cache_path = token_cache::cache_file_path(&cache_key);
+        let active_scope = TokenScope::from_credential(&credential);
+        let cloud_key = token_cache::compute_cloud_key(&credential.auth_url, &username);
+        let cache_dir = token_cache::cache_dir_path(&cloud_key);
 
-        // Try loading cached token from disk
-        let cached_token = token_cache::load_token(&cache_path);
+        // Load all cached tokens for this cloud from disk
+        let cached_tokens = token_cache::load_all_tokens(&cache_dir);
 
         let (token_tx, _) = broadcast::channel::<Token>(16);
         Ok(Self {
@@ -170,12 +165,13 @@ impl KeystoneAuthAdapter {
                 .connect_timeout(Duration::from_secs(10))
                 .build()?,
             credential,
-            current_token: Arc::new(RwLock::new(cached_token)),
+            token_map: Arc::new(RwLock::new(cached_tokens)),
+            active_scope,
             token_tx,
             refresh_handle: Mutex::new(None),
             refresh_started: AtomicBool::new(false),
             refresh_lock: Mutex::new(()),
-            cache_path,
+            cache_dir,
         })
     }
 
@@ -186,19 +182,20 @@ impl KeystoneAuthAdapter {
             return; // Already started
         }
 
-        let token_ref = self.current_token.clone();
+        let token_map_ref = self.token_map.clone();
         let client = self.client.clone();
         let credential = self.credential.clone();
         let tx = self.token_tx.clone();
-        let cache_path = self.cache_path.clone();
+        let cache_dir = self.cache_dir.clone();
+        let scope = self.active_scope.clone();
 
         let refresh_span = tracing::info_span!("token_refresh_loop");
         let handle = tokio::spawn(
             async move {
                 loop {
                     let sleep_duration = {
-                        let token = token_ref.read().await;
-                        match token.as_ref() {
+                        let map = token_map_ref.read().await;
+                        match map.get(&scope) {
                             Some(t) => {
                                 let remaining = t.expires_at - Utc::now();
                                 let refresh_at = remaining - chrono::Duration::minutes(5);
@@ -216,9 +213,9 @@ impl KeystoneAuthAdapter {
 
                     match Self::do_authenticate(&client, &credential).await {
                         Ok(new_token) => {
-                            let mut current = token_ref.write().await;
-                            *current = Some(new_token.clone());
-                            if let Err(e) = super::token_cache::save_token(&new_token, &cache_path) {
+                            let mut map = token_map_ref.write().await;
+                            map.insert(scope.clone(), new_token.clone());
+                            if let Err(e) = super::token_cache::save_token(&new_token, &cache_dir, &scope) {
                                 tracing::warn!(error = %e, "failed to cache token to disk");
                             }
                             let _ = tx.send(new_token);
@@ -323,10 +320,10 @@ impl AuthProvider for KeystoneAuthAdapter {
     async fn authenticate(&self, credential: &AuthCredential) -> ApiResult<Token> {
         let token = Self::do_authenticate(&self.client, credential).await?;
         {
-            let mut current = self.current_token.write().await;
-            *current = Some(token.clone());
+            let mut map = self.token_map.write().await;
+            map.insert(self.active_scope.clone(), token.clone());
         }
-        if let Err(e) = super::token_cache::save_token(&token, &self.cache_path) {
+        if let Err(e) = super::token_cache::save_token(&token, &self.cache_dir, &self.active_scope) {
             tracing::warn!(error = %e, "failed to cache token to disk");
         }
         self.start_refresh_loop().await;
@@ -337,10 +334,10 @@ impl AuthProvider for KeystoneAuthAdapter {
     async fn refresh_token(&self) -> ApiResult<Token> {
         let token = Self::do_authenticate(&self.client, &self.credential).await?;
         {
-            let mut current = self.current_token.write().await;
-            *current = Some(token.clone());
+            let mut map = self.token_map.write().await;
+            map.insert(self.active_scope.clone(), token.clone());
         }
-        if let Err(e) = super::token_cache::save_token(&token, &self.cache_path) {
+        if let Err(e) = super::token_cache::save_token(&token, &self.cache_dir, &self.active_scope) {
             tracing::warn!(error = %e, "failed to cache token to disk");
         }
         let _ = self.token_tx.send(token.clone());
@@ -354,10 +351,10 @@ impl AuthProvider for KeystoneAuthAdapter {
         // Ensure refresh loop is running (idempotent — handles cached token from disk)
         self.start_refresh_loop().await;
 
-        // Fast path: token is still valid
+        // Fast path: token is still valid for active scope
         {
-            let current = self.current_token.read().await;
-            if let Some(t) = current.as_ref() {
+            let map = self.token_map.read().await;
+            if let Some(t) = map.get(&self.active_scope) {
                 if t.expires_at > Utc::now() + chrono::Duration::minutes(1) {
                     return Ok(t.id.clone());
                 }
@@ -367,10 +364,10 @@ impl AuthProvider for KeystoneAuthAdapter {
         // Slow path: serialize refresh attempts
         let _guard = self.refresh_lock.lock().await;
 
-        // Double-check after acquiring lock — another caller may have already refreshed
+        // Double-check after acquiring lock
         {
-            let current = self.current_token.read().await;
-            if let Some(t) = current.as_ref() {
+            let map = self.token_map.read().await;
+            if let Some(t) = map.get(&self.active_scope) {
                 if t.expires_at > Utc::now() + chrono::Duration::minutes(1) {
                     return Ok(t.id.clone());
                 }
@@ -382,9 +379,9 @@ impl AuthProvider for KeystoneAuthAdapter {
     }
 
     async fn get_token_info(&self) -> ApiResult<Token> {
-        let current = self.current_token.read().await;
-        current
-            .clone()
+        let map = self.token_map.read().await;
+        map.get(&self.active_scope)
+            .cloned()
             .ok_or(ApiError::AuthFailed("Not authenticated".into()))
     }
 
@@ -416,9 +413,9 @@ impl AuthProvider for KeystoneAuthAdapter {
         // Ensure we have a valid token (triggers initial auth if needed)
         let _ = self.get_token().await?;
 
-        let current = self.current_token.read().await;
-        let token = current
-            .as_ref()
+        let map = self.token_map.read().await;
+        let token = map
+            .get(&self.active_scope)
             .ok_or(ApiError::AuthFailed("Not authenticated".into()))?;
 
         token
@@ -441,17 +438,17 @@ impl AuthProvider for KeystoneAuthAdapter {
     }
 
     async fn has_role(&self, role_name: &str) -> ApiResult<bool> {
-        let current = self.current_token.read().await;
-        let token = current
-            .as_ref()
+        let map = self.token_map.read().await;
+        let token = map
+            .get(&self.active_scope)
             .ok_or(ApiError::AuthFailed("Not authenticated".into()))?;
         Ok(token.roles.iter().any(|r| r.name == role_name))
     }
 
     async fn get_catalog(&self) -> ApiResult<Vec<CatalogEntry>> {
-        let current = self.current_token.read().await;
-        let token = current
-            .as_ref()
+        let map = self.token_map.read().await;
+        let token = map
+            .get(&self.active_scope)
             .ok_or(ApiError::AuthFailed("Not authenticated".into()))?;
         Ok(token.catalog.clone())
     }
@@ -607,8 +604,8 @@ mod tests {
             serde_json::from_str(sample_keystone_response_json()).unwrap();
         let token = parse_token("tok-1".to_string(), resp);
         {
-            let mut current = adapter.current_token.write().await;
-            *current = Some(token);
+            let mut map = adapter.token_map.write().await;
+            map.insert(adapter.active_scope.clone(), token);
         }
 
         let url = adapter
@@ -636,8 +633,8 @@ mod tests {
             serde_json::from_str(sample_keystone_response_json()).unwrap();
         let token = parse_token("tok-1".to_string(), resp);
         {
-            let mut current = adapter.current_token.write().await;
-            *current = Some(token);
+            let mut map = adapter.token_map.write().await;
+            map.insert(adapter.active_scope.clone(), token);
         }
 
         assert!(adapter.has_role("admin").await.unwrap());
@@ -652,8 +649,8 @@ mod tests {
             serde_json::from_str(sample_keystone_response_json()).unwrap();
         let token = parse_token("tok-xyz".to_string(), resp);
         {
-            let mut current = adapter.current_token.write().await;
-            *current = Some(token);
+            let mut map = adapter.token_map.write().await;
+            map.insert(adapter.active_scope.clone(), token);
         }
 
         let headers = reqwest::header::HeaderMap::new();
@@ -681,8 +678,8 @@ mod tests {
             serde_json::from_str(sample_keystone_response_json()).unwrap();
         let token = parse_token("tok-1".to_string(), resp);
         {
-            let mut current = adapter.current_token.write().await;
-            *current = Some(token);
+            let mut map = adapter.token_map.write().await;
+            map.insert(adapter.active_scope.clone(), token);
         }
 
         let catalog = adapter.get_catalog().await.unwrap();

@@ -38,6 +38,31 @@ impl<T> PaginatedResponse<T> {
 
 // --- Auth ---
 
+#[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
+pub enum TokenScope {
+    Project { name: String, domain: String },
+    Unscoped,
+}
+
+impl TokenScope {
+    pub fn from_credential(credential: &AuthCredential) -> Self {
+        match &credential.project_scope {
+            Some(p) => Self::Project {
+                name: p.name.clone(),
+                domain: p.domain_name.clone(),
+            },
+            None => Self::Unscoped,
+        }
+    }
+
+    pub fn cache_key(&self) -> String {
+        match self {
+            Self::Project { name, domain } => format!("project_{name}_{domain}"),
+            Self::Unscoped => "unscoped".to_string(),
+        }
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Token {
     pub id: String,
