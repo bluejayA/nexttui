@@ -53,7 +53,7 @@ pub async fn run_worker(
 /// Returns None for read-only/UI actions that need no guard.
 fn action_to_kind(action: &Action) -> Option<ActionKind> {
     match action {
-        // Create
+        // Create (member-level)
         Action::CreateServer(_)
         | Action::CreateFlavor(_)
         | Action::CreateNetwork(_)
@@ -63,20 +63,24 @@ fn action_to_kind(action: &Action) -> Option<ActionKind> {
         | Action::CreateVolume(_)
         | Action::CreateSnapshot(_)
         | Action::CreateImage(_)
-        | Action::CreateProject(_)
-        | Action::CreateUser(_)
         | Action::CreateServerSnapshot { .. } => Some(ActionKind::Create),
 
-        // Delete (non-force)
+        // Create (admin-only: identity resources)
+        Action::CreateProject(_)
+        | Action::CreateUser(_) => Some(ActionKind::ManageQuota),
+
+        // Delete (member-level, non-force)
         Action::DeleteServer { .. }
         | Action::DeleteFlavor { .. }
         | Action::DeleteSecurityGroup { .. }
         | Action::DeleteSecurityGroupRule { .. }
         | Action::DeleteFloatingIp { .. }
         | Action::DeleteSnapshot { .. }
-        | Action::DeleteImage { .. }
-        | Action::DeleteProject { .. }
-        | Action::DeleteUser { .. } => Some(ActionKind::Delete),
+        | Action::DeleteImage { .. } => Some(ActionKind::Delete),
+
+        // Delete (admin-only: identity resources)
+        Action::DeleteProject { .. }
+        | Action::DeleteUser { .. } => Some(ActionKind::ManageQuota),
 
         // Force delete
         Action::DeleteVolume { force: true, .. } => Some(ActionKind::ForceDelete),

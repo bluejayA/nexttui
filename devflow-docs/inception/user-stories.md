@@ -634,3 +634,69 @@ Should 항목: US-027 서버 스냅샷, US-030 QoS, US-031 Storage Pool, US-032 
 - Cloudian (Object Storage): Policy, Bucket, Group, Monitor, Permission, QoS
 - Network System Admin: Routing Table, VPC, Subnet, Routing Rule, NACL, External Network
 - Placement: Resource Provider, Inventory
+
+---
+
+## BL-P2-010: RBAC 역할 세분화 (2026-03-26 추가)
+
+**Source**: requirements.md (RBAC Capability 확장 A단계)
+
+### 추가 액터 정의
+- **Member**: 프로젝트 구성원. 자기 프로젝트 리소스의 CRUD 가능, admin 전용 액션 불가.
+- **Reader**: 읽기 전용 사용자. 리소스 조회만 가능, 생성/수정/삭제 불가.
+
+> 기존 Operator ≈ Member, Admin은 그대로. Reader는 신규 역할.
+
+### US-R01: Reader는 리소스를 조회만 할 수 있다
+**Actor**: Reader
+**Story**: As a reader, I want to view all resources in my project so that I can monitor the current state without accidentally modifying anything.
+**Acceptance Criteria**:
+- Given I have the "reader" role, When I open the TUI, Then I can see Servers, Networks, Volumes, Images, SecurityGroups, FloatingIPs in the sidebar
+- Given I have the "reader" role, When I press 'c' (create) on any resource list, Then the key is ignored and no form appears
+- Given I have the "reader" role, When I press 'd' (delete) on any resource, Then the key is ignored and no confirmation dialog appears
+- Given I have the "reader" role, When a CUD action is somehow dispatched to the worker, Then the worker returns PermissionDenied event
+**Priority**: Must
+
+### US-R02: Member는 CRUD 액션을 수행할 수 있다
+**Actor**: Member (≈ Operator)
+**Story**: As a member, I want to create, read, and delete resources in my project so that I can manage my workloads.
+**Acceptance Criteria**:
+- Given I have the "member" role, When I press 'c' on Servers list, Then the create form appears
+- Given I have the "member" role, When I press 'd' on a Volume, Then the delete confirmation appears
+- Given I have the "member" role, When I attempt ForceDelete, Then the action is denied with PermissionDenied
+- Given I have the "member" role, When I attempt Migrate or Evacuate, Then the action is denied
+**Priority**: Must
+
+### US-R03: Member는 admin 전용 메뉴를 볼 수 없다
+**Actor**: Member
+**Story**: As a member, I want to see only the resources I can access so that the interface isn't cluttered with inaccessible admin features.
+**Acceptance Criteria**:
+- Given I have the "member" role, When the sidebar renders, Then Migrations, Aggregates, ComputeServices, Hypervisors, Projects, Users, Agents, Usage are hidden
+- Given I have the "member" role, When I navigate to Servers, Networks, Volumes, Then they are accessible
+**Priority**: Must
+
+### US-R04: Admin은 모든 액션을 수행할 수 있다
+**Actor**: Admin
+**Story**: As an admin, I want full access to all resources and actions so that I can manage the entire cloud.
+**Acceptance Criteria**:
+- Given I have the "admin" role, When the sidebar renders, Then all routes including admin-only routes are visible
+- Given I have the "admin" role, When I attempt ForceDelete, Migrate, or Evacuate, Then the action proceeds
+- Given I have the "admin" role, When I attempt any CUD action, Then it is permitted
+**Priority**: Must
+
+### US-R05: 여러 역할이 있으면 가장 높은 권한이 적용된다
+**Actor**: System
+**Story**: As the system, I want to resolve multiple roles to the highest privilege so that users with overlapping roles get the correct access level.
+**Acceptance Criteria**:
+- Given a user has roles ["member", "reader"], When RBAC evaluates, Then the effective role is Member
+- Given a user has roles ["admin", "member"], When RBAC evaluates, Then the effective role is Admin
+- Given a user has roles ["reader"], When RBAC evaluates, Then the effective role is Reader
+- Given a user has roles ["custom_role"], When RBAC evaluates, Then the effective role is Reader (최소 권한 원칙)
+**Priority**: Must
+
+### US-R06: PermissionDenied 시 사용자에게 피드백을 제공한다
+**Actor**: Reader, Member
+**Story**: As a restricted user, I want to see a clear message when I attempt a denied action so that I understand why it failed.
+**Acceptance Criteria**:
+- Given a CUD action is denied by RBAC, When the worker returns PermissionDenied, Then a toast notification shows "권한 없음: [operation]"
+**Priority**: Should

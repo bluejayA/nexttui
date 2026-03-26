@@ -17,16 +17,45 @@ pub enum ActionKind {
     ManageQuota,
 }
 
+/// Effective role derived from Keystone token roles.
+/// Ordered by privilege level: Reader < Member < Admin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum EffectiveRole {
+    Reader,
+    Member,
+    Admin,
+}
+
+impl EffectiveRole {
+    /// Derive the highest-privilege role from a list of Keystone roles.
+    /// Unknown roles are ignored. If no known role matches, defaults to Reader.
+    pub fn from_roles(roles: &[TokenRole]) -> Self {
+        let mut effective = EffectiveRole::Reader;
+        for role in roles {
+            let level = match role.name.to_lowercase().as_str() {
+                "admin" => EffectiveRole::Admin,
+                "member" | "operator" => EffectiveRole::Member,
+                "reader" => EffectiveRole::Reader,
+                _ => continue,
+            };
+            if level > effective {
+                effective = level;
+            }
+        }
+        effective
+    }
+}
+
 /// Internal state consolidated under a single lock to ensure atomic updates.
 struct RbacState {
     roles: Vec<TokenRole>,
     project_id: Option<String>,
-    is_admin: bool,
+    effective_role: EffectiveRole,
     capabilities: HashSet<Capability>,
 }
 
 /// Role-based access control guard.
-/// Phase 1: Keystone role-based filtering.
+/// Phase 1 (current): 3-tier role-based filtering (Admin/Member/Reader).
 /// Phase 2: Capability-based extension via `has_capability()` / `update_capabilities()`.
 pub struct RbacGuard {
     state: RwLock<RbacState>,
@@ -38,21 +67,21 @@ impl RbacGuard {
             state: RwLock::new(RbacState {
                 roles: Vec::new(),
                 project_id: None,
-                is_admin: false,
+                effective_role: EffectiveRole::Reader,
                 capabilities: HashSet::new(),
             }),
         }
     }
 
-    /// Update roles from auth token. Automatically determines is_admin.
+    /// Update roles from auth token. Automatically determines effective role.
     /// Clears capabilities to prevent stale state — caller must re-populate
     /// via `update_capabilities()` if needed.
     pub fn update_roles(&self, roles: Vec<TokenRole>, project_id: Option<String>) {
-        let admin = roles.iter().any(|r| r.name.eq_ignore_ascii_case("admin"));
+        let effective = EffectiveRole::from_roles(&roles);
         if let Ok(mut s) = self.state.write() {
             s.roles = roles;
             s.project_id = project_id;
-            s.is_admin = admin;
+            s.effective_role = effective;
             s.capabilities.clear();
         }
     }
@@ -66,8 +95,15 @@ impl RbacGuard {
         }
     }
 
+    pub fn effective_role(&self) -> EffectiveRole {
+        self.state
+            .read()
+            .map(|s| s.effective_role)
+            .unwrap_or(EffectiveRole::Reader)
+    }
+
     pub fn is_admin(&self) -> bool {
-        self.state.read().map(|s| s.is_admin).unwrap_or(false)
+        self.effective_role() == EffectiveRole::Admin
     }
 
     pub fn project_id(&self) -> Option<String> {
@@ -75,24 +111,29 @@ impl RbacGuard {
     }
 
     /// Check if current user can access a route (for sidebar filtering).
+    /// Admin: all routes. Member/Reader: non-admin routes only.
     pub fn can_access_route(&self, route: &Route) -> bool {
-        if self.is_admin() {
-            return true;
+        match self.effective_role() {
+            EffectiveRole::Admin => true,
+            _ => !Self::is_admin_only_route(route),
         }
-        !Self::is_admin_only_route(route)
     }
 
     /// Check if current user can perform a specific action.
+    /// Admin: all allowed. Member: CRUD allowed, admin-only denied. Reader: read only.
     pub fn can_perform(&self, action: ActionKind) -> bool {
-        if self.is_admin() {
-            return true;
+        match self.effective_role() {
+            EffectiveRole::Admin => true,
+            EffectiveRole::Member => !Self::is_admin_only_action(action),
+            EffectiveRole::Reader => action == ActionKind::Read,
         }
-        !Self::is_admin_only_action(action)
     }
 
     /// Capability-based permission check.
     /// If capabilities are populated, checks against them.
-    /// Otherwise falls back to role-based check (admin = all).
+    /// Otherwise falls back to role-based check: Admin = all, Member/Reader = denied.
+    /// Note: Member permissions without capabilities should use `can_perform()` instead.
+    /// Phase 2 will populate capabilities for Member via `update_capabilities()`.
     pub fn has_capability(&self, resource: &str, action: &str) -> bool {
         if let Ok(s) = self.state.read() {
             if !s.capabilities.is_empty() {
@@ -101,7 +142,7 @@ impl RbacGuard {
                     action: action.to_string(),
                 });
             }
-            return s.is_admin;
+            return s.effective_role == EffectiveRole::Admin;
         }
         false
     }
@@ -167,10 +208,100 @@ mod tests {
         }
     }
 
+    // --- EffectiveRole tests ---
+
     #[test]
-    fn test_new_is_not_admin() {
+    fn test_effective_role_from_admin() {
+        assert_eq!(
+            EffectiveRole::from_roles(&[role("admin")]),
+            EffectiveRole::Admin
+        );
+    }
+
+    #[test]
+    fn test_effective_role_from_member() {
+        assert_eq!(
+            EffectiveRole::from_roles(&[role("member")]),
+            EffectiveRole::Member
+        );
+    }
+
+    #[test]
+    fn test_effective_role_from_reader() {
+        assert_eq!(
+            EffectiveRole::from_roles(&[role("reader")]),
+            EffectiveRole::Reader
+        );
+    }
+
+    #[test]
+    fn test_effective_role_operator_maps_to_member() {
+        assert_eq!(
+            EffectiveRole::from_roles(&[role("operator")]),
+            EffectiveRole::Member
+        );
+    }
+
+    #[test]
+    fn test_effective_role_highest_wins() {
+        assert_eq!(
+            EffectiveRole::from_roles(&[role("reader"), role("member")]),
+            EffectiveRole::Member
+        );
+        assert_eq!(
+            EffectiveRole::from_roles(&[role("member"), role("admin")]),
+            EffectiveRole::Admin
+        );
+        assert_eq!(
+            EffectiveRole::from_roles(&[role("reader"), role("admin")]),
+            EffectiveRole::Admin
+        );
+        assert_eq!(
+            EffectiveRole::from_roles(&[role("operator"), role("admin")]),
+            EffectiveRole::Admin
+        );
+    }
+
+    #[test]
+    fn test_effective_role_unknown_ignored() {
+        assert_eq!(
+            EffectiveRole::from_roles(&[role("custom_role")]),
+            EffectiveRole::Reader
+        );
+        // Unknown + known: known wins
+        assert_eq!(
+            EffectiveRole::from_roles(&[role("custom_role"), role("member")]),
+            EffectiveRole::Member
+        );
+    }
+
+    #[test]
+    fn test_effective_role_case_insensitive() {
+        assert_eq!(
+            EffectiveRole::from_roles(&[role("Admin")]),
+            EffectiveRole::Admin
+        );
+        assert_eq!(
+            EffectiveRole::from_roles(&[role("MEMBER")]),
+            EffectiveRole::Member
+        );
+    }
+
+    #[test]
+    fn test_effective_role_empty_roles() {
+        assert_eq!(
+            EffectiveRole::from_roles(&[]),
+            EffectiveRole::Reader
+        );
+    }
+
+    // --- RbacGuard tests (backward compatible) ---
+
+    #[test]
+    fn test_new_is_reader() {
         let guard = RbacGuard::new();
         assert!(!guard.is_admin());
+        assert_eq!(guard.effective_role(), EffectiveRole::Reader);
         assert!(guard.project_id().is_none());
     }
 
@@ -179,14 +310,16 @@ mod tests {
         let guard = RbacGuard::new();
         guard.update_roles(vec![role("admin"), role("member")], Some("proj-1".into()));
         assert!(guard.is_admin());
+        assert_eq!(guard.effective_role(), EffectiveRole::Admin);
         assert_eq!(guard.project_id(), Some("proj-1".to_string()));
     }
 
     #[test]
-    fn test_update_roles_non_admin() {
+    fn test_update_roles_member() {
         let guard = RbacGuard::new();
         guard.update_roles(vec![role("member"), role("reader")], None);
         assert!(!guard.is_admin());
+        assert_eq!(guard.effective_role(), EffectiveRole::Member);
     }
 
     #[test]
@@ -195,6 +328,8 @@ mod tests {
         guard.update_roles(vec![role("Admin")], None);
         assert!(guard.is_admin());
     }
+
+    // --- can_access_route ---
 
     #[test]
     fn test_can_access_route_admin() {
@@ -205,7 +340,7 @@ mod tests {
     }
 
     #[test]
-    fn test_can_access_route_non_admin() {
+    fn test_can_access_route_member() {
         let guard = RbacGuard::new();
         guard.update_roles(vec![role("member")], None);
         assert!(!guard.can_access_route(&Route::Migrations));
@@ -216,24 +351,57 @@ mod tests {
     }
 
     #[test]
+    fn test_can_access_route_reader() {
+        let guard = RbacGuard::new();
+        guard.update_roles(vec![role("reader")], None);
+        assert!(!guard.can_access_route(&Route::Migrations));
+        assert!(guard.can_access_route(&Route::Servers));
+        assert!(guard.can_access_route(&Route::Networks));
+    }
+
+    // --- can_perform: 3-tier ---
+
+    #[test]
     fn test_can_perform_admin() {
         let guard = RbacGuard::new();
         guard.update_roles(vec![role("admin")], None);
-        assert!(guard.can_perform(ActionKind::ForceDelete));
-        assert!(guard.can_perform(ActionKind::Read));
-    }
-
-    #[test]
-    fn test_can_perform_non_admin() {
-        let guard = RbacGuard::new();
-        guard.update_roles(vec![role("member")], None);
-        assert!(!guard.can_perform(ActionKind::ForceDelete));
-        assert!(!guard.can_perform(ActionKind::Migrate));
-        assert!(!guard.can_perform(ActionKind::Evacuate));
         assert!(guard.can_perform(ActionKind::Read));
         assert!(guard.can_perform(ActionKind::Create));
         assert!(guard.can_perform(ActionKind::Delete));
+        assert!(guard.can_perform(ActionKind::ForceDelete));
+        assert!(guard.can_perform(ActionKind::Migrate));
+        assert!(guard.can_perform(ActionKind::Evacuate));
     }
+
+    #[test]
+    fn test_can_perform_member() {
+        let guard = RbacGuard::new();
+        guard.update_roles(vec![role("member")], None);
+        assert!(guard.can_perform(ActionKind::Read));
+        assert!(guard.can_perform(ActionKind::Create));
+        assert!(guard.can_perform(ActionKind::Delete));
+        assert!(!guard.can_perform(ActionKind::ForceDelete));
+        assert!(!guard.can_perform(ActionKind::Migrate));
+        assert!(!guard.can_perform(ActionKind::Evacuate));
+        assert!(!guard.can_perform(ActionKind::EnableDisable));
+        assert!(!guard.can_perform(ActionKind::ManageQuota));
+    }
+
+    #[test]
+    fn test_can_perform_reader() {
+        let guard = RbacGuard::new();
+        guard.update_roles(vec![role("reader")], None);
+        assert!(guard.can_perform(ActionKind::Read));
+        assert!(!guard.can_perform(ActionKind::Create));
+        assert!(!guard.can_perform(ActionKind::Delete));
+        assert!(!guard.can_perform(ActionKind::ForceDelete));
+        assert!(!guard.can_perform(ActionKind::Migrate));
+        assert!(!guard.can_perform(ActionKind::Evacuate));
+        assert!(!guard.can_perform(ActionKind::EnableDisable));
+        assert!(!guard.can_perform(ActionKind::ManageQuota));
+    }
+
+    // --- filter ---
 
     #[test]
     fn test_filter_routes() {
@@ -245,13 +413,24 @@ mod tests {
     }
 
     #[test]
-    fn test_filter_actions() {
+    fn test_filter_actions_member() {
         let guard = RbacGuard::new();
         guard.update_roles(vec![role("member")], None);
         let actions = vec![ActionKind::Read, ActionKind::Delete, ActionKind::ForceDelete];
         let filtered = guard.filter_actions(&actions);
         assert_eq!(filtered, vec![ActionKind::Read, ActionKind::Delete]);
     }
+
+    #[test]
+    fn test_filter_actions_reader() {
+        let guard = RbacGuard::new();
+        guard.update_roles(vec![role("reader")], None);
+        let actions = vec![ActionKind::Read, ActionKind::Create, ActionKind::Delete];
+        let filtered = guard.filter_actions(&actions);
+        assert_eq!(filtered, vec![ActionKind::Read]);
+    }
+
+    // --- capability (backward compatible) ---
 
     #[test]
     fn test_has_capability_with_capabilities() {
@@ -267,7 +446,6 @@ mod tests {
     #[test]
     fn test_has_capability_fallback_to_role() {
         let guard = RbacGuard::new();
-        // No capabilities set, fallback to role-based
         guard.update_roles(vec![role("admin")], None);
         assert!(guard.has_capability("server", "anything"));
 
@@ -285,9 +463,7 @@ mod tests {
         }]);
         assert!(guard.has_capability("server", "delete"));
 
-        // update_roles should clear capabilities
         guard.update_roles(vec![role("member")], None);
-        // Now capabilities are empty, falls back to role-based (member = not admin = false)
         assert!(!guard.has_capability("server", "delete"));
     }
 }

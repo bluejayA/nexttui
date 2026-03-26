@@ -1,5 +1,43 @@
 # DevFlow Audit Log
 
+## 2026-03-26
+- **Previous session archived** — background-worker/main-wiring already completed in code, state was stale
+- **New aidlc session started** — #33 토큰 캐시 파일 영속화 (BL-P2-028), Phase 2 통합 실행순서 5번
+- **workspace-detection complete** — Brownfield, Rust TUI, Hexagonal Architecture
+- **Complexity declared** — Minimal (기존 auth adapter에 파일 저장/로드 추가, 아키텍처 변경 없음)
+- **requirements-analysis complete** — 5 FRs, 0 open questions, 4 assumptions approved
+- **Pre-Planning skipped** — Minimal complexity auto-skip
+- **workflow-planning complete** — A안 직행 구현 선택, application-design/units skipped
+- **git worktree created** — feature/token-cache-persistence, 563 tests baseline passed
+- **INCEPTION complete** — commit: 216711b
+- **Phase transition: INCEPTION → CONSTRUCTION** — commit: 216711b
+- **code-generation complete** — token_cache module + keystone integration, 572 tests passed
+- **build-and-test complete** — clippy 0 errors
+- **Construction complete** — PR #38 created, commit: e1d3e72
+- **Code review** — 4 findings (DefaultHasher, TOCTOU, refresh loop, plaintext token), all fixed
+- **Flow finished** — PR #38 merged, worktree cleaned up
+- **Previous session archived** — #33 token-cache-persistence completed
+- **New aidlc session started** — #34 Scope 기반 다중 토큰 관리 (BL-P2-029), 통합 실행순서 6번
+- **workspace-detection** — reused from #33 (Brownfield, Rust TUI)
+- **Complexity** — Minimal, #34 범위 축소 (SwitchCloud/rescoping → #39 분리)
+- **requirements-analysis complete** — 5 FRs, 0 open questions, 4 assumptions approved
+- **workflow-planning** — B안 설계 포함 선택 (application-design + code-generation + build-and-test)
+- **git worktree created** — feature/multi-scope-token-map, 572 tests baseline
+- **application-design complete** — TokenScope enum, token_map HashMap, cache_dir 구조 설계
+- **INCEPTION complete** — Phase transition: INCEPTION → CONSTRUCTION
+- **code-generation complete** — 574 tests passed, clippy 0
+- **Construction complete** — commit: 6e09b11
+- **finishing-branch** — option B (PR #40 created), worktree maintained
+- **Code review (R1 Standard)** — Stage 1 ✅, Stage 2 ❌ 4건, Stage 3 ❌ 4건 → 전부 수정
+- **Manual testing** — DevStack VM, 캐시 저장/로드 확인, macOS XDG 경로 수정
+- **Flow finished** — PR #40 merged, worktree cleaned up
+- **Issue #41 created** — BL-P2-032 전체 프로젝트 리소스 조회 (all_tenants), RBAC 선행 필수
+- **New aidlc session started** — BL-P2-010 RBAC Capability 확장
+- **Complexity** — Standard (횡단 관심사, 여러 컴포넌트에 영향)
+- **requirements-analysis complete** — 해석 A안 확정 (역할 세분화 → 후속 Capability 전환), 5 FRs
+- **user-stories complete** — 6 stories (Must 5, Should 1), 기존 Phase 1 스토리 유지 + 추가
+- **nfr-requirements complete** — 기존 NFR-2 보안 항목을 3단계 역할 매트릭스로 확장
+
 ## 2026-03-18
 - **New aidlc session started** — Project: nexttui (Rust TUI), User request: "devflow로 시작하겠습니다"
 - **workspace-detection complete** — Greenfield, Rust (cargo init state), ref: substation (Swift)

@@ -1,54 +1,52 @@
 # Workspace Analysis
 
 **Detected**: Brownfield
-**Timestamp**: 2026-03-24T22:30:00+09:00
+**Timestamp**: 2026-03-26T15:00:00+09:00
 **Project Root**: /Users/jay.ahn/projects/infra/nexttui
 **Requires Path Confirmation**: false
 
 ## Project Structure
-Rust TUI application for OpenStack management. Phase 1 complete: 91 Rust files, 534 tests, 16 domain modules. Port/Adapter hexagonal architecture. FormWidget fully implemented with FieldDef/FieldState, render, module integration, dynamic dropdown options.
+Rust TUI 애플리케이션 (nexttui). OpenStack 클라우드 인프라 관리용 터미널 UI.
+Phase 1 완료 (16개 모듈, 563 tests), Phase 2 아키텍처 고도화 진행 중.
 
 ## Key Files Found
-- `src/app.rs` — App orchestrator (FocusPane, InputMode, component HashMap)
-- `src/module/mod.rs` — ViewState, PendingAction, ConfirmHandler (shared module patterns)
-- `src/module/*/mod.rs` — 16 domain modules implementing Component trait
-- `src/port/*.rs` — 6 Port traits (Auth, Nova, Neutron, Cinder, Glance, Keystone)
-- `src/adapter/registry.rs` — AdapterRegistry (Arc<dyn Port> management)
-- `src/infra/cache.rs` — Cache (RwLock, TTL, GC)
-- `src/ui/sidebar.rs` — Sidebar with hardcoded SidebarItems
-- `src/models/common.rs` — Route enum (23 variants), ResourceType enum
+- `src/adapter/auth/keystone.rs` — Keystone v3 인증 어댑터 (토큰 관리 핵심)
+- `src/config.rs` — clouds.yaml + config.toml 파싱
+- `src/worker.rs` — Background worker (Action→API→Event)
+- `src/port/types.rs` — Token, AuthCredential 등 도메인 타입
+- `src/port/auth.rs` — AuthProvider trait
+
+## Pre-specified Tech Stack
+- **Source**: /Users/jay.ahn/CLAUDE.md
+- **Language**: Rust (`cargo clippy` 필수)
+- **Lints**: unwrap_used/expect_used/enum_glob_use deny
+- **Test**: 기본 `cargo test`
 
 ## Technology Stack
-- **Language**: Rust (edition 2024)
-- **Framework**: ratatui 0.30 + crossterm 0.29
+- **Language**: Rust 2024 edition
+- **Framework**: ratatui 0.30 (TUI), tokio (async runtime)
 - **Package Manager**: Cargo
-- **Test Framework**: built-in (#[test]), 534 tests passing
-- **Key Dependencies**: tokio 1 (async), reqwest 0.12 (HTTP), serde 1 (serialization), chrono 0.4, uuid 1, async-trait 0.1, thiserror 2
+- **Test Framework**: built-in `#[test]` + `#[tokio::test]`
+- **Key Dependencies**: reqwest (HTTP), serde/serde_json/serde_yaml (serialization), chrono (datetime), thiserror (error types), tracing (logging), crossterm (terminal I/O)
 
 ## Git Activity
-- **Last Commit**: 2026-03-24 — fix: use LightBlue for detail view key labels
-- **Recent Focus**: src/ui/form.rs, src/module/server/mod.rs, src/ui/detail_view.rs, src/module/floating_ip/mod.rs
-- **Recent Commits**: detail view UI fixes, dropdown option caching, FormField→FieldDef migration, form-widget PR merge
+- **Last Commit**: 2026-03-26 — 활발히 개발 중
+- **Recent Focus**: src/main.rs, src/app.rs, src/demo.rs, src/worker.rs, src/registry.rs
+- **Recent Commits**: tracing 도입, code quality foundation (clippy/non_exhaustive/pagination), RBAC wiring, Module Registry, form submit confirm
 
 ## Existing Documentation
-- `CLAUDE.md` — Jay의 개발 규칙 (TDD, 승인 후 진행, 언어별 컨벤션)
-- `devflow-docs/inception/` — Phase 1 INCEPTION 전체 산출물 (requirements, user-stories 48개, nfr, application-design 52개 컴포넌트, detail-design 4개 문서)
-- `devflow-docs/inception/agent-council-review.md` — Codex+Gemini+Claude 3자 리뷰 결과
-- `docs/plans/2026-03-18-async-event-architecture-design.md` — 비동기 이벤트 아키텍처 설계
+- `README.md` — 프로젝트 개요, 설치, 아키텍처 설명
+- `devflow-docs/` — Phase 1 INCEPTION/CONSTRUCTION 전체 산출물 (요구사항, 설계, 유닛, 빌드 기록)
+- `devflow-docs/backlog.md` — Phase 2 백로그 (BL-P2-002 ~ P2-024, 신규 #30~#35)
 
 ## Code Structure
-- **Directory Layout**: `src/{adapter,infra,input,models,module,port,ui}` + `src/main.rs`
-- **Entry Points**: `src/main.rs` (tokio::main), `src/lib.rs`
-- **Observed Patterns**: Port/Adapter (src/port + src/adapter), Component-Based (src/module/*/mod.rs implements Component trait), TEA hybrid (Action/Event channels)
-- **Module Count**: 16 (server, flavor, network, security_group, floating_ip, volume, snapshot, image, project, user, aggregate, compute_service, hypervisor, agent, migration)
+- **Directory Layout**: `src/{adapter, port, module, models, ui, infra, input}` — Hexagonal Architecture
+- **Entry Points**: `src/main.rs` (binary), `src/lib.rs` (library)
+- **Observed Patterns**: Port/Adapter (Hexagonal), Module Registry, Component trait
 
 ## Coding Patterns (Sampled)
-- **Source**: src/component.rs (33 lines)
+- **Source**: src/adapter/auth/keystone.rs
 - **Naming**: snake_case (Rust standard)
-- **Imports**: crate-relative (`use crate::action::Action`)
-- **Error Handling**: Option/Result pattern, thiserror for custom errors
-- **Comments**: English code comments, Korean in docs/CLAUDE.md
-
-## Reference Analysis
-- **Substation** (Swift 6.2 OpenStack TUI): `/Users/jay.ahn/workspaces/substation/reverse-engineering/README.md`
-- Key patterns to adopt: Module Registry (OpenStackModule protocol + Phase-based loading), Intelligent Cache Invalidation (dependency graph), DataProvider Registry, Adaptive polling
+- **Imports**: crate-relative paths (`crate::port::auth::AuthProvider`)
+- **Error Handling**: `Result<T, ApiError>` with `?` propagation, `#[non_exhaustive]` enums
+- **Comments**: English doc comments, Phase 2 TODO notes inline
