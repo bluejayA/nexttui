@@ -413,10 +413,7 @@ impl AuthProvider for KeystoneAuthAdapter {
         // Ensure we have a valid token (triggers initial auth if needed)
         let _ = self.get_token().await?;
 
-        let map = self.token_map.read().await;
-        let token = map
-            .get(&self.active_scope)
-            .ok_or(ApiError::AuthFailed("Not authenticated".into()))?;
+        let token = self.get_token_info().await?;
 
         token
             .catalog

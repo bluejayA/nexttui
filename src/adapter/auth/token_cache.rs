@@ -43,7 +43,17 @@ pub fn cache_dir_path(cloud_key: &str) -> PathBuf {
 pub fn save_token(token: &Token, cache_dir: &Path, scope: &TokenScope) -> Result<(), std::io::Error> {
     use std::io::Write;
 
-    std::fs::create_dir_all(cache_dir)?;
+    // Create cache directory with restricted permissions on Unix (0o700)
+    #[cfg(unix)]
+    {
+        use std::fs::DirBuilder;
+        use std::os::unix::fs::DirBuilderExt;
+        DirBuilder::new().recursive(true).mode(0o700).create(cache_dir)?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::create_dir_all(cache_dir)?;
+    }
     let path = cache_dir.join(scope.cache_key());
     let data = serde_json::to_vec(token)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
@@ -67,7 +77,7 @@ pub fn save_token(token: &Token, cache_dir: &Path, scope: &TokenScope) -> Result
         std::fs::write(&path, &data)?;
     }
 
-    tracing::info!(path = %path.display(), scope = ?scope, "token cached to disk");
+    tracing::debug!(path = %path.display(), "token cached to disk");
     Ok(())
 }
 
@@ -89,20 +99,37 @@ fn load_token_file(path: &Path) -> Option<Token> {
 
 /// Load all valid cached tokens from the cache directory.
 /// Returns a map of scope → token. Expired tokens are auto-deleted.
+/// Skips non-files and unrecognized filenames.
 pub fn load_all_tokens(cache_dir: &Path) -> HashMap<TokenScope, Token> {
     let mut map = HashMap::new();
     let entries = match std::fs::read_dir(cache_dir) {
         Ok(entries) => entries,
-        Err(_) => return map,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return map,
+        Err(e) => {
+            tracing::warn!(path = %cache_dir.display(), error = %e, "failed to read token cache directory");
+            return map;
+        }
     };
 
     for entry in entries.flatten() {
+        // Skip non-files (directories, symlinks, etc.)
+        if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+            continue;
+        }
+
         let file_name = entry.file_name();
         let scope_key = file_name.to_string_lossy();
-        let scope = parse_scope_from_filename(&scope_key);
+
+        let scope = match parse_scope_from_filename(&scope_key) {
+            Some(s) => s,
+            None => {
+                tracing::warn!(filename = %scope_key, "unrecognized token cache file, skipping");
+                continue;
+            }
+        };
 
         if let Some(token) = load_token_file(&entry.path()) {
-            tracing::info!(scope = ?scope, "loaded cached token from disk");
+            tracing::debug!("loaded cached token from disk");
             map.insert(scope, token);
         }
     }
@@ -110,20 +137,21 @@ pub fn load_all_tokens(cache_dir: &Path) -> HashMap<TokenScope, Token> {
 }
 
 /// Parse a TokenScope from a cache filename.
-fn parse_scope_from_filename(filename: &str) -> TokenScope {
+/// Returns None for unrecognized filenames.
+fn parse_scope_from_filename(filename: &str) -> Option<TokenScope> {
     if filename == "unscoped" {
-        return TokenScope::Unscoped;
+        return Some(TokenScope::Unscoped);
     }
-    if let Some(rest) = filename.strip_prefix("project_") {
-        if let Some((name, domain)) = rest.rsplit_once('_') {
-            return TokenScope::Project {
+    // Format: "project@{name}@{domain}" (@ separator avoids _ ambiguity)
+    if let Some(rest) = filename.strip_prefix("project@") {
+        if let Some((name, domain)) = rest.split_once('@') {
+            return Some(TokenScope::Project {
                 name: name.to_string(),
                 domain: domain.to_string(),
-            };
+            });
         }
     }
-    // Fallback: treat unknown filenames as unscoped
-    TokenScope::Unscoped
+    None
 }
 
 #[cfg(test)]
@@ -162,7 +190,7 @@ mod tests {
     fn sample_scope() -> TokenScope {
         TokenScope::Project {
             name: "admin".to_string(),
-            domain: "Default".to_string(),
+            domain: "default".to_string(),
         }
     }
 
@@ -185,10 +213,31 @@ mod tests {
     fn test_token_scope_cache_key() {
         let scope = TokenScope::Project {
             name: "admin".to_string(),
-            domain: "Default".to_string(),
+            domain: "default".to_string(),
         };
-        assert_eq!(scope.cache_key(), "project_admin_Default");
+        assert_eq!(scope.cache_key(), "project@admin@default");
         assert_eq!(TokenScope::Unscoped.cache_key(), "unscoped");
+    }
+
+    #[test]
+    fn test_cache_key_sanitizes_path_traversal() {
+        let scope = TokenScope::Project {
+            name: "../etc".to_string(),
+            domain: "default".to_string(),
+        };
+        // dots and slashes should be replaced with _
+        assert!(!scope.cache_key().contains('/'));
+        assert!(!scope.cache_key().contains(".."));
+    }
+
+    #[test]
+    fn test_cache_key_handles_underscore_in_name() {
+        let scope = TokenScope::Project {
+            name: "my_project".to_string(),
+            domain: "my_domain".to_string(),
+        };
+        // @ separator means underscores in name/domain are preserved correctly
+        assert_eq!(scope.cache_key(), "project@my_project@my_domain");
     }
 
     #[test]
@@ -286,10 +335,19 @@ mod tests {
     #[test]
     fn test_parse_scope_from_filename() {
         assert_eq!(
-            parse_scope_from_filename("project_admin_Default"),
-            TokenScope::Project { name: "admin".to_string(), domain: "Default".to_string() }
+            parse_scope_from_filename("project@admin@default"),
+            Some(TokenScope::Project { name: "admin".to_string(), domain: "default".to_string() })
         );
-        assert_eq!(parse_scope_from_filename("unscoped"), TokenScope::Unscoped);
+        assert_eq!(parse_scope_from_filename("unscoped"), Some(TokenScope::Unscoped));
+        assert_eq!(parse_scope_from_filename("unknown_file"), None);
+    }
+
+    #[test]
+    fn test_parse_scope_with_underscore_in_name() {
+        assert_eq!(
+            parse_scope_from_filename("project@my_project@my_domain"),
+            Some(TokenScope::Project { name: "my_project".to_string(), domain: "my_domain".to_string() })
+        );
     }
 
     #[test]
@@ -308,7 +366,7 @@ mod tests {
         };
         assert_eq!(
             TokenScope::from_credential(&cred),
-            TokenScope::Project { name: "admin".to_string(), domain: "Default".to_string() }
+            TokenScope::Project { name: "admin".to_string(), domain: "default".to_string() }
         );
 
         let unsoped_cred = AuthCredential {
