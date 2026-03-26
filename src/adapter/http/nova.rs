@@ -18,10 +18,10 @@ pub struct NovaHttpAdapter {
 }
 
 impl NovaHttpAdapter {
-    pub fn new(auth: Arc<dyn AuthProvider>, region: Option<String>) -> Self {
-        Self {
-            base: BaseHttpClient::new(auth, "compute", EndpointInterface::Public, region),
-        }
+    pub fn new(auth: Arc<dyn AuthProvider>, region: Option<String>) -> Result<Self, ApiError> {
+        Ok(Self {
+            base: BaseHttpClient::new(auth, "compute", EndpointInterface::Public, region)?,
+        })
     }
 }
 

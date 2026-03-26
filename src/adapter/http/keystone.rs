@@ -7,7 +7,7 @@ use super::{build_pagination_query, encode_param};
 use crate::adapter::http::base::BaseHttpClient;
 use crate::models::keystone::{Project, Role, RoleAssignment, User};
 use crate::port::auth::AuthProvider;
-use crate::port::error::ApiResult;
+use crate::port::error::{ApiError, ApiResult};
 use crate::port::keystone::KeystonePort;
 use crate::port::types::*;
 
@@ -16,10 +16,10 @@ pub struct KeystoneHttpAdapter {
 }
 
 impl KeystoneHttpAdapter {
-    pub fn new(auth: Arc<dyn AuthProvider>, region: Option<String>) -> Self {
-        Self {
-            base: BaseHttpClient::new(auth, "identity", EndpointInterface::Public, region),
-        }
+    pub fn new(auth: Arc<dyn AuthProvider>, region: Option<String>) -> Result<Self, ApiError> {
+        Ok(Self {
+            base: BaseHttpClient::new(auth, "identity", EndpointInterface::Public, region)?,
+        })
     }
 }
 

@@ -31,19 +31,18 @@ impl BaseHttpClient {
         service_type: &str,
         interface: EndpointInterface,
         region: Option<String>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, ApiError> {
+        Ok(Self {
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(30))
                 .connect_timeout(Duration::from_secs(10))
-                .build()
-                .expect("failed to build HTTP client"),
+                .build()?,
             auth,
             service_type: service_type.to_string(),
             interface,
             region,
             endpoint: RwLock::new(None),
-        }
+        })
     }
 
     /// Resolve and cache the endpoint from service catalog.

@@ -7,6 +7,7 @@ use crate::adapter::http::neutron::NeutronHttpAdapter;
 use crate::adapter::http::nova::NovaHttpAdapter;
 use crate::port::auth::AuthProvider;
 use crate::port::cinder::CinderPort;
+use crate::port::error::ApiError;
 use crate::port::glance::GlancePort;
 use crate::port::keystone::KeystonePort;
 use crate::port::neutron::NeutronPort;
@@ -26,14 +27,14 @@ pub struct AdapterRegistry {
 
 impl AdapterRegistry {
     /// Create all HTTP adapters from the given auth provider and region.
-    pub fn new_http(auth: Arc<dyn AuthProvider>, region: Option<String>) -> Self {
-        Self {
-            nova: Arc::new(NovaHttpAdapter::new(auth.clone(), region.clone())),
-            neutron: Arc::new(NeutronHttpAdapter::new(auth.clone(), region.clone())),
-            cinder: Arc::new(CinderHttpAdapter::new(auth.clone(), region.clone())),
-            glance: Arc::new(GlanceHttpAdapter::new(auth.clone(), region.clone())),
-            keystone: Arc::new(KeystoneHttpAdapter::new(auth, region)),
-        }
+    pub fn new_http(auth: Arc<dyn AuthProvider>, region: Option<String>) -> Result<Self, ApiError> {
+        Ok(Self {
+            nova: Arc::new(NovaHttpAdapter::new(auth.clone(), region.clone())?),
+            neutron: Arc::new(NeutronHttpAdapter::new(auth.clone(), region.clone())?),
+            cinder: Arc::new(CinderHttpAdapter::new(auth.clone(), region.clone())?),
+            glance: Arc::new(GlanceHttpAdapter::new(auth.clone(), region.clone())?),
+            keystone: Arc::new(KeystoneHttpAdapter::new(auth, region)?),
+        })
     }
 
     /// Create registry from mock adapters (for testing).

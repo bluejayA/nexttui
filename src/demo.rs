@@ -17,8 +17,8 @@ use crate::models::nova::{
 use crate::registry::{ModuleRegistry, register_all_modules};
 
 /// Create a fully wired App with demo data.
-pub fn create_demo_app() -> (App, mpsc::UnboundedReceiver<Action>) {
-    let config = demo_config();
+pub fn create_demo_app() -> Result<(App, mpsc::UnboundedReceiver<Action>), Box<dyn std::error::Error>> {
+    let config = demo_config()?;
     let (action_tx, action_rx) = mpsc::unbounded_channel();
 
     let mut registry = ModuleRegistry::new();
@@ -36,15 +36,15 @@ pub fn create_demo_app() -> (App, mpsc::UnboundedReceiver<Action>) {
     app.handle_event(AppEvent::ImagesLoaded(demo_images()));
     app.handle_event(AppEvent::ProjectsLoaded(demo_projects()));
 
-    (app, action_rx)
+    Ok((app, action_rx))
 }
 
-fn demo_config() -> Config {
+fn demo_config() -> Result<Config, Box<dyn std::error::Error>> {
     let yaml = "clouds:\n  demo-cloud:\n    auth:\n      auth_url: https://keystone.demo.local/v3\n      username: admin\n      password: demo-password\n      project_name: admin\n      user_domain_name: Default\n      project_domain_name: Default\n    region_name: RegionOne\n";
 
     let path = std::env::temp_dir().join("nexttui-demo-clouds.yaml");
-    std::fs::write(&path, yaml).expect("failed to write demo clouds.yaml");
-    Config::load_from(&path).expect("failed to load demo config")
+    std::fs::write(&path, yaml)?;
+    Ok(Config::load_from(&path)?)
 }
 
 fn demo_servers() -> Vec<Server> {

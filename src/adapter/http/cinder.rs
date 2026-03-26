@@ -17,10 +17,10 @@ pub struct CinderHttpAdapter {
 }
 
 impl CinderHttpAdapter {
-    pub fn new(auth: Arc<dyn AuthProvider>, region: Option<String>) -> Self {
-        Self {
-            base: BaseHttpClient::new(auth, "block-storage", EndpointInterface::Public, region),
-        }
+    pub fn new(auth: Arc<dyn AuthProvider>, region: Option<String>) -> Result<Self, ApiError> {
+        Ok(Self {
+            base: BaseHttpClient::new(auth, "block-storage", EndpointInterface::Public, region)?,
+        })
     }
 }
 
