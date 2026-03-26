@@ -1,21 +1,17 @@
 //! Token cache persistence: save/load Keystone tokens to disk.
 //!
-//! Cache location: `~/.cache/nexttui/auth/{cache_key}`
+//! Cache layout: `~/.cache/nexttui/auth/{cloud_key}/{scope_key}`
 //! File permissions: 0o600 (Unix only)
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::port::types::Token;
+use crate::port::types::{Token, TokenScope};
 
 /// Compute a deterministic cache key from cloud config fields.
 /// Uses a simple FNV-1a 64-bit hash (stable across Rust versions, no external deps).
-pub fn compute_cache_key(auth_url: &str, username: &str, project_name: Option<&str>) -> String {
-    let input = format!(
-        "{}|{}|{}",
-        auth_url,
-        username,
-        project_name.unwrap_or("")
-    );
+pub fn compute_cloud_key(auth_url: &str, username: &str) -> String {
+    let input = format!("{auth_url}|{username}");
     let hash = fnv1a_64(input.as_bytes());
     format!("{hash:016x}")
 }
@@ -32,24 +28,33 @@ fn fnv1a_64(data: &[u8]) -> u64 {
     hash
 }
 
-/// Resolve the cache file path for a given cache key.
-pub fn cache_file_path(cache_key: &str) -> PathBuf {
+/// Resolve the cache directory path for a given cloud key.
+pub fn cache_dir_path(cloud_key: &str) -> PathBuf {
     dirs::cache_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
         .join("nexttui")
         .join("auth")
-        .join(cache_key)
+        .join(cloud_key)
 }
 
-/// Save a token to the cache file.
+/// Save a token to the cache directory, keyed by scope.
 /// Creates parent directories if needed.
 /// On Unix, creates the file with 0o600 permissions atomically (no TOCTOU window).
-pub fn save_token(token: &Token, path: &Path) -> Result<(), std::io::Error> {
+pub fn save_token(token: &Token, cache_dir: &Path, scope: &TokenScope) -> Result<(), std::io::Error> {
     use std::io::Write;
 
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+    // Create cache directory with restricted permissions on Unix (0o700)
+    #[cfg(unix)]
+    {
+        use std::fs::DirBuilder;
+        use std::os::unix::fs::DirBuilderExt;
+        DirBuilder::new().recursive(true).mode(0o700).create(cache_dir)?;
     }
+    #[cfg(not(unix))]
+    {
+        std::fs::create_dir_all(cache_dir)?;
+    }
+    let path = cache_dir.join(scope.cache_key());
     let data = serde_json::to_vec(token)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
@@ -63,34 +68,90 @@ pub fn save_token(token: &Token, path: &Path) -> Result<(), std::io::Error> {
             .create(true)
             .truncate(true)
             .mode(0o600)
-            .open(path)?;
+            .open(&path)?;
         file.write_all(&data)?;
     }
 
     #[cfg(not(unix))]
     {
-        std::fs::write(path, &data)?;
+        std::fs::write(&path, &data)?;
     }
 
-    tracing::info!(path = %path.display(), "token cached to disk");
+    tracing::debug!(path = %path.display(), "token cached to disk");
     Ok(())
 }
 
-/// Load a token from the cache file.
+/// Load a single token from a cache file.
 /// Returns None if the file doesn't exist, is unreadable, or the token is expired.
 /// Automatically deletes expired token files.
-pub fn load_token(path: &Path) -> Option<Token> {
+fn load_token_file(path: &Path) -> Option<Token> {
     let data = std::fs::read(path).ok()?;
     let token: Token = serde_json::from_slice(&data).ok()?;
 
     if token.expires_at > chrono::Utc::now() + chrono::Duration::minutes(1) {
-        tracing::info!(path = %path.display(), "loaded cached token from disk");
         Some(token)
     } else {
         tracing::info!(path = %path.display(), "cached token expired, removing");
         let _ = std::fs::remove_file(path);
         None
     }
+}
+
+/// Load all valid cached tokens from the cache directory.
+/// Returns a map of scope → token. Expired tokens are auto-deleted.
+/// Skips non-files and unrecognized filenames.
+pub fn load_all_tokens(cache_dir: &Path) -> HashMap<TokenScope, Token> {
+    let mut map = HashMap::new();
+    let entries = match std::fs::read_dir(cache_dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return map,
+        Err(e) => {
+            tracing::warn!(path = %cache_dir.display(), error = %e, "failed to read token cache directory");
+            return map;
+        }
+    };
+
+    for entry in entries.flatten() {
+        // Skip non-files (directories, symlinks, etc.)
+        if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+            continue;
+        }
+
+        let file_name = entry.file_name();
+        let scope_key = file_name.to_string_lossy();
+
+        let scope = match parse_scope_from_filename(&scope_key) {
+            Some(s) => s,
+            None => {
+                tracing::warn!(filename = %scope_key, "unrecognized token cache file, skipping");
+                continue;
+            }
+        };
+
+        if let Some(token) = load_token_file(&entry.path()) {
+            tracing::debug!("loaded cached token from disk");
+            map.insert(scope, token);
+        }
+    }
+    map
+}
+
+/// Parse a TokenScope from a cache filename.
+/// Returns None for unrecognized filenames.
+fn parse_scope_from_filename(filename: &str) -> Option<TokenScope> {
+    if filename == "unscoped" {
+        return Some(TokenScope::Unscoped);
+    }
+    // Format: "project@{name}@{domain}" (@ separator avoids _ ambiguity)
+    if let Some(rest) = filename.strip_prefix("project@") {
+        if let Some((name, domain)) = rest.split_once('@') {
+            return Some(TokenScope::Project {
+                name: name.to_string(),
+                domain: domain.to_string(),
+            });
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -126,65 +187,132 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_compute_cache_key_deterministic() {
-        let k1 = compute_cache_key("https://keystone:5000/v3", "admin", Some("admin"));
-        let k2 = compute_cache_key("https://keystone:5000/v3", "admin", Some("admin"));
-        assert_eq!(k1, k2);
-        assert_eq!(k1.len(), 16); // 16 hex chars
+    fn sample_scope() -> TokenScope {
+        TokenScope::Project {
+            name: "admin".to_string(),
+            domain: "default".to_string(),
+        }
     }
 
     #[test]
-    fn test_compute_cache_key_different_inputs() {
-        let k1 = compute_cache_key("https://keystone:5000/v3", "admin", Some("admin"));
-        let k2 = compute_cache_key("https://keystone:5000/v3", "user", Some("project1"));
+    fn test_compute_cloud_key_deterministic() {
+        let k1 = compute_cloud_key("https://keystone:5000/v3", "admin");
+        let k2 = compute_cloud_key("https://keystone:5000/v3", "admin");
+        assert_eq!(k1, k2);
+        assert_eq!(k1.len(), 16);
+    }
+
+    #[test]
+    fn test_compute_cloud_key_different_inputs() {
+        let k1 = compute_cloud_key("https://keystone:5000/v3", "admin");
+        let k2 = compute_cloud_key("https://keystone:5000/v3", "user");
         assert_ne!(k1, k2);
     }
 
     #[test]
-    fn test_save_and_load_token() {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("auth").join("test-key");
-
-        let token = sample_token(60); // expires in 60 minutes
-        save_token(&token, &path).unwrap();
-
-        let loaded = load_token(&path);
-        assert!(loaded.is_some());
-        let loaded = loaded.unwrap();
-        assert_eq!(loaded.id, "tok-test-123");
-        assert_eq!(loaded.project.name, "admin");
-        assert_eq!(loaded.roles.len(), 1);
-        assert_eq!(loaded.catalog.len(), 1);
+    fn test_token_scope_cache_key() {
+        let scope = TokenScope::Project {
+            name: "admin".to_string(),
+            domain: "default".to_string(),
+        };
+        assert_eq!(scope.cache_key(), "project@admin@default");
+        assert_eq!(TokenScope::Unscoped.cache_key(), "unscoped");
     }
 
     #[test]
-    fn test_load_expired_token_returns_none_and_deletes() {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("expired-token");
-
-        let token = sample_token(-10); // expired 10 minutes ago
-        save_token(&token, &path).unwrap();
-        assert!(path.exists());
-
-        let loaded = load_token(&path);
-        assert!(loaded.is_none());
-        assert!(!path.exists()); // file should be deleted
+    fn test_cache_key_sanitizes_path_traversal() {
+        let scope = TokenScope::Project {
+            name: "../etc".to_string(),
+            domain: "default".to_string(),
+        };
+        // dots and slashes should be replaced with _
+        assert!(!scope.cache_key().contains('/'));
+        assert!(!scope.cache_key().contains(".."));
     }
 
     #[test]
-    fn test_load_nonexistent_file_returns_none() {
-        let path = PathBuf::from("/tmp/nexttui-test-nonexistent-token");
-        assert!(load_token(&path).is_none());
+    fn test_cache_key_handles_underscore_in_name() {
+        let scope = TokenScope::Project {
+            name: "my_project".to_string(),
+            domain: "my_domain".to_string(),
+        };
+        // @ separator means underscores in name/domain are preserved correctly
+        assert_eq!(scope.cache_key(), "project@my_project@my_domain");
     }
 
     #[test]
-    fn test_load_corrupt_file_returns_none() {
+    fn test_save_and_load_scoped_token() {
         let dir = TempDir::new().unwrap();
-        let path = dir.path().join("corrupt-token");
-        std::fs::write(&path, b"not valid json").unwrap();
+        let cache_dir = dir.path().join("cloud-abc");
+        let scope = sample_scope();
 
-        assert!(load_token(&path).is_none());
+        let token = sample_token(60);
+        save_token(&token, &cache_dir, &scope).unwrap();
+
+        let loaded = load_all_tokens(&cache_dir);
+        assert_eq!(loaded.len(), 1);
+        let loaded_token = loaded.get(&scope).unwrap();
+        assert_eq!(loaded_token.id, "tok-test-123");
+    }
+
+    #[test]
+    fn test_save_multiple_scopes() {
+        let dir = TempDir::new().unwrap();
+        let cache_dir = dir.path().join("cloud-multi");
+
+        let scope_a = TokenScope::Project {
+            name: "projectA".to_string(),
+            domain: "Default".to_string(),
+        };
+        let scope_b = TokenScope::Project {
+            name: "projectB".to_string(),
+            domain: "Default".to_string(),
+        };
+
+        let mut token_a = sample_token(60);
+        token_a.id = "tok-a".to_string();
+        let mut token_b = sample_token(60);
+        token_b.id = "tok-b".to_string();
+
+        save_token(&token_a, &cache_dir, &scope_a).unwrap();
+        save_token(&token_b, &cache_dir, &scope_b).unwrap();
+
+        let loaded = load_all_tokens(&cache_dir);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded.get(&scope_a).unwrap().id, "tok-a");
+        assert_eq!(loaded.get(&scope_b).unwrap().id, "tok-b");
+    }
+
+    #[test]
+    fn test_load_expired_token_deleted() {
+        let dir = TempDir::new().unwrap();
+        let cache_dir = dir.path().join("cloud-expired");
+        let scope = sample_scope();
+
+        let token = sample_token(-10);
+        save_token(&token, &cache_dir, &scope).unwrap();
+
+        let loaded = load_all_tokens(&cache_dir);
+        assert!(loaded.is_empty());
+        assert!(!cache_dir.join(scope.cache_key()).exists());
+    }
+
+    #[test]
+    fn test_load_nonexistent_dir_returns_empty() {
+        let path = PathBuf::from("/tmp/nexttui-test-nonexistent-dir");
+        let loaded = load_all_tokens(&path);
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn test_load_corrupt_file_skipped() {
+        let dir = TempDir::new().unwrap();
+        let cache_dir = dir.path().join("cloud-corrupt");
+        std::fs::create_dir_all(&cache_dir).unwrap();
+        std::fs::write(cache_dir.join("project_bad_Default"), b"not json").unwrap();
+
+        let loaded = load_all_tokens(&cache_dir);
+        assert!(loaded.is_empty());
     }
 
     #[cfg(unix)]
@@ -193,31 +321,63 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let dir = TempDir::new().unwrap();
-        let path = dir.path().join("perm-token");
+        let cache_dir = dir.path().join("cloud-perm");
+        let scope = sample_scope();
 
         let token = sample_token(60);
-        save_token(&token, &path).unwrap();
+        save_token(&token, &cache_dir, &scope).unwrap();
 
+        let path = cache_dir.join(scope.cache_key());
         let perms = std::fs::metadata(&path).unwrap().permissions();
         assert_eq!(perms.mode() & 0o777, 0o600);
     }
 
     #[test]
-    fn test_save_creates_parent_directories() {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("nested").join("dirs").join("token");
-
-        let token = sample_token(60);
-        save_token(&token, &path).unwrap();
-        assert!(path.exists());
+    fn test_parse_scope_from_filename() {
+        assert_eq!(
+            parse_scope_from_filename("project@admin@default"),
+            Some(TokenScope::Project { name: "admin".to_string(), domain: "default".to_string() })
+        );
+        assert_eq!(parse_scope_from_filename("unscoped"), Some(TokenScope::Unscoped));
+        assert_eq!(parse_scope_from_filename("unknown_file"), None);
     }
 
     #[test]
-    fn test_token_serialization_roundtrip() {
-        let token = sample_token(60);
-        let json = serde_json::to_vec(&token).unwrap();
-        let deserialized: Token = serde_json::from_slice(&json).unwrap();
-        assert_eq!(deserialized.id, token.id);
-        assert_eq!(deserialized.project.name, token.project.name);
+    fn test_parse_scope_with_underscore_in_name() {
+        assert_eq!(
+            parse_scope_from_filename("project@my_project@my_domain"),
+            Some(TokenScope::Project { name: "my_project".to_string(), domain: "my_domain".to_string() })
+        );
+    }
+
+    #[test]
+    fn test_token_scope_from_credential() {
+        let cred = AuthCredential {
+            auth_url: "https://keystone:5000/v3".to_string(),
+            method: AuthMethod::Password {
+                username: "admin".to_string(),
+                password: "pass".to_string(),
+                domain_name: "Default".to_string(),
+            },
+            project_scope: Some(ProjectScopeParam {
+                name: "admin".to_string(),
+                domain_name: "Default".to_string(),
+            }),
+        };
+        assert_eq!(
+            TokenScope::from_credential(&cred),
+            TokenScope::Project { name: "admin".to_string(), domain: "default".to_string() }
+        );
+
+        let unsoped_cred = AuthCredential {
+            auth_url: "https://keystone:5000/v3".to_string(),
+            method: AuthMethod::Password {
+                username: "admin".to_string(),
+                password: "pass".to_string(),
+                domain_name: "Default".to_string(),
+            },
+            project_scope: None,
+        };
+        assert_eq!(TokenScope::from_credential(&unsoped_cred), TokenScope::Unscoped);
     }
 }

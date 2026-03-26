@@ -38,6 +38,48 @@ impl<T> PaginatedResponse<T> {
 
 // --- Auth ---
 
+#[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
+pub enum TokenScope {
+    Project { name: String, domain: String },
+    Unscoped,
+}
+
+impl TokenScope {
+    pub fn from_credential(credential: &AuthCredential) -> Self {
+        match &credential.project_scope {
+            Some(p) => Self::Project {
+                name: p.name.to_lowercase(),
+                domain: p.domain_name.to_lowercase(),
+            },
+            None => Self::Unscoped,
+        }
+    }
+
+    /// Generate a filesystem-safe cache key.
+    /// Uses `@` as separator (not `_` which appears in project/domain names).
+    /// Sanitizes path traversal characters.
+    pub fn cache_key(&self) -> String {
+        match self {
+            Self::Project { name, domain } => {
+                let safe_name = sanitize_for_filename(name);
+                let safe_domain = sanitize_for_filename(domain);
+                format!("project@{safe_name}@{safe_domain}")
+            }
+            Self::Unscoped => "unscoped".to_string(),
+        }
+    }
+}
+
+/// Remove path-traversal and filesystem-unsafe characters from a string.
+fn sanitize_for_filename(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            '/' | '\\' | '\0' | '.' => '_',
+            _ => c,
+        })
+        .collect()
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Token {
     pub id: String,

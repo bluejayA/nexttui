@@ -275,7 +275,7 @@ impl Config {
         }
         searched.push(local);
 
-        // 3. ~/.config/openstack/clouds.yaml
+        // 3. Platform config dir (macOS: ~/Library/Application Support, Linux: ~/.config)
         if let Some(config_dir) = dirs::config_dir() {
             let path = config_dir.join("openstack/clouds.yaml");
             if path.exists() {
@@ -284,7 +284,16 @@ impl Config {
             searched.push(path);
         }
 
-        // 4. /etc/openstack/clouds.yaml
+        // 4. XDG fallback: ~/.config/openstack/clouds.yaml (explicit, for macOS compatibility)
+        if let Some(home) = dirs::home_dir() {
+            let path = home.join(".config/openstack/clouds.yaml");
+            if path.exists() {
+                return Ok(path);
+            }
+            searched.push(path);
+        }
+
+        // 5. /etc/openstack/clouds.yaml
         let etc = PathBuf::from("/etc/openstack/clouds.yaml");
         if etc.exists() {
             return Ok(etc);
