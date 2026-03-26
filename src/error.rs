@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum AppError {
     #[error("clouds.yaml not found. Searched: {searched_paths:?}")]
     CloudsYamlNotFound { searched_paths: Vec<PathBuf> },
