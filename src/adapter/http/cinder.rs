@@ -4,7 +4,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use super::{Link, build_pagination_query, encode_param, append_pagination_parts, extract_next_marker};
+use super::{Link, build_pagination_query, encode_param, append_pagination_parts, extract_next_marker, paginated_list};
 use crate::adapter::http::base::BaseHttpClient;
 use crate::models::cinder::{Volume, VolumeSnapshot};
 use crate::port::auth::AuthProvider;
@@ -134,23 +134,10 @@ impl CinderPort for CinderHttpAdapter {
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<Volume>> {
         let query = build_volume_query(filter, pagination);
-        let path = if query.is_empty() {
-            "/volumes/detail".to_string()
-        } else {
-            format!("/volumes/detail?{query}")
-        };
-        let req = self.base.get(&path).await?;
-        let resp: CinderVolumesResponse = self.base.send_json(req).await?;
-        let next_marker = resp
-            .volumes_links
-            .as_deref()
-            .and_then(extract_next_marker);
-        let has_more = next_marker.is_some();
-        Ok(PaginatedResponse {
-            items: resp.volumes,
-            next_marker,
-            has_more,
-        })
+        paginated_list(&self.base, "/volumes/detail", &query, |resp: CinderVolumesResponse| {
+            let next = resp.volumes_links.as_deref().and_then(extract_next_marker);
+            (resp.volumes, next)
+        }).await
     }
 
     async fn get_volume(&self, volume_id: &str) -> ApiResult<Volume> {
@@ -262,23 +249,10 @@ impl CinderPort for CinderHttpAdapter {
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<VolumeSnapshot>> {
         let query = build_pagination_query(pagination);
-        let path = if query.is_empty() {
-            "/snapshots/detail".to_string()
-        } else {
-            format!("/snapshots/detail?{query}")
-        };
-        let req = self.base.get(&path).await?;
-        let resp: CinderSnapshotsResponse = self.base.send_json(req).await?;
-        let next_marker = resp
-            .snapshots_links
-            .as_deref()
-            .and_then(extract_next_marker);
-        let has_more = next_marker.is_some();
-        Ok(PaginatedResponse {
-            items: resp.snapshots,
-            next_marker,
-            has_more,
-        })
+        paginated_list(&self.base, "/snapshots/detail", &query, |resp: CinderSnapshotsResponse| {
+            let next = resp.snapshots_links.as_deref().and_then(extract_next_marker);
+            (resp.snapshots, next)
+        }).await
     }
 
     async fn get_snapshot(&self, snapshot_id: &str) -> ApiResult<VolumeSnapshot> {

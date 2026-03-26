@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use super::{Link, build_pagination_query, encode_param, extract_next_marker};
+use super::{Link, build_pagination_query, encode_param, extract_next_marker, paginated_list};
 use crate::adapter::http::base::BaseHttpClient;
 use crate::models::neutron::{FloatingIp, Network, NetworkAgent, SecurityGroup, SecurityGroupRule};
 use crate::port::auth::AuthProvider;
@@ -211,23 +211,10 @@ impl NeutronPort for NeutronHttpAdapter {
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<Network>> {
         let query = build_pagination_query(pagination);
-        let path = if query.is_empty() {
-            "/v2.0/networks".to_string()
-        } else {
-            format!("/v2.0/networks?{query}")
-        };
-        let req = self.base.get(&path).await?;
-        let resp: NeutronNetworksResponse = self.base.send_json(req).await?;
-        let next_marker = resp
-            .networks_links
-            .as_deref()
-            .and_then(extract_next_marker);
-        let has_more = next_marker.is_some();
-        Ok(PaginatedResponse {
-            items: resp.networks,
-            next_marker,
-            has_more,
-        })
+        paginated_list(&self.base, "/v2.0/networks", &query, |resp: NeutronNetworksResponse| {
+            let next = resp.networks_links.as_deref().and_then(extract_next_marker);
+            (resp.networks, next)
+        }).await
     }
 
     async fn get_network(&self, network_id: &str) -> ApiResult<Network> {
@@ -304,23 +291,10 @@ impl NeutronPort for NeutronHttpAdapter {
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<SecurityGroup>> {
         let query = build_pagination_query(pagination);
-        let path = if query.is_empty() {
-            "/v2.0/security-groups".to_string()
-        } else {
-            format!("/v2.0/security-groups?{query}")
-        };
-        let req = self.base.get(&path).await?;
-        let resp: NeutronSecurityGroupsResponse = self.base.send_json(req).await?;
-        let next_marker = resp
-            .security_groups_links
-            .as_deref()
-            .and_then(extract_next_marker);
-        let has_more = next_marker.is_some();
-        Ok(PaginatedResponse {
-            items: resp.security_groups,
-            next_marker,
-            has_more,
-        })
+        paginated_list(&self.base, "/v2.0/security-groups", &query, |resp: NeutronSecurityGroupsResponse| {
+            let next = resp.security_groups_links.as_deref().and_then(extract_next_marker);
+            (resp.security_groups, next)
+        }).await
     }
 
     async fn get_security_group(&self, sg_id: &str) -> ApiResult<SecurityGroup> {
@@ -424,23 +398,10 @@ impl NeutronPort for NeutronHttpAdapter {
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<FloatingIp>> {
         let query = build_pagination_query(pagination);
-        let path = if query.is_empty() {
-            "/v2.0/floatingips".to_string()
-        } else {
-            format!("/v2.0/floatingips?{query}")
-        };
-        let req = self.base.get(&path).await?;
-        let resp: NeutronFloatingIpsResponse = self.base.send_json(req).await?;
-        let next_marker = resp
-            .floatingips_links
-            .as_deref()
-            .and_then(extract_next_marker);
-        let has_more = next_marker.is_some();
-        Ok(PaginatedResponse {
-            items: resp.floatingips,
-            next_marker,
-            has_more,
-        })
+        paginated_list(&self.base, "/v2.0/floatingips", &query, |resp: NeutronFloatingIpsResponse| {
+            let next = resp.floatingips_links.as_deref().and_then(extract_next_marker);
+            (resp.floatingips, next)
+        }).await
     }
 
     async fn create_floating_ip(&self, params: &FloatingIpCreateParams) -> ApiResult<FloatingIp> {

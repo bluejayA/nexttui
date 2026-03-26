@@ -6,8 +6,11 @@ pub mod neutron;
 pub mod nova;
 
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
 
-use crate::port::types::{PaginationParams, SortDirection};
+use crate::adapter::http::base::BaseHttpClient;
+use crate::port::error::ApiResult;
+use crate::port::types::{PaginatedResponse, PaginationParams, SortDirection};
 
 // --- Shared HTTP helpers (used by nova, neutron, cinder, etc.) ---
 
@@ -62,15 +65,48 @@ pub(crate) fn extract_next_marker(links: &[Link]) -> Option<String> {
     links
         .iter()
         .find(|l| l.rel == "next")
-        .and_then(|l| {
-            l.href
-                .split('?')
-                .nth(1)
-                .and_then(|query| {
-                    query
-                        .split('&')
-                        .find(|p| p.starts_with("marker="))
-                        .map(|p| p.trim_start_matches("marker=").to_string())
-                })
+        .and_then(|l| extract_marker_from_url(&l.href))
+}
+
+/// Extract `marker=` value from a URL query string.
+/// Shared by all marker extraction variants (Link array, Glance next URL, Keystone links).
+pub(crate) fn extract_marker_from_url(url: &str) -> Option<String> {
+    url.split('?')
+        .nth(1)
+        .and_then(|query| {
+            query
+                .split('&')
+                .find(|p| p.starts_with("marker="))
+                .map(|p| p.trim_start_matches("marker=").to_string())
         })
+}
+
+/// Generic paginated list combinator.
+///
+/// Handles the common pattern: build path + query → GET → deserialize → extract items + marker.
+/// The `extract` closure receives the deserialized response and returns (items, next_marker).
+pub(crate) async fn paginated_list<T, R, F>(
+    base: &BaseHttpClient,
+    path: &str,
+    query: &str,
+    extract: F,
+) -> ApiResult<PaginatedResponse<T>>
+where
+    R: DeserializeOwned,
+    F: FnOnce(R) -> (Vec<T>, Option<String>),
+{
+    let full_path = if query.is_empty() {
+        path.to_string()
+    } else {
+        format!("{path}?{query}")
+    };
+    let req = base.get(&full_path).await?;
+    let resp: R = base.send_json(req).await?;
+    let (items, next_marker) = extract(resp);
+    let has_more = next_marker.is_some();
+    Ok(PaginatedResponse {
+        items,
+        next_marker,
+        has_more,
+    })
 }
