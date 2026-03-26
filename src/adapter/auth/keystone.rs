@@ -155,6 +155,7 @@ impl KeystoneAuthAdapter {
     }
 
     /// Start the background token refresh loop. Idempotent — only spawns once.
+    #[tracing::instrument(skip(self))]
     async fn start_refresh_loop(&self) {
         if self.refresh_started.swap(true, Ordering::SeqCst) {
             return; // Already started
@@ -203,6 +204,7 @@ impl KeystoneAuthAdapter {
     }
 
     /// Perform the actual Keystone v3 auth POST.
+    #[tracing::instrument(skip(client, credential), fields(auth_url = %credential.auth_url))]
     async fn do_authenticate(
         client: &reqwest::Client,
         credential: &AuthCredential,
@@ -294,6 +296,7 @@ impl AuthProvider for KeystoneAuthAdapter {
         Ok(token)
     }
 
+    #[tracing::instrument(skip(self))]
     async fn refresh_token(&self) -> ApiResult<Token> {
         let token = Self::do_authenticate(&self.client, &self.credential).await?;
         {
@@ -306,6 +309,7 @@ impl AuthProvider for KeystoneAuthAdapter {
 
     /// Get a valid token string. If near-expiry (<1min), refresh first.
     /// Uses a Mutex to prevent thundering herd — only one refresh at a time.
+    #[tracing::instrument(skip(self))]
     async fn get_token(&self) -> ApiResult<String> {
         // Fast path: token is still valid
         {
@@ -345,6 +349,7 @@ impl AuthProvider for KeystoneAuthAdapter {
     /// Phase 2 note: for signed auth (HMAC), this method will need the actual
     /// method/url/headers/body to compute the signature. Currently unused parameters
     /// are preserved in the signature for forward compatibility.
+    #[tracing::instrument(skip(self, _headers, _body))]
     async fn authenticate_request(
         &self,
         _method: &str,
@@ -358,6 +363,7 @@ impl AuthProvider for KeystoneAuthAdapter {
         })
     }
 
+    #[tracing::instrument(skip(self))]
     async fn get_endpoint(
         &self,
         service_type: &str,

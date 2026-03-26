@@ -326,7 +326,7 @@ impl Config {
 
         match std::fs::read_to_string(&config_path) {
             Ok(content) => toml::from_str(&content).unwrap_or_else(|e| {
-                eprintln!("Warning: Failed to parse config.toml, using defaults: {e}");
+                tracing::warn!(%e, "failed to parse config.toml, using defaults");
                 AppConfig::default()
             }),
             Err(_) => AppConfig::default(),

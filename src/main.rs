@@ -1,4 +1,5 @@
 use std::io;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crossterm::{
@@ -8,6 +9,7 @@ use crossterm::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use tokio::sync::mpsc;
+use tracing_subscriber::EnvFilter;
 
 use nexttui::adapter::auth::keystone::KeystoneAuthAdapter;
 use nexttui::adapter::registry::AdapterRegistry;
@@ -21,6 +23,20 @@ use nexttui::worker::run_worker;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize tracing (file-based, since TUI owns stdout/stderr)
+    let log_dir = dirs::cache_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("nexttui");
+    let file_appender = tracing_appender::rolling::daily(&log_dir, "nexttui.log");
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("nexttui=info")),
+        )
+        .with_writer(file_appender)
+        .with_ansi(false)
+        .init();
+
     let args: Vec<String> = std::env::args().collect();
     let demo_mode = args.iter().any(|a| a == "--demo");
 
@@ -33,13 +49,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let config = match Config::load() {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("Error: {e}");
+                tracing::error!(%e, "failed to load config");
                 std::process::exit(1);
             }
         };
 
         for w in config.warnings() {
-            eprintln!("Warning: {w}");
+            tracing::warn!(warning = %w, "config warning");
         }
 
         let (action_tx, action_rx) = mpsc::unbounded_channel();
@@ -106,7 +122,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     terminal.show_cursor()?;
 
     if let Err(e) = result {
-        eprintln!("Error: {e}");
+        tracing::error!(%e, "event loop error");
         std::process::exit(1);
     }
 
