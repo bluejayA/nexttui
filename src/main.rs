@@ -50,12 +50,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let config = match Config::load() {
             Ok(c) => c,
             Err(e) => {
+                eprintln!("Error: {e}");
                 tracing::error!(%e, "failed to load config");
                 std::process::exit(1);
             }
         };
 
         for w in config.warnings() {
+            eprintln!("Warning: {w}");
             tracing::warn!(warning = %w, "config warning");
         }
 
@@ -123,6 +125,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     terminal.show_cursor()?;
 
     if let Err(e) = result {
+        eprintln!("Error: {e}");
         tracing::error!(%e, "event loop error");
         std::process::exit(1);
     }
