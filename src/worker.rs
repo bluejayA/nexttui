@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
+use tracing::Instrument;
 
 use crate::action::Action;
 use crate::adapter::registry::AdapterRegistry;
@@ -14,6 +15,7 @@ use crate::port::types::*;
 /// Run the background worker loop.
 /// Receives Actions from `action_rx`, calls the appropriate API via `registry`,
 /// and sends resulting AppEvents to `event_tx`.
+#[tracing::instrument(skip_all)]
 pub async fn run_worker(
     registry: Arc<AdapterRegistry>,
     rbac: Arc<RbacGuard>,
@@ -34,12 +36,16 @@ pub async fn run_worker(
         let registry = registry.clone();
         let event_tx = event_tx.clone();
 
-        tokio::spawn(async move {
-            let event = handle_action(&registry, action).await;
-            if let Some(ev) = event {
-                let _ = event_tx.send(ev);
+        let span = tracing::info_span!("worker_task", action = action_name(&action));
+        tokio::spawn(
+            async move {
+                let event = handle_action(&registry, action).await;
+                if let Some(ev) = event {
+                    let _ = event_tx.send(ev);
+                }
             }
-        });
+            .instrument(span),
+        );
     }
 }
 
@@ -123,6 +129,8 @@ fn action_name(action: &Action) -> &str {
 }
 
 async fn handle_action(registry: &AdapterRegistry, action: Action) -> Option<AppEvent> {
+    let action_label = action_name(&action);
+    tracing::info!(action = action_label, "handling action");
     let default_pagination = PaginationParams::default();
 
     match action {
@@ -487,6 +495,7 @@ async fn handle_action(registry: &AdapterRegistry, action: Action) -> Option<App
 }
 
 fn api_error(operation: &str, error: crate::port::error::ApiError) -> AppEvent {
+    tracing::error!(operation, error = %error, "API call failed");
     AppEvent::ApiError {
         operation: operation.to_string(),
         message: error.to_string(),

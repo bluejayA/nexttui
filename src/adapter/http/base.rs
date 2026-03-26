@@ -46,6 +46,7 @@ impl BaseHttpClient {
     }
 
     /// Resolve and cache the endpoint from service catalog.
+    #[tracing::instrument(skip(self), fields(service = %self.service_type))]
     async fn resolve_endpoint(&self) -> ApiResult<String> {
         {
             let cached = self.endpoint.read().await;

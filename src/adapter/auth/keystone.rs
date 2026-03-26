@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use tokio::sync::{broadcast, Mutex, RwLock};
 use tokio::task::JoinHandle;
+use tracing::Instrument;
 
 use crate::port::auth::AuthProvider;
 use crate::port::error::{ApiError, ApiResult};
@@ -155,6 +156,7 @@ impl KeystoneAuthAdapter {
     }
 
     /// Start the background token refresh loop. Idempotent — only spawns once.
+    #[tracing::instrument(skip(self))]
     async fn start_refresh_loop(&self) {
         if self.refresh_started.swap(true, Ordering::SeqCst) {
             return; // Already started
@@ -165,44 +167,50 @@ impl KeystoneAuthAdapter {
         let credential = self.credential.clone();
         let tx = self.token_tx.clone();
 
-        let handle = tokio::spawn(async move {
-            loop {
-                let sleep_duration = {
-                    let token = token_ref.read().await;
-                    match token.as_ref() {
-                        Some(t) => {
-                            let remaining = t.expires_at - Utc::now();
-                            let refresh_at = remaining - chrono::Duration::minutes(5);
-                            if refresh_at.num_seconds() > 0 {
-                                Duration::from_secs(refresh_at.num_seconds() as u64)
-                            } else {
-                                Duration::from_secs(10)
+        let refresh_span = tracing::info_span!("token_refresh_loop");
+        let handle = tokio::spawn(
+            async move {
+                loop {
+                    let sleep_duration = {
+                        let token = token_ref.read().await;
+                        match token.as_ref() {
+                            Some(t) => {
+                                let remaining = t.expires_at - Utc::now();
+                                let refresh_at = remaining - chrono::Duration::minutes(5);
+                                if refresh_at.num_seconds() > 0 {
+                                    Duration::from_secs(refresh_at.num_seconds() as u64)
+                                } else {
+                                    Duration::from_secs(10)
+                                }
                             }
+                            None => Duration::from_secs(60),
                         }
-                        None => Duration::from_secs(60),
-                    }
-                };
+                    };
 
-                tokio::time::sleep(sleep_duration).await;
+                    tokio::time::sleep(sleep_duration).await;
 
-                match Self::do_authenticate(&client, &credential).await {
-                    Ok(new_token) => {
-                        let mut current = token_ref.write().await;
-                        *current = Some(new_token.clone());
-                        let _ = tx.send(new_token);
-                    }
-                    Err(_) => {
-                        tokio::time::sleep(Duration::from_secs(30)).await;
+                    match Self::do_authenticate(&client, &credential).await {
+                        Ok(new_token) => {
+                            let mut current = token_ref.write().await;
+                            *current = Some(new_token.clone());
+                            let _ = tx.send(new_token);
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "token refresh failed, retrying in 30s");
+                            tokio::time::sleep(Duration::from_secs(30)).await;
+                        }
                     }
                 }
             }
-        });
+            .instrument(refresh_span),
+        );
 
         let mut h = self.refresh_handle.lock().await;
         *h = Some(handle);
     }
 
     /// Perform the actual Keystone v3 auth POST.
+    #[tracing::instrument(skip(client, credential), fields(auth_url = %credential.auth_url))]
     async fn do_authenticate(
         client: &reqwest::Client,
         credential: &AuthCredential,
@@ -294,6 +302,7 @@ impl AuthProvider for KeystoneAuthAdapter {
         Ok(token)
     }
 
+    #[tracing::instrument(skip(self))]
     async fn refresh_token(&self) -> ApiResult<Token> {
         let token = Self::do_authenticate(&self.client, &self.credential).await?;
         {
@@ -306,6 +315,7 @@ impl AuthProvider for KeystoneAuthAdapter {
 
     /// Get a valid token string. If near-expiry (<1min), refresh first.
     /// Uses a Mutex to prevent thundering herd — only one refresh at a time.
+    #[tracing::instrument(skip(self))]
     async fn get_token(&self) -> ApiResult<String> {
         // Fast path: token is still valid
         {
@@ -345,6 +355,7 @@ impl AuthProvider for KeystoneAuthAdapter {
     /// Phase 2 note: for signed auth (HMAC), this method will need the actual
     /// method/url/headers/body to compute the signature. Currently unused parameters
     /// are preserved in the signature for forward compatibility.
+    #[tracing::instrument(skip(self, _headers, _body))]
     async fn authenticate_request(
         &self,
         _method: &str,
@@ -358,6 +369,7 @@ impl AuthProvider for KeystoneAuthAdapter {
         })
     }
 
+    #[tracing::instrument(skip(self))]
     async fn get_endpoint(
         &self,
         service_type: &str,

@@ -273,7 +273,7 @@ mod tests {
 
     #[test]
     fn test_demo_app_is_admin() {
-        let (app, _rx) = create_demo_app();
+        let (app, _rx) = create_demo_app().unwrap();
         assert!(app.rbac.is_admin());
     }
 }
