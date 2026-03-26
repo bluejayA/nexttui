@@ -37,6 +37,18 @@
 - **requirements-analysis complete** — 해석 A안 확정 (역할 세분화 → 후속 Capability 전환), 5 FRs
 - **user-stories complete** — 6 stories (Must 5, Should 1), 기존 Phase 1 스토리 유지 + 추가
 - **nfr-requirements complete** — 기존 NFR-2 보안 항목을 3단계 역할 매트릭스로 확장
+- **workflow-planning** — A안 rbac.rs 집중 변경 선택
+- **git worktree created** — feature/rbac-role-tiers, 577 tests baseline
+- **application-design complete** — EffectiveRole enum, can_perform 3단계 로직, 하위 호환 유지
+- **INCEPTION complete** — Phase transition: INCEPTION → CONSTRUCTION
+- **code-generation complete** — EffectiveRole enum, 3-tier can_perform, 588 tests, clippy 0
+- **Construction complete**
+- **finishing-branch** — option B (PR #42 created), worktree maintained
+- **Code review (R1 Standard)** — Stage 1 ✅, Stage 2 ✅ +3 recs, Stage 3 ❌ 2건 → 전부 수정
+- **Flow finished** — PR #42 merged, worktree cleaned up
+- **Priority reordered** — 사용 빈도 데이터 반영: #41(61회) → BL-P2-014(56회) → resize(2회)
+- **New aidlc session started** — #41 전체 프로젝트 리소스 조회 (all_tenants), 빈도 61회/일
+- **Session paused** — Complexity Standard 제안 후 사용자 승인 대기 중
 
 ## 2026-03-18
 - **New aidlc session started** — Project: nexttui (Rust TUI), User request: "devflow로 시작하겠습니다"
