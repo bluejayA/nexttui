@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
+use tracing::Instrument;
 
 use crate::action::Action;
 use crate::adapter::registry::AdapterRegistry;
@@ -35,12 +36,16 @@ pub async fn run_worker(
         let registry = registry.clone();
         let event_tx = event_tx.clone();
 
-        tokio::spawn(async move {
-            let event = handle_action(&registry, action).await;
-            if let Some(ev) = event {
-                let _ = event_tx.send(ev);
+        let span = tracing::info_span!("worker_task", action = action_name(&action));
+        tokio::spawn(
+            async move {
+                let event = handle_action(&registry, action).await;
+                if let Some(ev) = event {
+                    let _ = event_tx.send(ev);
+                }
             }
-        });
+            .instrument(span),
+        );
     }
 }
 
