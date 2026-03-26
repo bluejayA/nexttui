@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -136,10 +137,32 @@ pub struct KeystoneAuthAdapter {
     refresh_started: AtomicBool,
     /// Mutex to serialize concurrent refresh attempts (prevents thundering herd).
     refresh_lock: Mutex<()>,
+    /// File path for token cache persistence.
+    cache_path: PathBuf,
 }
 
 impl KeystoneAuthAdapter {
     pub fn new(credential: AuthCredential) -> Result<Self, ApiError> {
+        use super::token_cache;
+
+        let (username, project_name) = match &credential.method {
+            AuthMethod::Password { username, .. } => {
+                (username.clone(), credential.project_scope.as_ref().map(|p| p.name.clone()))
+            }
+            AuthMethod::ApplicationCredential { id, .. } => {
+                (id.clone(), credential.project_scope.as_ref().map(|p| p.name.clone()))
+            }
+        };
+        let cache_key = token_cache::compute_cache_key(
+            &credential.auth_url,
+            &username,
+            project_name.as_deref(),
+        );
+        let cache_path = token_cache::cache_file_path(&cache_key);
+
+        // Try loading cached token from disk
+        let cached_token = token_cache::load_token(&cache_path);
+
         let (token_tx, _) = broadcast::channel::<Token>(16);
         Ok(Self {
             client: reqwest::Client::builder()
@@ -147,11 +170,12 @@ impl KeystoneAuthAdapter {
                 .connect_timeout(Duration::from_secs(10))
                 .build()?,
             credential,
-            current_token: Arc::new(RwLock::new(None)),
+            current_token: Arc::new(RwLock::new(cached_token)),
             token_tx,
             refresh_handle: Mutex::new(None),
             refresh_started: AtomicBool::new(false),
             refresh_lock: Mutex::new(()),
+            cache_path,
         })
     }
 
@@ -166,6 +190,7 @@ impl KeystoneAuthAdapter {
         let client = self.client.clone();
         let credential = self.credential.clone();
         let tx = self.token_tx.clone();
+        let cache_path = self.cache_path.clone();
 
         let refresh_span = tracing::info_span!("token_refresh_loop");
         let handle = tokio::spawn(
@@ -193,6 +218,9 @@ impl KeystoneAuthAdapter {
                         Ok(new_token) => {
                             let mut current = token_ref.write().await;
                             *current = Some(new_token.clone());
+                            if let Err(e) = super::token_cache::save_token(&new_token, &cache_path) {
+                                tracing::warn!(error = %e, "failed to cache token to disk");
+                            }
                             let _ = tx.send(new_token);
                         }
                         Err(e) => {
@@ -298,6 +326,9 @@ impl AuthProvider for KeystoneAuthAdapter {
             let mut current = self.current_token.write().await;
             *current = Some(token.clone());
         }
+        if let Err(e) = super::token_cache::save_token(&token, &self.cache_path) {
+            tracing::warn!(error = %e, "failed to cache token to disk");
+        }
         self.start_refresh_loop().await;
         Ok(token)
     }
@@ -308,6 +339,9 @@ impl AuthProvider for KeystoneAuthAdapter {
         {
             let mut current = self.current_token.write().await;
             *current = Some(token.clone());
+        }
+        if let Err(e) = super::token_cache::save_token(&token, &self.cache_path) {
+            tracing::warn!(error = %e, "failed to cache token to disk");
         }
         let _ = self.token_tx.send(token.clone());
         Ok(token)

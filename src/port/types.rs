@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 // --- Pagination ---
 
@@ -38,7 +38,7 @@ impl<T> PaginatedResponse<T> {
 
 // --- Auth ---
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Token {
     pub id: String,
     pub expires_at: DateTime<Utc>,
@@ -59,7 +59,7 @@ impl std::fmt::Debug for Token {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProjectScope {
     pub id: String,
     pub name: String,
@@ -67,27 +67,27 @@ pub struct ProjectScope {
     pub domain_name: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TokenRole {
     pub id: String,
     pub name: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CatalogEntry {
     pub service_type: String,
     pub service_name: String,
     pub endpoints: Vec<Endpoint>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Endpoint {
     pub region: String,
     pub interface: EndpointInterface,
     pub url: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EndpointInterface {
     Public,
     Internal,

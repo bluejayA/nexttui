@@ -6,6 +6,7 @@
 *secret*
 *credential*
 *token*
+!src/**/token_cache.rs
 *.pem
 *.key
 *.p12
