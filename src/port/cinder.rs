@@ -37,6 +37,7 @@ pub trait CinderPort: Send + Sync {
     // Snapshots
     async fn list_snapshots(
         &self,
+        filter: &SnapshotListFilter,
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<VolumeSnapshot>>;
     async fn get_snapshot(&self, snapshot_id: &str) -> ApiResult<VolumeSnapshot>;

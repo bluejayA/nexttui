@@ -29,6 +29,7 @@ pub struct SecurityGroupModule {
     confirm: ConfirmHandler,
     resource_list: ResourceList,
     form: Option<FormWidget>,
+    all_tenants: bool,
     action_tx: mpsc::UnboundedSender<Action>,
 }
 
@@ -42,8 +43,9 @@ impl SecurityGroupModule {
             loading: false,
             error_message: None,
             confirm: ConfirmHandler::new(),
-            resource_list: ResourceList::new(sg_columns()),
+            resource_list: ResourceList::new(sg_columns(false)),
             form: None,
+            all_tenants: false,
             action_tx,
         }
     }
@@ -77,7 +79,7 @@ impl SecurityGroupModule {
     }
 
     fn rows(&self) -> Vec<Row> {
-        self.security_groups.iter().map(sg_to_row).collect()
+        self.security_groups.iter().map(|sg| sg_to_row(sg, self.all_tenants)).collect()
     }
 
     fn resolve_action(pending: PendingAction) -> Option<Action> {
@@ -321,6 +323,11 @@ impl SecurityGroupModule {
 }
 
 impl Component for SecurityGroupModule {
+    fn set_all_tenants(&mut self, v: bool) {
+        self.all_tenants = v;
+        self.resource_list = ResourceList::new(sg_columns(v));
+    }
+
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
         if let Some(result) = self.confirm.handle_key(key, Self::resolve_action) {
             return result;
@@ -420,6 +427,7 @@ mod tests {
                     ethertype: "IPv4".into(),
                 },
             ],
+            tenant_id: None,
         }
     }
 

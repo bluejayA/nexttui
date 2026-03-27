@@ -64,6 +64,9 @@ pub enum Action {
     SelectResource { id: String },
     NavigateToResource { route: Route, id: String },
 
+    // All Tenants
+    ToggleAllTenants,
+
     // System
     RefreshAll,
     SwitchCloud(String),

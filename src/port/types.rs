@@ -226,6 +226,27 @@ pub struct ImageListFilter {
     pub name: Option<String>,
     pub status: Option<String>,
     pub visibility: Option<String>,
+    pub all_tenants: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct NetworkListFilter {
+    pub all_tenants: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SecurityGroupListFilter {
+    pub all_tenants: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct FloatingIpListFilter {
+    pub all_tenants: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SnapshotListFilter {
+    pub all_tenants: bool,
 }
 
 // --- Nova params ---

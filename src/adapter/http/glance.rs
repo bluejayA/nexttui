@@ -71,7 +71,10 @@ fn build_image_query(filter: &ImageListFilter, pagination: &PaginationParams) ->
     if let Some(ref status) = filter.status {
         parts.push(format!("status={}", encode_param(status)));
     }
-    if let Some(ref vis) = filter.visibility {
+    // all_tenants overrides user-provided visibility to avoid duplicate params
+    if filter.all_tenants {
+        parts.push("visibility=all".to_string());
+    } else if let Some(ref vis) = filter.visibility {
         parts.push(format!("visibility={}", encode_param(vis)));
     }
     append_pagination_parts(&mut parts, pagination);
@@ -206,6 +209,7 @@ mod tests {
             name: Some("Ubuntu".into()),
             status: Some("active".into()),
             visibility: Some("public".into()),
+            all_tenants: false,
         };
         let pagination = PaginationParams {
             marker: Some("img-last".into()),
@@ -225,6 +229,17 @@ mod tests {
         let filter = ImageListFilter::default();
         let pagination = PaginationParams::default();
         assert!(build_image_query(&filter, &pagination).is_empty());
+    }
+
+    #[test]
+    fn test_build_image_query_all_tenants() {
+        let filter = ImageListFilter {
+            all_tenants: true,
+            ..Default::default()
+        };
+        let pagination = PaginationParams::default();
+        let query = build_image_query(&filter, &pagination);
+        assert!(query.contains("visibility=all"));
     }
 
     #[test]

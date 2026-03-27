@@ -16,6 +16,8 @@ pub struct Volume {
     pub attachments: Vec<VolumeAttachment>,
     pub availability_zone: Option<String>,
     pub created_at: Option<String>,
+    #[serde(default, rename = "os-vol-tenant-attr:tenant_id")]
+    pub tenant_id: Option<String>,
 }
 
 fn default_false_str() -> String {
@@ -37,6 +39,8 @@ pub struct VolumeSnapshot {
     pub size: u32,
     pub volume_id: String,
     pub created_at: Option<String>,
+    #[serde(default, rename = "os-extended-snapshot-attributes:project_id")]
+    pub tenant_id: Option<String>,
 }
 
 #[cfg(test)]

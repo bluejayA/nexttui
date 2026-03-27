@@ -3,13 +3,22 @@ use crate::ui::detail_view::{DetailData, DetailField, DetailSection};
 use crate::ui::form::FieldDef;
 use crate::ui::resource_list::{ColumnDef, ColumnWidth, Row, RowStyleHint};
 
-pub fn image_columns() -> Vec<ColumnDef> {
-    vec![
+pub fn image_columns(show_tenant: bool) -> Vec<ColumnDef> {
+    let mut cols = vec![
         ColumnDef {
             name: "Name".into(),
             width: ColumnWidth::Percent(25),
             alignment: ratatui::layout::Alignment::Left,
         },
+    ];
+    if show_tenant {
+        cols.push(ColumnDef {
+            name: "Project".into(),
+            width: ColumnWidth::Percent(12),
+            alignment: ratatui::layout::Alignment::Left,
+        });
+    }
+    cols.extend([
         ColumnDef {
             name: "Status".into(),
             width: ColumnWidth::Fixed(10),
@@ -30,25 +39,32 @@ pub fn image_columns() -> Vec<ColumnDef> {
             width: ColumnWidth::Fixed(12),
             alignment: ratatui::layout::Alignment::Left,
         },
-    ]
+    ]);
+    cols
 }
 
-pub fn image_to_row(image: &Image) -> Row {
+pub fn image_to_row(image: &Image, show_tenant: bool) -> Row {
     let (icon, style) = image_status_display(&image.status);
     let format = image.disk_format.as_deref().unwrap_or("-");
     let size_str = image
         .size
         .map(|s| format_bytes(s))
         .unwrap_or("-".to_string());
+    let mut cells = vec![
+        image.name.clone(),
+    ];
+    if show_tenant {
+        cells.push(image.owner.as_deref().unwrap_or("-").to_string());
+    }
+    cells.extend([
+        format!("{icon} {}", image.status),
+        format.to_string(),
+        size_str,
+        image.visibility.clone(),
+    ]);
     Row {
         id: image.id.clone(),
-        cells: vec![
-            image.name.clone(),
-            format!("{icon} {}", image.status),
-            format.to_string(),
-            size_str,
-            image.visibility.clone(),
-        ],
+        cells,
         style_hint: Some(style),
     }
 }
@@ -219,18 +235,21 @@ mod tests {
             min_ram: 512,
             checksum: Some("abc123".into()),
             created_at: Some("2026-01-01T00:00:00Z".into()),
+            owner: None,
         }
     }
 
     #[test]
     fn test_image_columns_count() {
-        assert_eq!(image_columns().len(), 5);
+        assert_eq!(image_columns(false).len(), 5);
+        assert_eq!(image_columns(true).len(), 6);
+        assert_eq!(image_columns(true)[1].name, "Project");
     }
 
     #[test]
     fn test_image_to_row() {
         let img = make_image();
-        let row = image_to_row(&img);
+        let row = image_to_row(&img, false);
         assert_eq!(row.id, "img-1");
         assert_eq!(row.cells[0], "Ubuntu 22.04");
         assert!(row.cells[1].contains("active"));

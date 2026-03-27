@@ -2,6 +2,7 @@
 //! and sends AppEvents back to the event loop for UI updates.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tokio::sync::mpsc;
 use tracing::Instrument;
@@ -19,6 +20,7 @@ use crate::port::types::*;
 pub async fn run_worker(
     registry: Arc<AdapterRegistry>,
     rbac: Arc<RbacGuard>,
+    all_tenants: Arc<AtomicBool>,
     mut action_rx: mpsc::UnboundedReceiver<Action>,
     event_tx: mpsc::UnboundedSender<AppEvent>,
 ) {
@@ -35,11 +37,12 @@ pub async fn run_worker(
 
         let registry = registry.clone();
         let event_tx = event_tx.clone();
+        let all_tenants = all_tenants.clone();
 
         let span = tracing::info_span!("worker_task", action = action_name(&action));
         tokio::spawn(
             async move {
-                let event = handle_action(&registry, action).await;
+                let event = handle_action(&registry, &all_tenants, action).await;
                 if let Some(ev) = event {
                     let _ = event_tx.send(ev);
                 }
@@ -132,17 +135,18 @@ fn action_name(action: &Action) -> &str {
     }
 }
 
-async fn handle_action(registry: &AdapterRegistry, action: Action) -> Option<AppEvent> {
+async fn handle_action(registry: &AdapterRegistry, all_tenants: &AtomicBool, action: Action) -> Option<AppEvent> {
     let action_label = action_name(&action);
     tracing::info!(action = action_label, "handling action");
     let default_pagination = PaginationParams::default();
+    let at = all_tenants.load(Ordering::Relaxed);
 
     match action {
         // -- Nova: Servers --------------------------------------------------
         Action::FetchServers => {
             match registry
                 .nova
-                .list_servers(&ServerListFilter::default(), &default_pagination)
+                .list_servers(&ServerListFilter { all_tenants: at, ..Default::default() }, &default_pagination)
                 .await
             {
                 Ok(resp) => Some(AppEvent::ServersLoaded(resp.items)),
@@ -242,7 +246,7 @@ async fn handle_action(registry: &AdapterRegistry, action: Action) -> Option<App
         Action::FetchNetworks => {
             match registry
                 .neutron
-                .list_networks(&default_pagination)
+                .list_networks(&NetworkListFilter { all_tenants: at }, &default_pagination)
                 .await
             {
                 Ok(resp) => Some(AppEvent::NetworksLoaded(resp.items)),
@@ -273,7 +277,7 @@ async fn handle_action(registry: &AdapterRegistry, action: Action) -> Option<App
         Action::FetchSecurityGroups => {
             match registry
                 .neutron
-                .list_security_groups(&default_pagination)
+                .list_security_groups(&SecurityGroupListFilter { all_tenants: at }, &default_pagination)
                 .await
             {
                 Ok(resp) => Some(AppEvent::SecurityGroupsLoaded(resp.items)),
@@ -313,7 +317,7 @@ async fn handle_action(registry: &AdapterRegistry, action: Action) -> Option<App
         Action::FetchFloatingIps => {
             match registry
                 .neutron
-                .list_floating_ips(&default_pagination)
+                .list_floating_ips(&FloatingIpListFilter { all_tenants: at }, &default_pagination)
                 .await
             {
                 Ok(resp) => Some(AppEvent::FloatingIpsLoaded(resp.items)),
@@ -351,7 +355,7 @@ async fn handle_action(registry: &AdapterRegistry, action: Action) -> Option<App
         Action::FetchVolumes => {
             match registry
                 .cinder
-                .list_volumes(&VolumeListFilter::default(), &default_pagination)
+                .list_volumes(&VolumeListFilter { all_tenants: at, ..Default::default() }, &default_pagination)
                 .await
             {
                 Ok(resp) => Some(AppEvent::VolumesLoaded(resp.items)),
@@ -386,7 +390,7 @@ async fn handle_action(registry: &AdapterRegistry, action: Action) -> Option<App
         Action::FetchSnapshots => {
             match registry
                 .cinder
-                .list_snapshots(&default_pagination)
+                .list_snapshots(&SnapshotListFilter { all_tenants: at }, &default_pagination)
                 .await
             {
                 Ok(resp) => Some(AppEvent::SnapshotsLoaded(resp.items)),
@@ -410,7 +414,7 @@ async fn handle_action(registry: &AdapterRegistry, action: Action) -> Option<App
         Action::FetchImages => {
             match registry
                 .glance
-                .list_images(&ImageListFilter::default(), &default_pagination)
+                .list_images(&ImageListFilter { all_tenants: at, ..Default::default() }, &default_pagination)
                 .await
             {
                 Ok(resp) => Some(AppEvent::ImagesLoaded(resp.items)),
@@ -482,6 +486,7 @@ async fn handle_action(registry: &AdapterRegistry, action: Action) -> Option<App
         | Action::NavigateToResource { .. }
         | Action::EnterFormMode
         | Action::ExitFormMode
+        | Action::ToggleAllTenants
         | Action::Quit => None,
 
         // -- System ---------------------------------------------------------

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
@@ -12,7 +13,7 @@ use crate::background::BackgroundTracker;
 use crate::component::{Component, InputMode};
 use crate::config::Config;
 use crate::event::AppEvent;
-use crate::infra::rbac::RbacGuard;
+use crate::infra::rbac::{ActionKind, RbacGuard};
 use crate::models::common::Route;
 use crate::router::Router;
 use crate::ui::header::{Header, HeaderContext};
@@ -38,6 +39,7 @@ pub struct App {
     action_tx: mpsc::UnboundedSender<Action>,
 
     pub rbac: Arc<RbacGuard>,
+    pub all_tenants: Arc<AtomicBool>,
     config: Arc<Config>,
     layout: LayoutManager,
     sidebar: Sidebar,
@@ -58,6 +60,7 @@ impl App {
             background_tracker: BackgroundTracker::new(),
             action_tx,
             rbac: Arc::new(RbacGuard::new()),
+            all_tenants: Arc::new(AtomicBool::new(false)),
             config: Arc::new(config),
             layout: LayoutManager::new(),
             sidebar: Sidebar::new(Vec::new()),
@@ -84,6 +87,7 @@ impl App {
             background_tracker: BackgroundTracker::new(),
             action_tx,
             rbac,
+            all_tenants: Arc::new(AtomicBool::new(false)),
             config: Arc::new(config),
             layout: LayoutManager::new(),
             sidebar: Sidebar::new(parts.sidebar_items),
@@ -122,6 +126,14 @@ impl App {
         // Ctrl+c always quits
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.should_quit = true;
+            return true;
+        }
+
+        // Ctrl+a toggles all_tenants (admin only)
+        if key.code == KeyCode::Char('a') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            if self.rbac.can_perform(ActionKind::ViewAllTenants) {
+                self.dispatch_action(Action::ToggleAllTenants);
+            }
             return true;
         }
 
@@ -235,6 +247,27 @@ impl App {
             }
             Action::ExitFormMode => {
                 self.input_mode = InputMode::Normal;
+            }
+            Action::ToggleAllTenants => {
+                let prev = self.all_tenants.load(Ordering::Relaxed);
+                self.all_tenants.store(!prev, Ordering::Relaxed);
+                // Broadcast to modules
+                for component in self.components.values_mut() {
+                    component.set_all_tenants(!prev);
+                }
+                // Re-fetch all resources with new filter
+                let fetches = [
+                    Action::FetchServers,
+                    Action::FetchNetworks,
+                    Action::FetchSecurityGroups,
+                    Action::FetchFloatingIps,
+                    Action::FetchVolumes,
+                    Action::FetchSnapshots,
+                    Action::FetchImages,
+                ];
+                for a in fetches {
+                    let _ = self.action_tx.send(a);
+                }
             }
             Action::Quit => {
                 self.should_quit = true;
@@ -366,6 +399,7 @@ impl App {
             resource_type: route_label.to_string(),
             cloud_name,
             region,
+            all_tenants: self.all_tenants.load(Ordering::Relaxed),
         });
 
         // Sidebar
@@ -393,7 +427,7 @@ impl App {
         // Status bar
         let info = StatusInfo {
             message: format!("{} | {:?}", route_label, self.input_mode),
-            help_hint: "←→:Navigate q:Quit /:Search".into(),
+            help_hint: "←→:Navigate q:Quit /:Search Ctrl+A:AllTenants".into(),
             item_count: None,
             selected_index: None,
         };

@@ -25,6 +25,7 @@ pub struct NetworkModule {
     error_message: Option<String>,
     resource_list: ResourceList,
     form: Option<FormWidget>,
+    all_tenants: bool,
     action_tx: mpsc::UnboundedSender<Action>,
 }
 
@@ -36,8 +37,9 @@ impl NetworkModule {
             subnets: Vec::new(),
             loading: false,
             error_message: None,
-            resource_list: ResourceList::new(network_columns()),
+            resource_list: ResourceList::new(network_columns(false)),
             form: None,
+            all_tenants: false,
             action_tx,
         }
     }
@@ -63,7 +65,7 @@ impl NetworkModule {
     }
 
     fn rows(&self) -> Vec<Row> {
-        self.networks.iter().map(network_to_row).collect()
+        self.networks.iter().map(|n| network_to_row(n, self.all_tenants)).collect()
     }
 
     fn open_create_form(&mut self) {
@@ -177,6 +179,11 @@ impl NetworkModule {
 }
 
 impl Component for NetworkModule {
+    fn set_all_tenants(&mut self, v: bool) {
+        self.all_tenants = v;
+        self.resource_list = ResourceList::new(network_columns(v));
+    }
+
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
         match &self.view_state {
             ViewState::List => self.handle_list_key(key),
@@ -262,6 +269,7 @@ mod tests {
             provider_network_type: None,
             provider_physical_network: None,
             provider_segmentation_id: None,
+            tenant_id: None,
         }
     }
 

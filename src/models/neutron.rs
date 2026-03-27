@@ -22,6 +22,8 @@ pub struct Network {
     pub provider_physical_network: Option<String>,
     #[serde(rename = "provider:segmentation_id")]
     pub provider_segmentation_id: Option<u32>,
+    #[serde(default)]
+    pub tenant_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -31,6 +33,8 @@ pub struct SecurityGroup {
     pub description: Option<String>,
     #[serde(default)]
     pub security_group_rules: Vec<SecurityGroupRule>,
+    #[serde(default)]
+    pub tenant_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -54,6 +58,8 @@ pub struct FloatingIp {
     pub floating_network_id: String,
     pub fixed_ip_address: Option<String>,
     pub router_id: Option<String>,
+    #[serde(default)]
+    pub tenant_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

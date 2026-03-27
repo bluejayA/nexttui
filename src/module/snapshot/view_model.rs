@@ -2,13 +2,22 @@ use crate::models::cinder::VolumeSnapshot;
 use crate::ui::detail_view::{DetailData, DetailField, DetailSection};
 use crate::ui::resource_list::{ColumnDef, ColumnWidth, Row, RowStyleHint};
 
-pub fn snapshot_columns() -> Vec<ColumnDef> {
-    vec![
+pub fn snapshot_columns(show_tenant: bool) -> Vec<ColumnDef> {
+    let mut cols = vec![
         ColumnDef {
             name: "Name".into(),
             width: ColumnWidth::Percent(25),
             alignment: ratatui::layout::Alignment::Left,
         },
+    ];
+    if show_tenant {
+        cols.push(ColumnDef {
+            name: "Project".into(),
+            width: ColumnWidth::Percent(12),
+            alignment: ratatui::layout::Alignment::Left,
+        });
+    }
+    cols.extend([
         ColumnDef {
             name: "Status".into(),
             width: ColumnWidth::Fixed(12),
@@ -29,22 +38,29 @@ pub fn snapshot_columns() -> Vec<ColumnDef> {
             width: ColumnWidth::Percent(20),
             alignment: ratatui::layout::Alignment::Left,
         },
-    ]
+    ]);
+    cols
 }
 
-pub fn snapshot_to_row(snap: &VolumeSnapshot) -> Row {
+pub fn snapshot_to_row(snap: &VolumeSnapshot, show_tenant: bool) -> Row {
     let (icon, style) = snapshot_status_display(&snap.status);
     let name = snap.name.as_deref().unwrap_or("-");
     let created = snap.created_at.as_deref().unwrap_or("-");
+    let mut cells = vec![
+        name.to_string(),
+    ];
+    if show_tenant {
+        cells.push(snap.tenant_id.as_deref().unwrap_or("-").to_string());
+    }
+    cells.extend([
+        format!("{icon} {}", snap.status),
+        snap.size.to_string(),
+        snap.volume_id.clone(),
+        created.to_string(),
+    ]);
     Row {
         id: snap.id.clone(),
-        cells: vec![
-            name.to_string(),
-            format!("{icon} {}", snap.status),
-            snap.size.to_string(),
-            snap.volume_id.clone(),
-            created.to_string(),
-        ],
+        cells,
         style_hint: Some(style),
     }
 }
@@ -116,18 +132,21 @@ mod tests {
             size: 100,
             volume_id: "vol-1".into(),
             created_at: Some("2026-01-15T00:00:00Z".into()),
+            tenant_id: None,
         }
     }
 
     #[test]
     fn test_snapshot_columns_count() {
-        assert_eq!(snapshot_columns().len(), 5);
+        assert_eq!(snapshot_columns(false).len(), 5);
+        assert_eq!(snapshot_columns(true).len(), 6);
+        assert_eq!(snapshot_columns(true)[1].name, "Project");
     }
 
     #[test]
     fn test_snapshot_to_row() {
         let snap = make_snapshot();
-        let row = snapshot_to_row(&snap);
+        let row = snapshot_to_row(&snap, false);
         assert_eq!(row.id, "snap-1");
         assert_eq!(row.cells[0], "daily-backup");
         assert!(row.cells[1].contains("available"));

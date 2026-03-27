@@ -4,13 +4,22 @@ use crate::ui::detail_view::{DetailData, DetailField, DetailSection};
 use crate::ui::form::FieldDef;
 use crate::ui::resource_list::{ColumnDef, ColumnWidth, Row, RowStyleHint};
 
-pub fn network_columns() -> Vec<ColumnDef> {
-    vec![
+pub fn network_columns(show_tenant: bool) -> Vec<ColumnDef> {
+    let mut cols = vec![
         ColumnDef {
             name: "Name".into(),
             width: ColumnWidth::Percent(25),
             alignment: ratatui::layout::Alignment::Left,
         },
+    ];
+    if show_tenant {
+        cols.push(ColumnDef {
+            name: "Project".into(),
+            width: ColumnWidth::Percent(12),
+            alignment: ratatui::layout::Alignment::Left,
+        });
+    }
+    cols.extend([
         ColumnDef {
             name: "Status".into(),
             width: ColumnWidth::Fixed(10),
@@ -36,26 +45,34 @@ pub fn network_columns() -> Vec<ColumnDef> {
             width: ColumnWidth::Fixed(6),
             alignment: ratatui::layout::Alignment::Right,
         },
-    ]
+    ]);
+    cols
 }
 
-pub fn network_to_row(network: &Network) -> Row {
+pub fn network_to_row(network: &Network, show_tenant: bool) -> Row {
     let (icon, style) = network_status_display(&network.status);
     let admin_label = if network.admin_state_up { "UP" } else { "DOWN" };
     let external_icon = if network.external { "✓" } else { "✗" };
     let shared_icon = if network.shared { "✓" } else { "✗" };
     let mtu_str = network.mtu.map(|m| m.to_string()).unwrap_or("-".into());
 
+    let mut cells = vec![
+        network.name.clone(),
+    ];
+    if show_tenant {
+        cells.push(network.tenant_id.as_deref().unwrap_or("-").to_string());
+    }
+    cells.extend([
+        format!("{icon} {}", network.status),
+        admin_label.to_string(),
+        external_icon.to_string(),
+        shared_icon.to_string(),
+        mtu_str,
+    ]);
+
     Row {
         id: network.id.clone(),
-        cells: vec![
-            network.name.clone(),
-            format!("{icon} {}", network.status),
-            admin_label.to_string(),
-            external_icon.to_string(),
-            shared_icon.to_string(),
-            mtu_str,
-        ],
+        cells,
         style_hint: Some(style),
     }
 }
@@ -236,6 +253,7 @@ mod tests {
             provider_network_type: Some("vxlan".into()),
             provider_physical_network: None,
             provider_segmentation_id: Some(100),
+            tenant_id: None,
         }
     }
 
@@ -252,13 +270,15 @@ mod tests {
 
     #[test]
     fn test_network_columns_count() {
-        assert_eq!(network_columns().len(), 6);
+        assert_eq!(network_columns(false).len(), 6);
+        assert_eq!(network_columns(true).len(), 7);
+        assert_eq!(network_columns(true)[1].name, "Project");
     }
 
     #[test]
     fn test_network_to_row() {
         let net = make_network();
-        let row = network_to_row(&net);
+        let row = network_to_row(&net, false);
         assert_eq!(row.id, "net-1");
         assert_eq!(row.cells[0], "private-net");
         assert!(row.cells[1].contains("ACTIVE"));

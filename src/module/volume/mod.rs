@@ -26,6 +26,7 @@ pub struct VolumeModule {
     confirm: ConfirmHandler,
     resource_list: ResourceList,
     form: Option<FormWidget>,
+    all_tenants: bool,
     action_tx: mpsc::UnboundedSender<Action>,
 }
 
@@ -37,8 +38,9 @@ impl VolumeModule {
             loading: false,
             error_message: None,
             confirm: ConfirmHandler::new(),
-            resource_list: ResourceList::new(volume_columns()),
+            resource_list: ResourceList::new(volume_columns(false)),
             form: None,
+            all_tenants: false,
             action_tx,
         }
     }
@@ -64,7 +66,7 @@ impl VolumeModule {
     }
 
     fn rows(&self) -> Vec<Row> {
-        self.volumes.iter().map(volume_to_row).collect()
+        self.volumes.iter().map(|v| volume_to_row(v, self.all_tenants)).collect()
     }
 
     fn resolve_action(pending: PendingAction) -> Option<Action> {
@@ -205,6 +207,11 @@ impl VolumeModule {
 }
 
 impl Component for VolumeModule {
+    fn set_all_tenants(&mut self, v: bool) {
+        self.all_tenants = v;
+        self.resource_list = ResourceList::new(volume_columns(v));
+    }
+
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
         if let Some(result) = self.confirm.handle_key(key, Self::resolve_action) {
             return result;
@@ -290,6 +297,7 @@ mod tests {
             attachments: vec![],
             availability_zone: None,
             created_at: None,
+            tenant_id: None,
         }
     }
 

@@ -10,6 +10,7 @@ pub trait Component {
     fn handle_event(&mut self, event: &AppEvent);
     fn render(&self, frame: &mut Frame, area: Rect);
     fn set_admin(&mut self, _is_admin: bool) {}
+    fn set_all_tenants(&mut self, _all_tenants: bool) {}
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

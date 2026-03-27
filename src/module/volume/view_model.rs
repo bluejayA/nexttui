@@ -3,8 +3,8 @@ use crate::ui::detail_view::{DetailData, DetailField, DetailSection};
 use crate::ui::form::FieldDef;
 use crate::ui::resource_list::{ColumnDef, ColumnWidth, Row, RowStyleHint};
 
-pub fn volume_columns() -> Vec<ColumnDef> {
-    vec![
+pub fn volume_columns(show_tenant: bool) -> Vec<ColumnDef> {
+    let mut cols = vec![
         ColumnDef {
             name: "".into(),
             width: ColumnWidth::Fixed(3),
@@ -15,6 +15,15 @@ pub fn volume_columns() -> Vec<ColumnDef> {
             width: ColumnWidth::Percent(20),
             alignment: ratatui::layout::Alignment::Left,
         },
+    ];
+    if show_tenant {
+        cols.push(ColumnDef {
+            name: "Project".into(),
+            width: ColumnWidth::Percent(12),
+            alignment: ratatui::layout::Alignment::Left,
+        });
+    }
+    cols.extend([
         ColumnDef {
             name: "Status".into(),
             width: ColumnWidth::Fixed(12),
@@ -40,10 +49,11 @@ pub fn volume_columns() -> Vec<ColumnDef> {
             width: ColumnWidth::Percent(18),
             alignment: ratatui::layout::Alignment::Left,
         },
-    ]
+    ]);
+    cols
 }
 
-pub fn volume_to_row(volume: &Volume) -> Row {
+pub fn volume_to_row(volume: &Volume, show_tenant: bool) -> Row {
     let (icon, style) = volume_status_display(&volume.status);
     let name = volume.name.as_deref().unwrap_or("-");
     let vol_type = volume.volume_type.as_deref().unwrap_or("-");
@@ -62,17 +72,24 @@ pub fn volume_to_row(volume: &Volume) -> Row {
             .join(", ")
     };
 
+    let mut cells = vec![
+        icon.to_string(),
+        name.to_string(),
+    ];
+    if show_tenant {
+        cells.push(volume.tenant_id.as_deref().unwrap_or("-").to_string());
+    }
+    cells.extend([
+        volume.status.clone(),
+        volume.size.to_string(),
+        vol_type.to_string(),
+        bootable_icon.to_string(),
+        attached,
+    ]);
+
     Row {
         id: volume.id.clone(),
-        cells: vec![
-            icon.to_string(),
-            name.to_string(),
-            volume.status.clone(),
-            volume.size.to_string(),
-            vol_type.to_string(),
-            bootable_icon.to_string(),
-            attached,
-        ],
+        cells,
         style_hint: Some(style),
     }
 }
@@ -214,6 +231,7 @@ mod tests {
             attachments: vec![],
             availability_zone: Some("az1".into()),
             created_at: Some("2026-01-01T00:00:00Z".into()),
+            tenant_id: None,
         }
     }
 
@@ -231,13 +249,15 @@ mod tests {
 
     #[test]
     fn test_volume_columns_count() {
-        assert_eq!(volume_columns().len(), 7);
+        assert_eq!(volume_columns(false).len(), 7);
+        assert_eq!(volume_columns(true).len(), 8);
+        assert_eq!(volume_columns(true)[2].name, "Project");
     }
 
     #[test]
     fn test_volume_to_row_available() {
         let vol = make_volume();
-        let row = volume_to_row(&vol);
+        let row = volume_to_row(&vol, false);
         assert_eq!(row.id, "vol-1");
         assert_eq!(row.cells[1], "data-vol");
         assert_eq!(row.cells[2], "available");
@@ -251,7 +271,7 @@ mod tests {
     #[test]
     fn test_volume_to_row_attached() {
         let vol = make_attached_volume();
-        let row = volume_to_row(&vol);
+        let row = volume_to_row(&vol, false);
         assert!(row.cells[6].contains("srv-1234"));
         assert!(row.cells[6].contains("/dev/vdb"));
     }

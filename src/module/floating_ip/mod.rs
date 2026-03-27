@@ -25,6 +25,7 @@ pub struct FloatingIpModule {
     confirm: ConfirmHandler,
     resource_list: ResourceList,
     form: Option<FormWidget>,
+    all_tenants: bool,
     cached_ext_network_opts: Vec<SelectOption>,
     action_tx: mpsc::UnboundedSender<Action>,
 }
@@ -37,8 +38,9 @@ impl FloatingIpModule {
             loading: false,
             error_message: None,
             confirm: ConfirmHandler::new(),
-            resource_list: ResourceList::new(fip_columns()),
+            resource_list: ResourceList::new(fip_columns(false)),
             form: None,
+            all_tenants: false,
             cached_ext_network_opts: Vec::new(),
             action_tx,
         }
@@ -65,7 +67,7 @@ impl FloatingIpModule {
     }
 
     fn rows(&self) -> Vec<Row> {
-        self.floating_ips.iter().map(fip_to_row).collect()
+        self.floating_ips.iter().map(|f| fip_to_row(f, self.all_tenants)).collect()
     }
 
     fn resolve_action(pending: PendingAction) -> Option<Action> {
@@ -149,6 +151,11 @@ impl FloatingIpModule {
 }
 
 impl Component for FloatingIpModule {
+    fn set_all_tenants(&mut self, v: bool) {
+        self.all_tenants = v;
+        self.resource_list = ResourceList::new(fip_columns(v));
+    }
+
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
         if let Some(result) = self.confirm.handle_key(key, Self::resolve_action) {
             return result;
@@ -230,6 +237,7 @@ mod tests {
             floating_network_id: "ext-net-1".into(),
             fixed_ip_address: None,
             router_id: None,
+            tenant_id: None,
         }
     }
 

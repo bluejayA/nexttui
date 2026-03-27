@@ -107,6 +107,15 @@ struct SnapshotCreateInner {
 
 // --- Query builders ---
 
+fn build_snapshot_query(filter: &SnapshotListFilter, pagination: &PaginationParams) -> String {
+    let mut parts = Vec::new();
+    if filter.all_tenants {
+        parts.push("all_tenants=1".to_string());
+    }
+    append_pagination_parts(&mut parts, pagination);
+    parts.join("&")
+}
+
 fn build_volume_query(filter: &VolumeListFilter, pagination: &PaginationParams) -> String {
     let mut parts = Vec::new();
     if let Some(ref name) = filter.name {
@@ -246,9 +255,10 @@ impl CinderPort for CinderHttpAdapter {
 
     async fn list_snapshots(
         &self,
+        filter: &SnapshotListFilter,
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<VolumeSnapshot>> {
-        let query = build_pagination_query(pagination);
+        let query = build_snapshot_query(filter, pagination);
         paginated_list(&self.base, "/snapshots/detail", &query, |resp: CinderSnapshotsResponse| {
             let next = resp.snapshots_links.as_deref().and_then(extract_next_marker);
             (resp.snapshots, next)
@@ -447,6 +457,22 @@ mod tests {
         assert_eq!(snap["name"], "snap-test");
         assert_eq!(snap["description"], "Test snapshot");
         assert_eq!(snap["force"], false);
+    }
+
+    #[test]
+    fn test_build_snapshot_query_all_tenants() {
+        let filter = SnapshotListFilter { all_tenants: true };
+        let pagination = PaginationParams::default();
+        let query = build_snapshot_query(&filter, &pagination);
+        assert!(query.contains("all_tenants=1"));
+    }
+
+    #[test]
+    fn test_build_snapshot_query_default() {
+        let filter = SnapshotListFilter::default();
+        let pagination = PaginationParams::default();
+        let query = build_snapshot_query(&filter, &pagination);
+        assert!(query.is_empty());
     }
 
     #[test]
