@@ -202,29 +202,24 @@ impl RuleDirection {
 
 // --- Query builders ---
 
-fn build_network_query(filter: &NetworkListFilter, pagination: &PaginationParams) -> String {
+// Neutron API does not support `all_tenants` query parameter.
+// Admin tokens automatically see all projects' resources.
+// The filter structs carry the flag for UI column logic only.
+
+fn build_network_query(_filter: &NetworkListFilter, pagination: &PaginationParams) -> String {
     let mut parts = Vec::new();
-    if filter.all_tenants {
-        parts.push("all_tenants=1".to_string());
-    }
     append_pagination_parts(&mut parts, pagination);
     parts.join("&")
 }
 
-fn build_security_group_query(filter: &SecurityGroupListFilter, pagination: &PaginationParams) -> String {
+fn build_security_group_query(_filter: &SecurityGroupListFilter, pagination: &PaginationParams) -> String {
     let mut parts = Vec::new();
-    if filter.all_tenants {
-        parts.push("all_tenants=1".to_string());
-    }
     append_pagination_parts(&mut parts, pagination);
     parts.join("&")
 }
 
-fn build_floating_ip_query(filter: &FloatingIpListFilter, pagination: &PaginationParams) -> String {
+fn build_floating_ip_query(_filter: &FloatingIpListFilter, pagination: &PaginationParams) -> String {
     let mut parts = Vec::new();
-    if filter.all_tenants {
-        parts.push("all_tenants=1".to_string());
-    }
     append_pagination_parts(&mut parts, pagination);
     parts.join("&")
 }
@@ -755,36 +750,29 @@ mod tests {
 
     // --- Query builders ---
 
+    // Neutron does not send all_tenants query param — admin token sees all automatically
     #[test]
-    fn test_build_network_query_all_tenants() {
+    fn test_build_network_query_no_all_tenants_param() {
         let filter = NetworkListFilter { all_tenants: true };
-        let pagination = PaginationParams::default();
-        let query = build_network_query(&filter, &pagination);
-        assert!(query.contains("all_tenants=1"));
-    }
-
-    #[test]
-    fn test_build_network_query_default() {
-        let filter = NetworkListFilter::default();
         let pagination = PaginationParams::default();
         let query = build_network_query(&filter, &pagination);
         assert!(!query.contains("all_tenants"));
     }
 
     #[test]
-    fn test_build_security_group_query_all_tenants() {
+    fn test_build_security_group_query_no_all_tenants_param() {
         let filter = SecurityGroupListFilter { all_tenants: true };
         let pagination = PaginationParams::default();
         let query = build_security_group_query(&filter, &pagination);
-        assert!(query.contains("all_tenants=1"));
+        assert!(!query.contains("all_tenants"));
     }
 
     #[test]
-    fn test_build_floating_ip_query_all_tenants() {
+    fn test_build_floating_ip_query_no_all_tenants_param() {
         let filter = FloatingIpListFilter { all_tenants: true };
         let pagination = PaginationParams::default();
         let query = build_floating_ip_query(&filter, &pagination);
-        assert!(query.contains("all_tenants=1"));
+        assert!(!query.contains("all_tenants"));
     }
 
     #[test]

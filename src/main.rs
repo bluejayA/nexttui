@@ -18,6 +18,7 @@ use nexttui::config::Config;
 use nexttui::demo::create_demo_app;
 use nexttui::event::AppEvent;
 use nexttui::event_loop::run_event_loop;
+use nexttui::port::auth::AuthProvider;
 use nexttui::port::types::{AuthCredential, AuthMethod, ProjectScopeParam};
 use nexttui::worker::run_worker;
 
@@ -89,12 +90,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let auth_provider = Arc::new(KeystoneAuthAdapter::new(credential)?);
         let registry = Arc::new(AdapterRegistry::new_http(
-            auth_provider,
+            auth_provider.clone(),
             cloud.region_name.clone(),
         )?);
 
-        // Build module registry and create app
+        // Initialize RBAC from token roles
         let rbac = std::sync::Arc::new(nexttui::infra::rbac::RbacGuard::new());
+        if let Ok(token) = auth_provider.get_token_info().await {
+            rbac.update_roles(token.roles, Some(token.project.id));
+        }
         let mut module_registry = nexttui::registry::ModuleRegistry::new();
         nexttui::registry::register_all_modules(&mut module_registry, &action_tx);
         let (app, initial_actions) = App::from_registry(config, action_tx.clone(), module_registry, rbac.clone());

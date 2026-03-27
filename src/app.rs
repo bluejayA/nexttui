@@ -399,6 +399,7 @@ impl App {
             resource_type: route_label.to_string(),
             cloud_name,
             region,
+            all_tenants: self.all_tenants.load(Ordering::Relaxed),
         });
 
         // Sidebar
@@ -424,13 +425,8 @@ impl App {
         }
 
         // Status bar
-        let all_tenants_indicator = if self.all_tenants.load(Ordering::Relaxed) {
-            " [ALL]"
-        } else {
-            ""
-        };
         let info = StatusInfo {
-            message: format!("{}{} | {:?}", route_label, all_tenants_indicator, self.input_mode),
+            message: format!("{} | {:?}", route_label, self.input_mode),
             help_hint: "←→:Navigate q:Quit /:Search Ctrl+A:AllTenants".into(),
             item_count: None,
             selected_index: None,
