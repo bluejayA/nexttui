@@ -1,13 +1,13 @@
 # DevFlow State
 
 ## Current Phase
-INCEPTION
+(idle)
 
 ## Current Stage
-(pending)
+(none)
 
 ## Complexity
-(pending)
+(none)
 
 ## Selected Approach
-(pending)
+(none)

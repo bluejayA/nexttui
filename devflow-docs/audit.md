@@ -48,7 +48,10 @@
 - **Flow finished** — PR #42 merged, worktree cleaned up
 - **Priority reordered** — 사용 빈도 데이터 반영: #41(61회) → BL-P2-014(56회) → resize(2회)
 - **New aidlc session started** — #41 전체 프로젝트 리소스 조회 (all_tenants), 빈도 61회/일
-- **Session paused** — Complexity Standard 제안 후 사용자 승인 대기 중
+- **Complexity approved** — Standard
+- **requirements-analysis complete** — 5 FRs, 0 open questions, 4 assumptions approved
+- **workflow-planning complete** — A안 직행 구현, 3 units
+- **INCEPTION complete** — Phase transition: INCEPTION → CONSTRUCTION
 
 ## 2026-03-18
 - **New aidlc session started** — Project: nexttui (Rust TUI), User request: "devflow로 시작하겠습니다"
@@ -96,3 +99,17 @@
 - **workspace-detection complete** — Brownfield, 91 files, 534 tests, 16 modules. Complexity: Standard 제안, 승인 대기.
 - **Session paused** — Background Worker 작업 병행 진행 중. Complexity gate에서 중단.
 - **New aidlc session started** — Background Worker + OpenStack API 연동. action_rx consume → API 호출 → AppEvent 반환.
+
+## 2026-03-27
+- **devflow resumed** — #41 all_tenants, INCEPTION 재개 (Complexity Standard 승인 대기)
+- **Complexity approved** — Standard
+- **requirements-analysis complete** — 5 FRs, 0 open questions, 4 assumptions approved
+- **workflow-planning complete** — A안 직행 구현, 3 units
+- **INCEPTION complete** — Phase transition: INCEPTION → CONSTRUCTION
+- **Unit 1 complete** — Model+Filter+Port+Adapter (588→597 tests)
+- **Unit 2 complete** — Action+Worker+App+RBAC (597→600 tests)
+- **Unit 3 complete** — UI 컬럼+키+상태바 (600→601 tests)
+- **CONSTRUCTION complete** — Phase transition: CONSTRUCTION → FINISHING
+- **finishing-branch** — option B (PR #43 created), worktree maintained
+- **Manual testing** — DevStack VM, Neutron API fix, Glance visibility fix, RBAC init fix, header badge UX
+- **Flow finished** — PR #43 merged, worktree cleaned up
