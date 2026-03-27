@@ -15,6 +15,7 @@ pub enum ActionKind {
     Evacuate,
     EnableDisable,
     ManageQuota,
+    ViewAllTenants,
 }
 
 /// Effective role derived from Keystone token roles.
@@ -187,6 +188,7 @@ impl RbacGuard {
                 | ActionKind::Evacuate
                 | ActionKind::EnableDisable
                 | ActionKind::ManageQuota
+                | ActionKind::ViewAllTenants
         )
     }
 }
@@ -428,6 +430,28 @@ mod tests {
         let actions = vec![ActionKind::Read, ActionKind::Create, ActionKind::Delete];
         let filtered = guard.filter_actions(&actions);
         assert_eq!(filtered, vec![ActionKind::Read]);
+    }
+
+    // --- ViewAllTenants (admin-only) ---
+
+    #[test]
+    fn test_view_all_tenants_admin_allowed() {
+        let guard = RbacGuard::new();
+        guard.update_roles(vec![role("admin")], None);
+        assert!(guard.can_perform(ActionKind::ViewAllTenants));
+    }
+
+    #[test]
+    fn test_view_all_tenants_member_denied() {
+        let guard = RbacGuard::new();
+        guard.update_roles(vec![role("member")], None);
+        assert!(!guard.can_perform(ActionKind::ViewAllTenants));
+    }
+
+    #[test]
+    fn test_view_all_tenants_reader_denied() {
+        let guard = RbacGuard::new();
+        assert!(!guard.can_perform(ActionKind::ViewAllTenants));
     }
 
     // --- capability (backward compatible) ---

@@ -27,6 +27,7 @@ pub struct ImageModule {
     confirm: ConfirmHandler,
     resource_list: ResourceList,
     form: Option<FormWidget>,
+    all_tenants: bool,
     action_tx: mpsc::UnboundedSender<Action>,
 }
 
@@ -39,8 +40,9 @@ impl ImageModule {
             loading: false,
             error_message: None,
             confirm: ConfirmHandler::new(),
-            resource_list: ResourceList::new(image_columns()),
+            resource_list: ResourceList::new(image_columns(false)),
             form: None,
+            all_tenants: false,
             action_tx,
         }
     }
@@ -66,7 +68,7 @@ impl ImageModule {
     }
 
     fn rows(&self) -> Vec<Row> {
-        self.images.iter().map(image_to_row).collect()
+        self.images.iter().map(|i| image_to_row(i, self.all_tenants)).collect()
     }
 
     fn resolve_action(pending: PendingAction) -> Option<Action> {
@@ -203,6 +205,11 @@ impl ImageModule {
 }
 
 impl Component for ImageModule {
+    fn set_all_tenants(&mut self, v: bool) {
+        self.all_tenants = v;
+        self.resource_list = ResourceList::new(image_columns(v));
+    }
+
     fn set_admin(&mut self, is_admin: bool) {
         self.is_admin = is_admin;
     }
@@ -292,6 +299,7 @@ mod tests {
             min_ram: 512,
             checksum: None,
             created_at: None,
+            owner: None,
         }
     }
 

@@ -190,6 +190,7 @@ pub struct MockNeutronAdapter;
 impl super::neutron::NeutronPort for MockNeutronAdapter {
     async fn list_networks(
         &self,
+        _filter: &NetworkListFilter,
         _pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<Network>> {
         Ok(PaginatedResponse::empty())
@@ -218,6 +219,7 @@ impl super::neutron::NeutronPort for MockNeutronAdapter {
     }
     async fn list_security_groups(
         &self,
+        _filter: &SecurityGroupListFilter,
         _pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<SecurityGroup>> {
         Ok(PaginatedResponse::empty())
@@ -255,6 +257,7 @@ impl super::neutron::NeutronPort for MockNeutronAdapter {
     }
     async fn list_floating_ips(
         &self,
+        _filter: &FloatingIpListFilter,
         _pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<FloatingIp>> {
         Ok(PaginatedResponse::empty())
@@ -342,6 +345,7 @@ impl super::cinder::CinderPort for MockCinderAdapter {
     }
     async fn list_snapshots(
         &self,
+        _filter: &SnapshotListFilter,
         _pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<VolumeSnapshot>> {
         Ok(PaginatedResponse::empty())
@@ -528,7 +532,7 @@ mod tests {
     #[tokio::test]
     async fn test_mock_neutron_list_networks() {
         let mock = MockNeutronAdapter;
-        let result = mock.list_networks(&PaginationParams::default()).await;
+        let result = mock.list_networks(&NetworkListFilter::default(), &PaginationParams::default()).await;
         assert!(result.is_ok());
         assert!(result.unwrap().items.is_empty());
     }

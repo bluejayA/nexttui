@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use super::{Link, build_pagination_query, encode_param, extract_next_marker, paginated_list};
+use super::{Link, append_pagination_parts, build_pagination_query, encode_param, extract_next_marker, paginated_list};
 use crate::adapter::http::base::BaseHttpClient;
 use crate::models::neutron::{FloatingIp, Network, NetworkAgent, SecurityGroup, SecurityGroupRule};
 use crate::port::auth::AuthProvider;
@@ -200,6 +200,35 @@ impl RuleDirection {
     }
 }
 
+// --- Query builders ---
+
+fn build_network_query(filter: &NetworkListFilter, pagination: &PaginationParams) -> String {
+    let mut parts = Vec::new();
+    if filter.all_tenants {
+        parts.push("all_tenants=1".to_string());
+    }
+    append_pagination_parts(&mut parts, pagination);
+    parts.join("&")
+}
+
+fn build_security_group_query(filter: &SecurityGroupListFilter, pagination: &PaginationParams) -> String {
+    let mut parts = Vec::new();
+    if filter.all_tenants {
+        parts.push("all_tenants=1".to_string());
+    }
+    append_pagination_parts(&mut parts, pagination);
+    parts.join("&")
+}
+
+fn build_floating_ip_query(filter: &FloatingIpListFilter, pagination: &PaginationParams) -> String {
+    let mut parts = Vec::new();
+    if filter.all_tenants {
+        parts.push("all_tenants=1".to_string());
+    }
+    append_pagination_parts(&mut parts, pagination);
+    parts.join("&")
+}
+
 // --- NeutronPort implementation ---
 
 #[async_trait]
@@ -208,9 +237,10 @@ impl NeutronPort for NeutronHttpAdapter {
 
     async fn list_networks(
         &self,
+        filter: &NetworkListFilter,
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<Network>> {
-        let query = build_pagination_query(pagination);
+        let query = build_network_query(filter, pagination);
         paginated_list(&self.base, "/v2.0/networks", &query, |resp: NeutronNetworksResponse| {
             let next = resp.networks_links.as_deref().and_then(extract_next_marker);
             (resp.networks, next)
@@ -288,9 +318,10 @@ impl NeutronPort for NeutronHttpAdapter {
 
     async fn list_security_groups(
         &self,
+        filter: &SecurityGroupListFilter,
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<SecurityGroup>> {
-        let query = build_pagination_query(pagination);
+        let query = build_security_group_query(filter, pagination);
         paginated_list(&self.base, "/v2.0/security-groups", &query, |resp: NeutronSecurityGroupsResponse| {
             let next = resp.security_groups_links.as_deref().and_then(extract_next_marker);
             (resp.security_groups, next)
@@ -395,9 +426,10 @@ impl NeutronPort for NeutronHttpAdapter {
 
     async fn list_floating_ips(
         &self,
+        filter: &FloatingIpListFilter,
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<FloatingIp>> {
-        let query = build_pagination_query(pagination);
+        let query = build_floating_ip_query(filter, pagination);
         paginated_list(&self.base, "/v2.0/floatingips", &query, |resp: NeutronFloatingIpsResponse| {
             let next = resp.floatingips_links.as_deref().and_then(extract_next_marker);
             (resp.floatingips, next)
@@ -688,6 +720,71 @@ mod tests {
         };
         let json = serde_json::to_value(&body).unwrap();
         assert_eq!(json["floatingip"]["port_id"], "port-1");
+    }
+
+    #[test]
+    fn test_network_deserialize_with_tenant_id() {
+        let json = r#"{
+            "network": {
+                "id": "net-1",
+                "name": "admin-net",
+                "status": "ACTIVE",
+                "admin_state_up": true,
+                "subnets": [],
+                "tenant_id": "proj-abc-123"
+            }
+        }"#;
+        let resp: NeutronNetworkWrapper = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.network.tenant_id.as_deref(), Some("proj-abc-123"));
+    }
+
+    #[test]
+    fn test_floating_ip_deserialize_with_tenant_id() {
+        let json = r#"{
+            "floatingips": [{
+                "id": "fip-1",
+                "floating_ip_address": "203.0.113.10",
+                "status": "ACTIVE",
+                "floating_network_id": "ext-1",
+                "tenant_id": "proj-xyz"
+            }]
+        }"#;
+        let resp: NeutronFloatingIpsResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.floatingips[0].tenant_id.as_deref(), Some("proj-xyz"));
+    }
+
+    // --- Query builders ---
+
+    #[test]
+    fn test_build_network_query_all_tenants() {
+        let filter = NetworkListFilter { all_tenants: true };
+        let pagination = PaginationParams::default();
+        let query = build_network_query(&filter, &pagination);
+        assert!(query.contains("all_tenants=1"));
+    }
+
+    #[test]
+    fn test_build_network_query_default() {
+        let filter = NetworkListFilter::default();
+        let pagination = PaginationParams::default();
+        let query = build_network_query(&filter, &pagination);
+        assert!(!query.contains("all_tenants"));
+    }
+
+    #[test]
+    fn test_build_security_group_query_all_tenants() {
+        let filter = SecurityGroupListFilter { all_tenants: true };
+        let pagination = PaginationParams::default();
+        let query = build_security_group_query(&filter, &pagination);
+        assert!(query.contains("all_tenants=1"));
+    }
+
+    #[test]
+    fn test_build_floating_ip_query_all_tenants() {
+        let filter = FloatingIpListFilter { all_tenants: true };
+        let pagination = PaginationParams::default();
+        let query = build_floating_ip_query(&filter, &pagination);
+        assert!(query.contains("all_tenants=1"));
     }
 
     #[test]

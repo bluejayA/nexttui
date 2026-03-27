@@ -16,6 +16,8 @@ pub struct Image {
     pub min_ram: u32,
     pub checksum: Option<String>,
     pub created_at: Option<String>,
+    #[serde(default)]
+    pub owner: Option<String>,
 }
 
 fn default_private() -> String {

@@ -25,6 +25,7 @@ pub struct ServerModule {
     confirm: ConfirmHandler,
     resource_list: ResourceList,
     form: Option<FormWidget>,
+    all_tenants: bool,
     // Cached dropdown options — populated by handle_event, applied to form on open/load
     cached_flavor_opts: Vec<SelectOption>,
     cached_image_opts: Vec<SelectOption>,
@@ -41,8 +42,9 @@ impl ServerModule {
             loading: false,
             error_message: None,
             confirm: ConfirmHandler::new(),
-            resource_list: ResourceList::new(server_columns()),
+            resource_list: ResourceList::new(server_columns(false)),
             form: None,
+            all_tenants: false,
             cached_flavor_opts: Vec::new(),
             cached_image_opts: Vec::new(),
             cached_network_opts: Vec::new(),
@@ -72,7 +74,7 @@ impl ServerModule {
     }
 
     fn rows(&self) -> Vec<Row> {
-        self.servers.iter().map(server_to_row).collect()
+        self.servers.iter().map(|s| server_to_row(s, self.all_tenants)).collect()
     }
 
     fn resolve_action(pending: PendingAction) -> Option<Action> {
@@ -275,6 +277,11 @@ impl ServerModule {
 }
 
 impl Component for ServerModule {
+    fn set_all_tenants(&mut self, v: bool) {
+        self.all_tenants = v;
+        self.resource_list = ResourceList::new(server_columns(v));
+    }
+
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
         // ConfirmHandler takes priority
         if let Some(result) = self.confirm.handle_key(key, Self::resolve_action) {

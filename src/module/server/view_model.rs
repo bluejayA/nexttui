@@ -5,8 +5,8 @@ use crate::ui::detail_view::{DetailData, DetailField, DetailSection};
 use crate::ui::form::FieldDef;
 use crate::ui::resource_list::{ColumnDef, ColumnWidth, Row, RowStyleHint};
 
-pub fn server_columns() -> Vec<ColumnDef> {
-    vec![
+pub fn server_columns(show_tenant: bool) -> Vec<ColumnDef> {
+    let mut cols = vec![
         ColumnDef {
             name: "".into(),
             width: ColumnWidth::Fixed(3),
@@ -17,6 +17,15 @@ pub fn server_columns() -> Vec<ColumnDef> {
             width: ColumnWidth::Percent(25),
             alignment: ratatui::layout::Alignment::Left,
         },
+    ];
+    if show_tenant {
+        cols.push(ColumnDef {
+            name: "Project".into(),
+            width: ColumnWidth::Percent(12),
+            alignment: ratatui::layout::Alignment::Left,
+        });
+    }
+    cols.extend([
         ColumnDef {
             name: "Status".into(),
             width: ColumnWidth::Fixed(12),
@@ -37,10 +46,11 @@ pub fn server_columns() -> Vec<ColumnDef> {
             width: ColumnWidth::Percent(15),
             alignment: ratatui::layout::Alignment::Left,
         },
-    ]
+    ]);
+    cols
 }
 
-pub fn server_to_row(server: &Server) -> Row {
+pub fn server_to_row(server: &Server, show_tenant: bool) -> Row {
     let (icon, style) = status_display(&server.status);
     let flavor_name = server
         .flavor
@@ -54,16 +64,23 @@ pub fn server_to_row(server: &Server) -> Row {
         .unwrap_or("-");
     let ips = format_ips(&server.addresses);
 
+    let mut cells = vec![
+        icon.to_string(),
+        server.name.clone(),
+    ];
+    if show_tenant {
+        cells.push(server.tenant_id.as_deref().unwrap_or("-").to_string());
+    }
+    cells.extend([
+        server.status.clone(),
+        ips,
+        flavor_name.to_string(),
+        image_name.to_string(),
+    ]);
+
     Row {
         id: server.id.clone(),
-        cells: vec![
-            icon.to_string(),
-            server.name.clone(),
-            server.status.clone(),
-            ips,
-            flavor_name.to_string(),
-            image_name.to_string(),
-        ],
+        cells,
         style_hint: Some(style),
     }
 }
@@ -297,13 +314,15 @@ mod tests {
 
     #[test]
     fn test_server_columns_count() {
-        assert_eq!(server_columns().len(), 6);
+        assert_eq!(server_columns(false).len(), 6);
+        assert_eq!(server_columns(true).len(), 7);
+        assert_eq!(server_columns(true)[2].name, "Project");
     }
 
     #[test]
     fn test_server_to_row_active() {
         let server = make_server("ACTIVE");
-        let row = server_to_row(&server);
+        let row = server_to_row(&server, false);
         assert_eq!(row.id, "srv-1");
         assert_eq!(row.cells[1], "web-01");
         assert_eq!(row.cells[2], "ACTIVE");
@@ -311,9 +330,18 @@ mod tests {
     }
 
     #[test]
+    fn test_server_to_row_with_tenant() {
+        let server = make_server("ACTIVE");
+        let row = server_to_row(&server, true);
+        assert_eq!(row.cells[1], "web-01");
+        assert_eq!(row.cells[2], "proj-1");
+        assert_eq!(row.cells[3], "ACTIVE");
+    }
+
+    #[test]
     fn test_server_to_row_error() {
         let server = make_server("ERROR");
-        let row = server_to_row(&server);
+        let row = server_to_row(&server, false);
         assert_eq!(row.style_hint, Some(RowStyleHint::Error));
     }
 

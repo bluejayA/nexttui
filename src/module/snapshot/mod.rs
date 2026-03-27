@@ -23,6 +23,7 @@ pub struct SnapshotModule {
     error_message: Option<String>,
     confirm: ConfirmHandler,
     resource_list: ResourceList,
+    all_tenants: bool,
     action_tx: mpsc::UnboundedSender<Action>,
 }
 
@@ -34,7 +35,8 @@ impl SnapshotModule {
             loading: false,
             error_message: None,
             confirm: ConfirmHandler::new(),
-            resource_list: ResourceList::new(snapshot_columns()),
+            resource_list: ResourceList::new(snapshot_columns(false)),
+            all_tenants: false,
             action_tx,
         }
     }
@@ -60,7 +62,7 @@ impl SnapshotModule {
     }
 
     fn rows(&self) -> Vec<Row> {
-        self.snapshots.iter().map(snapshot_to_row).collect()
+        self.snapshots.iter().map(|s| snapshot_to_row(s, self.all_tenants)).collect()
     }
 
     fn resolve_action(pending: PendingAction) -> Option<Action> {
@@ -116,6 +118,11 @@ impl SnapshotModule {
 }
 
 impl Component for SnapshotModule {
+    fn set_all_tenants(&mut self, v: bool) {
+        self.all_tenants = v;
+        self.resource_list = ResourceList::new(snapshot_columns(v));
+    }
+
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
         if let Some(result) = self.confirm.handle_key(key, Self::resolve_action) {
             return result;
@@ -186,6 +193,7 @@ mod tests {
             size: 100,
             volume_id: "vol-1".into(),
             created_at: Some("2026-01-15T00:00:00Z".into()),
+            tenant_id: None,
         }
     }
 

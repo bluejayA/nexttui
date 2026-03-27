@@ -9,6 +9,7 @@ pub trait NeutronPort: Send + Sync {
     // Networks
     async fn list_networks(
         &self,
+        filter: &NetworkListFilter,
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<Network>>;
     async fn get_network(&self, network_id: &str) -> ApiResult<Network>;
@@ -26,6 +27,7 @@ pub trait NeutronPort: Send + Sync {
     // Security Groups
     async fn list_security_groups(
         &self,
+        filter: &SecurityGroupListFilter,
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<SecurityGroup>>;
     async fn get_security_group(&self, sg_id: &str) -> ApiResult<SecurityGroup>;
@@ -50,6 +52,7 @@ pub trait NeutronPort: Send + Sync {
     // Floating IPs
     async fn list_floating_ips(
         &self,
+        filter: &FloatingIpListFilter,
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<FloatingIp>>;
     async fn create_floating_ip(&self, params: &FloatingIpCreateParams) -> ApiResult<FloatingIp>;

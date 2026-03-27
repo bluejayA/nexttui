@@ -3,13 +3,22 @@ use crate::ui::detail_view::{DetailData, DetailField, DetailSection};
 use crate::ui::form::FieldDef;
 use crate::ui::resource_list::{ColumnDef, ColumnWidth, Row, RowStyleHint};
 
-pub fn sg_columns() -> Vec<ColumnDef> {
-    vec![
+pub fn sg_columns(show_tenant: bool) -> Vec<ColumnDef> {
+    let mut cols = vec![
         ColumnDef {
             name: "Name".into(),
             width: ColumnWidth::Percent(30),
             alignment: ratatui::layout::Alignment::Left,
         },
+    ];
+    if show_tenant {
+        cols.push(ColumnDef {
+            name: "Project".into(),
+            width: ColumnWidth::Percent(12),
+            alignment: ratatui::layout::Alignment::Left,
+        });
+    }
+    cols.extend([
         ColumnDef {
             name: "Description".into(),
             width: ColumnWidth::Percent(40),
@@ -20,15 +29,21 @@ pub fn sg_columns() -> Vec<ColumnDef> {
             width: ColumnWidth::Fixed(8),
             alignment: ratatui::layout::Alignment::Right,
         },
-    ]
+    ]);
+    cols
 }
 
-pub fn sg_to_row(sg: &SecurityGroup) -> Row {
+pub fn sg_to_row(sg: &SecurityGroup, show_tenant: bool) -> Row {
     let desc = sg.description.as_deref().unwrap_or("-");
     let rule_count = sg.security_group_rules.len().to_string();
+    let mut cells = vec![sg.name.clone()];
+    if show_tenant {
+        cells.push(sg.tenant_id.as_deref().unwrap_or("-").to_string());
+    }
+    cells.extend([desc.to_string(), rule_count]);
     Row {
         id: sg.id.clone(),
-        cells: vec![sg.name.clone(), desc.to_string(), rule_count],
+        cells,
         style_hint: Some(RowStyleHint::Normal),
     }
 }
@@ -192,18 +207,21 @@ mod tests {
                     ethertype: "IPv4".into(),
                 },
             ],
+            tenant_id: None,
         }
     }
 
     #[test]
     fn test_sg_columns_count() {
-        assert_eq!(sg_columns().len(), 3);
+        assert_eq!(sg_columns(false).len(), 3);
+        assert_eq!(sg_columns(true).len(), 4);
+        assert_eq!(sg_columns(true)[1].name, "Project");
     }
 
     #[test]
     fn test_sg_to_row() {
         let sg = make_sg();
-        let row = sg_to_row(&sg);
+        let row = sg_to_row(&sg, false);
         assert_eq!(row.id, "sg-1");
         assert_eq!(row.cells[0], "web-sg");
         assert_eq!(row.cells[1], "Web security group");
@@ -280,6 +298,7 @@ mod tests {
             name: "empty-sg".into(),
             description: None,
             security_group_rules: vec![],
+            tenant_id: None,
         };
         let data = sg_detail_data(&sg);
         assert_eq!(data.sections.len(), 1); // Basic Info only

@@ -100,7 +100,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (app, initial_actions) = App::from_registry(config, action_tx.clone(), module_registry, rbac.clone());
 
         // Spawn background worker
-        tokio::spawn(run_worker(registry, rbac, action_rx, event_tx));
+        tokio::spawn(run_worker(registry, rbac, app.all_tenants.clone(), action_rx, event_tx));
 
         // Trigger initial data load
         for action in initial_actions {

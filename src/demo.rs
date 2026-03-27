@@ -176,6 +176,7 @@ fn demo_networks() -> Vec<Network> {
             port_security_enabled: Some(true), subnets: vec!["sub-1".into()],
             provider_network_type: Some("vxlan".into()), provider_physical_network: None,
             provider_segmentation_id: Some(100),
+            tenant_id: None,
         },
         Network {
             id: "net-db-1".into(), name: "db-net".into(), status: "ACTIVE".into(),
@@ -184,6 +185,7 @@ fn demo_networks() -> Vec<Network> {
             port_security_enabled: Some(true), subnets: vec!["sub-2".into()],
             provider_network_type: Some("vxlan".into()), provider_physical_network: None,
             provider_segmentation_id: Some(200),
+            tenant_id: None,
         },
         Network {
             id: "net-ext-1".into(), name: "external".into(), status: "ACTIVE".into(),
@@ -192,6 +194,7 @@ fn demo_networks() -> Vec<Network> {
             port_security_enabled: Some(false), subnets: vec!["sub-ext-1".into()],
             provider_network_type: Some("flat".into()), provider_physical_network: Some("physnet1".into()),
             provider_segmentation_id: None,
+            tenant_id: None,
         },
     ]
 }
@@ -205,6 +208,7 @@ fn demo_security_groups() -> Vec<SecurityGroup> {
                 SecurityGroupRule { id: "r1".into(), direction: "egress".into(), protocol: None, port_range_min: None, port_range_max: None, remote_ip_prefix: None, remote_group_id: None, ethertype: "IPv4".into() },
                 SecurityGroupRule { id: "r2".into(), direction: "egress".into(), protocol: None, port_range_min: None, port_range_max: None, remote_ip_prefix: None, remote_group_id: None, ethertype: "IPv6".into() },
             ],
+            tenant_id: None,
         },
         SecurityGroup {
             id: "sg-web".into(), name: "web-sg".into(),
@@ -214,6 +218,7 @@ fn demo_security_groups() -> Vec<SecurityGroup> {
                 SecurityGroupRule { id: "r4".into(), direction: "ingress".into(), protocol: Some("tcp".into()), port_range_min: Some(443), port_range_max: Some(443), remote_ip_prefix: Some("0.0.0.0/0".into()), remote_group_id: None, ethertype: "IPv4".into() },
                 SecurityGroupRule { id: "r5".into(), direction: "ingress".into(), protocol: Some("tcp".into()), port_range_min: Some(22), port_range_max: Some(22), remote_ip_prefix: Some("10.0.0.0/8".into()), remote_group_id: None, ethertype: "IPv4".into() },
             ],
+            tenant_id: None,
         },
         SecurityGroup {
             id: "sg-db".into(), name: "db-sg".into(),
@@ -222,39 +227,40 @@ fn demo_security_groups() -> Vec<SecurityGroup> {
                 SecurityGroupRule { id: "r6".into(), direction: "ingress".into(), protocol: Some("tcp".into()), port_range_min: Some(3306), port_range_max: Some(3306), remote_ip_prefix: Some("10.0.1.0/24".into()), remote_group_id: None, ethertype: "IPv4".into() },
                 SecurityGroupRule { id: "r7".into(), direction: "ingress".into(), protocol: Some("tcp".into()), port_range_min: Some(5432), port_range_max: Some(5432), remote_ip_prefix: Some("10.0.1.0/24".into()), remote_group_id: None, ethertype: "IPv4".into() },
             ],
+            tenant_id: None,
         },
     ]
 }
 
 fn demo_floating_ips() -> Vec<FloatingIp> {
     vec![
-        FloatingIp { id: "fip-1".into(), floating_ip_address: "203.0.113.10".into(), status: "ACTIVE".into(), port_id: Some("port-1".into()), floating_network_id: "net-ext-1".into(), fixed_ip_address: Some("10.0.1.10".into()), router_id: Some("router-1".into()) },
-        FloatingIp { id: "fip-2".into(), floating_ip_address: "203.0.113.11".into(), status: "DOWN".into(), port_id: None, floating_network_id: "net-ext-1".into(), fixed_ip_address: None, router_id: None },
-        FloatingIp { id: "fip-3".into(), floating_ip_address: "203.0.113.12".into(), status: "ACTIVE".into(), port_id: Some("port-3".into()), floating_network_id: "net-ext-1".into(), fixed_ip_address: Some("10.0.2.10".into()), router_id: Some("router-1".into()) },
+        FloatingIp { id: "fip-1".into(), floating_ip_address: "203.0.113.10".into(), status: "ACTIVE".into(), port_id: Some("port-1".into()), floating_network_id: "net-ext-1".into(), fixed_ip_address: Some("10.0.1.10".into()), router_id: Some("router-1".into()), tenant_id: None },
+        FloatingIp { id: "fip-2".into(), floating_ip_address: "203.0.113.11".into(), status: "DOWN".into(), port_id: None, floating_network_id: "net-ext-1".into(), fixed_ip_address: None, router_id: None, tenant_id: None },
+        FloatingIp { id: "fip-3".into(), floating_ip_address: "203.0.113.12".into(), status: "ACTIVE".into(), port_id: Some("port-3".into()), floating_network_id: "net-ext-1".into(), fixed_ip_address: Some("10.0.2.10".into()), router_id: Some("router-1".into()), tenant_id: None },
     ]
 }
 
 fn demo_volumes() -> Vec<Volume> {
     vec![
-        Volume { id: "vol-boot-1".into(), name: Some("web-prod-01-boot".into()), description: Some("Boot volume".into()), status: "in-use".into(), size: 80, volume_type: Some("ssd".into()), encrypted: false, bootable: "true".into(), attachments: vec![VolumeAttachment { server_id: "a1b2c3d4-1111-2222-3333-444455556666".into(), device: "/dev/vda".into(), id: "att-1".into() }], availability_zone: Some("az1".into()), created_at: Some("2026-01-15T09:30:00Z".into()) },
-        Volume { id: "vol-data-1".into(), name: Some("db-data".into()), description: Some("Database data volume".into()), status: "in-use".into(), size: 500, volume_type: Some("ssd".into()), encrypted: true, bootable: "false".into(), attachments: vec![VolumeAttachment { server_id: "c3d4e5f6-3333-4444-5555-666677778888".into(), device: "/dev/vdb".into(), id: "att-2".into() }], availability_zone: Some("az1".into()), created_at: Some("2026-02-01T10:05:00Z".into()) },
-        Volume { id: "vol-backup-1".into(), name: Some("backup-storage".into()), description: None, status: "available".into(), size: 1000, volume_type: Some("hdd".into()), encrypted: false, bootable: "false".into(), attachments: vec![], availability_zone: Some("az2".into()), created_at: Some("2026-03-01T00:00:00Z".into()) },
+        Volume { id: "vol-boot-1".into(), name: Some("web-prod-01-boot".into()), description: Some("Boot volume".into()), status: "in-use".into(), size: 80, volume_type: Some("ssd".into()), encrypted: false, bootable: "true".into(), attachments: vec![VolumeAttachment { server_id: "a1b2c3d4-1111-2222-3333-444455556666".into(), device: "/dev/vda".into(), id: "att-1".into() }], availability_zone: Some("az1".into()), created_at: Some("2026-01-15T09:30:00Z".into()), tenant_id: None },
+        Volume { id: "vol-data-1".into(), name: Some("db-data".into()), description: Some("Database data volume".into()), status: "in-use".into(), size: 500, volume_type: Some("ssd".into()), encrypted: true, bootable: "false".into(), attachments: vec![VolumeAttachment { server_id: "c3d4e5f6-3333-4444-5555-666677778888".into(), device: "/dev/vdb".into(), id: "att-2".into() }], availability_zone: Some("az1".into()), created_at: Some("2026-02-01T10:05:00Z".into()), tenant_id: None },
+        Volume { id: "vol-backup-1".into(), name: Some("backup-storage".into()), description: None, status: "available".into(), size: 1000, volume_type: Some("hdd".into()), encrypted: false, bootable: "false".into(), attachments: vec![], availability_zone: Some("az2".into()), created_at: Some("2026-03-01T00:00:00Z".into()), tenant_id: None },
     ]
 }
 
 fn demo_snapshots() -> Vec<VolumeSnapshot> {
     vec![
-        VolumeSnapshot { id: "snap-daily-1".into(), name: Some("db-data-daily-0324".into()), status: "available".into(), size: 500, volume_id: "vol-data-1".into(), created_at: Some("2026-03-24T02:00:00Z".into()) },
-        VolumeSnapshot { id: "snap-daily-2".into(), name: Some("db-data-daily-0323".into()), status: "available".into(), size: 500, volume_id: "vol-data-1".into(), created_at: Some("2026-03-23T02:00:00Z".into()) },
+        VolumeSnapshot { id: "snap-daily-1".into(), name: Some("db-data-daily-0324".into()), status: "available".into(), size: 500, volume_id: "vol-data-1".into(), created_at: Some("2026-03-24T02:00:00Z".into()), tenant_id: None },
+        VolumeSnapshot { id: "snap-daily-2".into(), name: Some("db-data-daily-0323".into()), status: "available".into(), size: 500, volume_id: "vol-data-1".into(), created_at: Some("2026-03-23T02:00:00Z".into()), tenant_id: None },
     ]
 }
 
 fn demo_images() -> Vec<Image> {
     vec![
-        Image { id: "img-1".into(), name: "Ubuntu 22.04 LTS".into(), status: "active".into(), disk_format: Some("qcow2".into()), container_format: Some("bare".into()), size: Some(2_415_919_104), visibility: "public".into(), min_disk: 10, min_ram: 512, checksum: Some("d4e5f6a7b8c9".into()), created_at: Some("2026-01-01T00:00:00Z".into()) },
-        Image { id: "img-2".into(), name: "CentOS 9 Stream".into(), status: "active".into(), disk_format: Some("qcow2".into()), container_format: Some("bare".into()), size: Some(1_073_741_824), visibility: "public".into(), min_disk: 10, min_ram: 512, checksum: Some("a1b2c3d4e5f6".into()), created_at: Some("2026-01-10T00:00:00Z".into()) },
-        Image { id: "img-3".into(), name: "Windows Server 2022".into(), status: "active".into(), disk_format: Some("qcow2".into()), container_format: Some("bare".into()), size: Some(16_106_127_360), visibility: "private".into(), min_disk: 40, min_ram: 4096, checksum: Some("f6e5d4c3b2a1".into()), created_at: Some("2026-02-15T00:00:00Z".into()) },
-        Image { id: "img-4".into(), name: "Rocky Linux 9".into(), status: "deactivated".into(), disk_format: Some("qcow2".into()), container_format: Some("bare".into()), size: Some(1_610_612_736), visibility: "public".into(), min_disk: 10, min_ram: 512, checksum: None, created_at: Some("2025-12-01T00:00:00Z".into()) },
+        Image { id: "img-1".into(), name: "Ubuntu 22.04 LTS".into(), status: "active".into(), disk_format: Some("qcow2".into()), container_format: Some("bare".into()), size: Some(2_415_919_104), visibility: "public".into(), min_disk: 10, min_ram: 512, checksum: Some("d4e5f6a7b8c9".into()), created_at: Some("2026-01-01T00:00:00Z".into()), owner: None },
+        Image { id: "img-2".into(), name: "CentOS 9 Stream".into(), status: "active".into(), disk_format: Some("qcow2".into()), container_format: Some("bare".into()), size: Some(1_073_741_824), visibility: "public".into(), min_disk: 10, min_ram: 512, checksum: Some("a1b2c3d4e5f6".into()), created_at: Some("2026-01-10T00:00:00Z".into()), owner: None },
+        Image { id: "img-3".into(), name: "Windows Server 2022".into(), status: "active".into(), disk_format: Some("qcow2".into()), container_format: Some("bare".into()), size: Some(16_106_127_360), visibility: "private".into(), min_disk: 40, min_ram: 4096, checksum: Some("f6e5d4c3b2a1".into()), created_at: Some("2026-02-15T00:00:00Z".into()), owner: None },
+        Image { id: "img-4".into(), name: "Rocky Linux 9".into(), status: "deactivated".into(), disk_format: Some("qcow2".into()), container_format: Some("bare".into()), size: Some(1_610_612_736), visibility: "public".into(), min_disk: 10, min_ram: 512, checksum: None, created_at: Some("2025-12-01T00:00:00Z".into()), owner: None },
     ]
 }
 
