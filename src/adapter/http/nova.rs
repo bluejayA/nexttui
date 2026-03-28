@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{Link, append_pagination_parts, build_pagination_query, encode_param, extract_next_marker, paginated_list};
 use crate::adapter::http::base::BaseHttpClient;
-use crate::models::nova::{Aggregate, ComputeService, Flavor, Hypervisor, Server};
+use crate::models::nova::{Aggregate, ComputeService, Flavor, Hypervisor, Server, ServerMigration};
 use crate::port::auth::AuthProvider;
 use crate::port::error::{ApiError, ApiResult};
 use crate::port::nova::NovaPort;
@@ -63,6 +63,16 @@ struct NovaFlavorWrapper {
 struct NovaInstanceActionsResponse {
     #[serde(rename = "instanceActions")]
     instance_actions: Vec<ServerEvent>,
+}
+
+#[derive(Deserialize)]
+struct NovaMigrationsResponse {
+    migrations: Vec<ServerMigration>,
+}
+
+#[derive(Deserialize)]
+struct NovaMigrationWrapper {
+    migration: ServerMigration,
 }
 
 #[derive(Serialize)]
@@ -301,34 +311,91 @@ impl NovaPort for NovaHttpAdapter {
         Ok(resp.instance_actions)
     }
 
-    // -- Migration (stub — Unit 13) --
+    // -- Migration --
 
     async fn live_migrate_server(
         &self,
-        _server_id: &str,
-        _params: &LiveMigrateParams,
+        server_id: &str,
+        params: &LiveMigrateParams,
     ) -> ApiResult<()> {
-        Err(ApiError::BadRequest("not yet implemented".into()))
+        let body = serde_json::json!({
+            "os-migrateLive": {
+                "host": params.host,
+                "block_migration": "auto"
+            }
+        });
+        let req = self
+            .base
+            .post(&format!("/servers/{}/action", encode_param(server_id)))
+            .await?
+            .json(&body);
+        self.base.send_no_content(req).await
     }
 
-    async fn cold_migrate_server(&self, _server_id: &str) -> ApiResult<()> {
-        Err(ApiError::BadRequest("not yet implemented".into()))
+    async fn cold_migrate_server(&self, server_id: &str) -> ApiResult<()> {
+        let body = serde_json::json!({ "migrate": null });
+        let req = self
+            .base
+            .post(&format!("/servers/{}/action", encode_param(server_id)))
+            .await?
+            .json(&body);
+        self.base.send_no_content(req).await
     }
 
-    async fn confirm_migration(&self, _server_id: &str) -> ApiResult<()> {
-        Err(ApiError::BadRequest("not yet implemented".into()))
+    async fn confirm_migration(&self, server_id: &str) -> ApiResult<()> {
+        let body = serde_json::json!({ "confirmResize": null });
+        let req = self
+            .base
+            .post(&format!("/servers/{}/action", encode_param(server_id)))
+            .await?
+            .json(&body);
+        self.base.send_no_content(req).await
     }
 
-    async fn revert_migration(&self, _server_id: &str) -> ApiResult<()> {
-        Err(ApiError::BadRequest("not yet implemented".into()))
+    async fn revert_migration(&self, server_id: &str) -> ApiResult<()> {
+        let body = serde_json::json!({ "revertResize": null });
+        let req = self
+            .base
+            .post(&format!("/servers/{}/action", encode_param(server_id)))
+            .await?
+            .json(&body);
+        self.base.send_no_content(req).await
     }
 
     async fn evacuate_server(
         &self,
-        _server_id: &str,
-        _params: &EvacuateParams,
+        server_id: &str,
+        params: &EvacuateParams,
     ) -> ApiResult<()> {
-        Err(ApiError::BadRequest("not yet implemented".into()))
+        let body = serde_json::json!({
+            "evacuate": {
+                "host": params.host
+            }
+        });
+        let req = self
+            .base
+            .post(&format!("/servers/{}/action", encode_param(server_id)))
+            .await?
+            .json(&body);
+        self.base.send_no_content(req).await
+    }
+
+    async fn list_server_migrations(&self, server_id: &str) -> ApiResult<Vec<ServerMigration>> {
+        let req = self
+            .base
+            .get(&format!("/servers/{}/migrations", encode_param(server_id)))
+            .await?;
+        let resp: NovaMigrationsResponse = self.base.send_json(req).await?;
+        Ok(resp.migrations)
+    }
+
+    async fn get_server_migration(&self, server_id: &str, migration_id: i64) -> ApiResult<ServerMigration> {
+        let req = self
+            .base
+            .get(&format!("/servers/{}/migrations/{}", encode_param(server_id), migration_id))
+            .await?;
+        let resp: NovaMigrationWrapper = self.base.send_json(req).await?;
+        Ok(resp.migration)
     }
 
     // -- Flavors --
@@ -653,5 +720,124 @@ mod tests {
         assert_eq!(ServerState::Active.as_str(), "active");
         assert_eq!(ServerState::Error.as_str(), "error");
         assert_eq!(ServerState::Stopped.as_str(), "stopped");
+    }
+
+    #[test]
+    fn test_live_migrate_body_with_host() {
+        let params = LiveMigrateParams {
+            host: Some("compute-02".into()),
+            block_migration: true,
+        };
+        let body = serde_json::json!({
+            "os-migrateLive": {
+                "host": params.host,
+                "block_migration": "auto"
+            }
+        });
+        let obj = body.as_object().unwrap();
+        let inner = obj["os-migrateLive"].as_object().unwrap();
+        assert_eq!(inner["host"], "compute-02");
+        assert_eq!(inner["block_migration"], "auto");
+    }
+
+    #[test]
+    fn test_live_migrate_body_auto_host() {
+        let params = LiveMigrateParams {
+            host: None,
+            block_migration: false,
+        };
+        let body = serde_json::json!({
+            "os-migrateLive": {
+                "host": params.host,
+                "block_migration": "auto"
+            }
+        });
+        let inner = &body["os-migrateLive"];
+        assert!(inner["host"].is_null());
+        assert_eq!(inner["block_migration"], "auto");
+    }
+
+    #[test]
+    fn test_cold_migrate_body() {
+        let body = serde_json::json!({ "migrate": null });
+        assert!(body["migrate"].is_null());
+        assert!(body.as_object().unwrap().contains_key("migrate"));
+    }
+
+    #[test]
+    fn test_confirm_revert_body() {
+        let confirm = serde_json::json!({ "confirmResize": null });
+        let revert = serde_json::json!({ "revertResize": null });
+        assert!(confirm.as_object().unwrap().contains_key("confirmResize"));
+        assert!(revert.as_object().unwrap().contains_key("revertResize"));
+    }
+
+    #[test]
+    fn test_evacuate_body() {
+        let with_host = serde_json::json!({
+            "evacuate": { "host": "compute-03" }
+        });
+        assert_eq!(with_host["evacuate"]["host"], "compute-03");
+
+        let auto_host = serde_json::json!({
+            "evacuate": { "host": serde_json::Value::Null }
+        });
+        assert!(auto_host["evacuate"]["host"].is_null());
+    }
+
+    #[test]
+    fn test_migrations_response_deserialize() {
+        let json = r#"{
+            "migrations": [
+                {
+                    "id": 1,
+                    "status": "running",
+                    "source_compute": "compute-01",
+                    "dest_compute": "compute-02",
+                    "memory_total_bytes": 1073741824,
+                    "memory_processed_bytes": 536870912,
+                    "memory_remaining_bytes": 536870912,
+                    "disk_total_bytes": 10737418240,
+                    "disk_processed_bytes": 5368709120,
+                    "disk_remaining_bytes": 5368709120,
+                    "created_at": "2026-03-28T10:00:00Z",
+                    "updated_at": "2026-03-28T10:01:00Z"
+                },
+                {
+                    "id": 2,
+                    "status": "completed",
+                    "source_compute": "compute-01",
+                    "dest_compute": "compute-03"
+                }
+            ]
+        }"#;
+        let resp: NovaMigrationsResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.migrations.len(), 2);
+        assert_eq!(resp.migrations[0].status, "running");
+        assert_eq!(resp.migrations[0].memory_total_bytes, Some(1_073_741_824));
+        assert_eq!(resp.migrations[1].status, "completed");
+        assert!(resp.migrations[1].memory_total_bytes.is_none());
+    }
+
+    #[test]
+    fn test_migration_wrapper_deserialize() {
+        let json = r#"{
+            "migration": {
+                "id": 42,
+                "status": "post-migrating",
+                "source_compute": "node-a",
+                "dest_compute": "node-b",
+                "memory_total_bytes": 2147483648,
+                "memory_processed_bytes": 2147483648,
+                "memory_remaining_bytes": 0,
+                "disk_total_bytes": 0,
+                "disk_processed_bytes": 0,
+                "disk_remaining_bytes": 0
+            }
+        }"#;
+        let resp: NovaMigrationWrapper = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.migration.id, 42);
+        assert_eq!(resp.migration.status, "post-migrating");
+        assert_eq!(resp.migration.memory_remaining_bytes, Some(0));
     }
 }

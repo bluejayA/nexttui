@@ -231,7 +231,7 @@ pub fn status_display(status: &str) -> (&'static str, RowStyleHint) {
     match status.to_uppercase().as_str() {
         "ACTIVE" => ("●", RowStyleHint::Active),
         "ERROR" | "DELETED" => ("✗", RowStyleHint::Error),
-        "BUILD" | "RESIZE" | "REBOOT" | "REBUILD" | "MIGRATING" | "VERIFY_RESIZE" => {
+        "BUILD" | "RESIZE" | "REBOOT" | "REBUILD" | "MIGRATING" | "VERIFY_RESIZE" | "REVERT_RESIZE" => {
             ("◐", RowStyleHint::Warning)
         }
         "SHUTOFF" | "SUSPENDED" | "PAUSED" | "SHELVED" | "SHELVED_OFFLOADED" => {
@@ -371,6 +371,15 @@ mod tests {
         assert_eq!(status_display("BUILD"), ("◐", RowStyleHint::Warning));
         assert_eq!(status_display("SHUTOFF"), ("○", RowStyleHint::Disabled));
         assert_eq!(status_display("UNKNOWN"), ("?", RowStyleHint::Normal));
+        assert_eq!(
+            status_display("REVERT_RESIZE"),
+            ("◐", RowStyleHint::Warning)
+        );
+        assert_eq!(status_display("MIGRATING"), ("◐", RowStyleHint::Warning));
+        assert_eq!(
+            status_display("VERIFY_RESIZE"),
+            ("◐", RowStyleHint::Warning)
+        );
     }
 
     #[test]
