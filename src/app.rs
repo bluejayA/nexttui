@@ -289,9 +289,21 @@ impl App {
             self.rbac.update_roles(roles.clone(), None);
             self.broadcast_admin();
         }
+        // Migration complete → refresh server list to reflect status change
+        let refresh_servers = matches!(
+            event,
+            AppEvent::ServerLiveMigrated { .. }
+            | AppEvent::ServerColdMigrated { .. }
+            | AppEvent::MigrationConfirmed { .. }
+            | AppEvent::MigrationReverted { .. }
+            | AppEvent::ServerEvacuated { .. }
+        );
         self.generate_toast(&event);
         for component in self.components.values_mut() {
             component.handle_event(&event);
+        }
+        if refresh_servers {
+            let _ = self.action_tx.send(Action::FetchServers);
         }
     }
 
@@ -323,6 +335,11 @@ impl App {
             Action::DeleteProject { .. } => Some("Deleting project...".into()),
             Action::CreateUser(_) => Some("Creating user...".into()),
             Action::DeleteUser { .. } => Some("Deleting user...".into()),
+            Action::LiveMigrateServer { .. } => Some("Live migrating server...".into()),
+            Action::ColdMigrateServer { .. } => Some("Cold migrating server...".into()),
+            Action::ConfirmMigration { .. } => Some("Confirming migration...".into()),
+            Action::RevertMigration { .. } => Some("Reverting migration...".into()),
+            Action::EvacuateServer { .. } => Some("Evacuating server...".into()),
             _ => None,
         }
     }
@@ -370,6 +387,12 @@ impl App {
             AppEvent::ProjectDeleted { id } => (format!("Project {id} deleted"), ToastLevel::Success),
             AppEvent::UserCreated(u) => (format!("User '{}' created", Self::truncate_name(&u.name, MAX_NAME)), ToastLevel::Success),
             AppEvent::UserDeleted { id } => (format!("User {id} deleted"), ToastLevel::Success),
+            // Migration
+            AppEvent::ServerLiveMigrated { id } => (format!("Server {id} live migrated"), ToastLevel::Success),
+            AppEvent::ServerColdMigrated { id } => (format!("Server {id} cold migrated — confirm(Y) or revert(N)"), ToastLevel::Success),
+            AppEvent::MigrationConfirmed { id } => (format!("Migration confirmed for {id}"), ToastLevel::Success),
+            AppEvent::MigrationReverted { id } => (format!("Migration reverted for {id}"), ToastLevel::Success),
+            AppEvent::ServerEvacuated { id } => (format!("Server {id} evacuated"), ToastLevel::Success),
             // Errors
             AppEvent::ApiError { operation, message } => (format!("{operation} failed: {message}"), ToastLevel::Error),
             AppEvent::AuthFailed(msg) => (format!("Auth failed: {msg}"), ToastLevel::Error),
@@ -681,6 +704,40 @@ mod tests {
         let roles = vec![crate::port::types::TokenRole { id: "r1".into(), name: "admin".into() }];
         app.handle_event(AppEvent::TokenRefreshed(roles));
         assert!(app.rbac.is_admin());
+    }
+
+    #[test]
+    fn test_dispatch_migration_action_adds_progress_toast() {
+        let mut app = make_app();
+        app.dispatch_action(Action::LiveMigrateServer {
+            id: "s1".into(), host: None, block_migration: true,
+        });
+        let toasts = app.background_tracker().active_toasts();
+        assert!(toasts.iter().any(|t| t.message.contains("Live migrating")));
+    }
+
+    #[test]
+    fn test_handle_cold_migrated_event_toast_and_refresh() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let config = test_config();
+        let mut app = App::new(config, tx);
+        app.handle_event(AppEvent::ServerColdMigrated { id: "s1".into() });
+        let toasts = app.background_tracker().active_toasts();
+        assert!(toasts.iter().any(|t| t.message.contains("confirm(Y) or revert(N)")));
+        // Should have sent FetchServers for refresh
+        let mut found = false;
+        while let Ok(action) = rx.try_recv() {
+            if matches!(action, Action::FetchServers) { found = true; }
+        }
+        assert!(found, "expected FetchServers after migration event");
+    }
+
+    #[test]
+    fn test_handle_evacuated_event_adds_toast() {
+        let mut app = make_app();
+        app.handle_event(AppEvent::ServerEvacuated { id: "s1".into() });
+        let toasts = app.background_tracker().active_toasts();
+        assert!(toasts.iter().any(|t| t.message.contains("evacuated")));
     }
 
     #[test]

@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 use crate::action::Action;
 use crate::component::Component;
 use crate::event::AppEvent;
-use crate::models::nova::Server;
+use crate::models::nova::{Server, ServerMigration};
 use crate::module::{ConfirmHandler, PendingAction, ViewState};
 use crate::port::types::{NetworkAttachment, ServerCreateParams};
 use crate::ui::confirm::ConfirmDialog;
@@ -26,6 +26,7 @@ pub struct ServerModule {
     resource_list: ResourceList,
     form: Option<FormWidget>,
     all_tenants: bool,
+    migration_progress: Option<ServerMigration>,
     // Cached dropdown options — populated by handle_event, applied to form on open/load
     cached_flavor_opts: Vec<SelectOption>,
     cached_image_opts: Vec<SelectOption>,
@@ -45,6 +46,7 @@ impl ServerModule {
             resource_list: ResourceList::new(server_columns(false)),
             form: None,
             all_tenants: false,
+            migration_progress: None,
             cached_flavor_opts: Vec::new(),
             cached_image_opts: Vec::new(),
             cached_network_opts: Vec::new(),
@@ -67,6 +69,10 @@ impl ServerModule {
 
     pub fn error_message(&self) -> Option<&str> {
         self.error_message.as_deref()
+    }
+
+    pub fn migration_progress(&self) -> Option<&ServerMigration> {
+        self.migration_progress.as_ref()
     }
 
     fn selected_server(&self) -> Option<&Server> {
@@ -310,6 +316,15 @@ impl Component for ServerModule {
             | AppEvent::ServerStopped { .. }
             | AppEvent::ServerCreated(_) => {
                 let _ = self.action_tx.send(Action::FetchServers);
+            }
+            AppEvent::MigrationProgressLoaded { migration, .. } => {
+                self.migration_progress = Some(migration.clone());
+            }
+            AppEvent::ServerLiveMigrated { .. }
+            | AppEvent::MigrationConfirmed { .. }
+            | AppEvent::MigrationReverted { .. }
+            | AppEvent::ServerEvacuated { .. } => {
+                self.migration_progress = None;
             }
             AppEvent::FlavorsLoaded(flavors) => {
                 let opts: Vec<SelectOption> = flavors
@@ -681,6 +696,82 @@ mod tests {
         } else {
             panic!("Expected Dropdown for Flavor field");
         }
+    }
+
+    #[test]
+    fn test_migration_progress_stored_on_event() {
+        let (mut module, _rx) = setup();
+        assert!(module.migration_progress().is_none());
+
+        module.handle_event(&AppEvent::MigrationProgressLoaded {
+            server_id: "s1".into(),
+            migration: ServerMigration {
+                id: 1,
+                status: "running".into(),
+                source_compute: "compute-01".into(),
+                dest_compute: "compute-02".into(),
+                memory_total_bytes: Some(1024),
+                memory_processed_bytes: Some(512),
+                memory_remaining_bytes: Some(512),
+                disk_total_bytes: None,
+                disk_processed_bytes: None,
+                disk_remaining_bytes: None,
+                created_at: None,
+                updated_at: None,
+            },
+        });
+        let progress = module.migration_progress().unwrap();
+        assert_eq!(progress.status, "running");
+        assert_eq!(progress.source_compute, "compute-01");
+    }
+
+    #[test]
+    fn test_migration_progress_cleared_on_completion() {
+        let (mut module, _rx) = setup();
+        // Set progress first
+        module.handle_event(&AppEvent::MigrationProgressLoaded {
+            server_id: "s1".into(),
+            migration: ServerMigration {
+                id: 1,
+                status: "running".into(),
+                source_compute: "c1".into(),
+                dest_compute: "c2".into(),
+                memory_total_bytes: None,
+                memory_processed_bytes: None,
+                memory_remaining_bytes: None,
+                disk_total_bytes: None,
+                disk_processed_bytes: None,
+                disk_remaining_bytes: None,
+                created_at: None,
+                updated_at: None,
+            },
+        });
+        assert!(module.migration_progress().is_some());
+
+        // Live migrated → clear
+        module.handle_event(&AppEvent::ServerLiveMigrated { id: "s1".into() });
+        assert!(module.migration_progress().is_none());
+    }
+
+    #[test]
+    fn test_migration_progress_cleared_on_confirm() {
+        let (mut module, _rx) = setup();
+        module.migration_progress = Some(ServerMigration {
+            id: 1,
+            status: "running".into(),
+            source_compute: "c1".into(),
+            dest_compute: "c2".into(),
+            memory_total_bytes: None,
+            memory_processed_bytes: None,
+            memory_remaining_bytes: None,
+            disk_total_bytes: None,
+            disk_processed_bytes: None,
+            disk_remaining_bytes: None,
+            created_at: None,
+            updated_at: None,
+        });
+        module.handle_event(&AppEvent::MigrationConfirmed { id: "s1".into() });
+        assert!(module.migration_progress().is_none());
     }
 
     #[test]

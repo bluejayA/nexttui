@@ -39,12 +39,30 @@ pub async fn run_worker(
         let event_tx = event_tx.clone();
         let all_tenants = all_tenants.clone();
 
+        // Check if this action should trigger migration polling after completion
+        let should_poll_migration = matches!(&action, Action::LiveMigrateServer { .. });
+        let poll_server_id = if should_poll_migration {
+            match &action {
+                Action::LiveMigrateServer { id, .. } => Some(id.clone()),
+                _ => None,
+            }
+        } else {
+            None
+        };
+
         let span = tracing::info_span!("worker_task", action = action_name(&action));
         tokio::spawn(
             async move {
                 let event = handle_action(&registry, &all_tenants, action).await;
+                let success = event.as_ref().is_some_and(|ev| !matches!(ev, AppEvent::ApiError { .. }));
                 if let Some(ev) = event {
                     let _ = event_tx.send(ev);
+                }
+                // Start polling after successful live migration
+                if success {
+                    if let Some(server_id) = poll_server_id {
+                        poll_migration_progress(&registry, &event_tx, &server_id).await;
+                    }
                 }
             }
             .instrument(span),
@@ -89,6 +107,14 @@ fn action_to_kind(action: &Action) -> Option<ActionKind> {
         Action::DeleteVolume { force: true, .. } => Some(ActionKind::ForceDelete),
         Action::DeleteVolume { force: false, .. } => Some(ActionKind::Delete),
 
+        // Migration / Evacuate (admin-only)
+        Action::LiveMigrateServer { .. }
+        | Action::ColdMigrateServer { .. }
+        | Action::ConfirmMigration { .. }
+        | Action::RevertMigration { .. } => Some(ActionKind::Migrate),
+
+        Action::EvacuateServer { .. } => Some(ActionKind::Evacuate),
+
         // Server lifecycle — treated as CUD for RBAC purposes
         Action::RebootServer { .. }
         | Action::StartServer { .. }
@@ -131,6 +157,12 @@ fn action_name(action: &Action) -> &str {
         Action::DeleteProject { .. } => "DeleteProject",
         Action::CreateUser(_) => "CreateUser",
         Action::DeleteUser { .. } => "DeleteUser",
+        Action::LiveMigrateServer { .. } => "LiveMigrateServer",
+        Action::ColdMigrateServer { .. } => "ColdMigrateServer",
+        Action::ConfirmMigration { .. } => "ConfirmMigration",
+        Action::RevertMigration { .. } => "RevertMigration",
+        Action::EvacuateServer { .. } => "EvacuateServer",
+        Action::FetchMigrationProgress { .. } => "FetchMigrationProgress",
         _ => "Unknown",
     }
 }
@@ -199,6 +231,52 @@ async fn handle_action(registry: &AdapterRegistry, all_tenants: &AtomicBool, act
                     image_id,
                 }),
                 Err(e) => Some(api_error("CreateServerSnapshot", e)),
+            }
+        }
+
+        // -- Nova: Migration / Evacuate ------------------------------------
+        Action::LiveMigrateServer { id, host, block_migration } => {
+            let params = LiveMigrateParams { host, block_migration };
+            match registry.nova.live_migrate_server(&id, &params).await {
+                Ok(()) => Some(AppEvent::ServerLiveMigrated { id }),
+                Err(e) => Some(api_error("LiveMigrateServer", e)),
+            }
+        }
+        Action::ColdMigrateServer { id } => {
+            match registry.nova.cold_migrate_server(&id).await {
+                Ok(()) => Some(AppEvent::ServerColdMigrated { id }),
+                Err(e) => Some(api_error("ColdMigrateServer", e)),
+            }
+        }
+        Action::ConfirmMigration { id } => {
+            match registry.nova.confirm_migration(&id).await {
+                Ok(()) => Some(AppEvent::MigrationConfirmed { id }),
+                Err(e) => Some(api_error("ConfirmMigration", e)),
+            }
+        }
+        Action::RevertMigration { id } => {
+            match registry.nova.revert_migration(&id).await {
+                Ok(()) => Some(AppEvent::MigrationReverted { id }),
+                Err(e) => Some(api_error("RevertMigration", e)),
+            }
+        }
+        Action::EvacuateServer { id, host } => {
+            let params = EvacuateParams { host };
+            match registry.nova.evacuate_server(&id, &params).await {
+                Ok(()) => Some(AppEvent::ServerEvacuated { id }),
+                Err(e) => Some(api_error("EvacuateServer", e)),
+            }
+        }
+        Action::FetchMigrationProgress { server_id } => {
+            match registry.nova.list_server_migrations(&server_id).await {
+                Ok(migrations) => {
+                    if let Some(migration) = migrations.into_iter().last() {
+                        Some(AppEvent::MigrationProgressLoaded { server_id, migration })
+                    } else {
+                        None
+                    }
+                }
+                Err(e) => Some(api_error("FetchMigrationProgress", e)),
             }
         }
 
@@ -503,6 +581,45 @@ async fn handle_action(registry: &AdapterRegistry, all_tenants: &AtomicBool, act
     }
 }
 
+/// Poll migration progress every 2 seconds until completed or error.
+async fn poll_migration_progress(
+    registry: &AdapterRegistry,
+    event_tx: &mpsc::UnboundedSender<AppEvent>,
+    server_id: &str,
+) {
+    const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+    const MAX_POLLS: usize = 150; // 5 minutes max
+
+    for _ in 0..MAX_POLLS {
+        tokio::time::sleep(POLL_INTERVAL).await;
+        match registry.nova.list_server_migrations(server_id).await {
+            Ok(migrations) => {
+                if let Some(migration) = migrations.into_iter().last() {
+                    let done = matches!(
+                        migration.status.as_str(),
+                        "completed" | "confirmed" | "error" | "cancelled"
+                    );
+                    let _ = event_tx.send(AppEvent::MigrationProgressLoaded {
+                        server_id: server_id.to_string(),
+                        migration,
+                    });
+                    if done {
+                        return;
+                    }
+                } else {
+                    // No migrations found — migration may have completed before first poll
+                    return;
+                }
+            }
+            Err(e) => {
+                tracing::warn!(server_id, error = %e, "migration progress poll failed");
+                return;
+            }
+        }
+    }
+    tracing::warn!(server_id, "migration progress polling timed out");
+}
+
 fn api_error(operation: &str, error: crate::port::error::ApiError) -> AppEvent {
     tracing::error!(operation, error = %error, "API call failed");
     AppEvent::ApiError {
@@ -538,6 +655,34 @@ mod tests {
         );
         // Fetch actions should return None (no guard needed)
         assert_eq!(action_to_kind(&Action::FetchServers), None);
+
+        // Migration actions should map to Migrate
+        assert_eq!(
+            action_to_kind(&Action::LiveMigrateServer { id: "s1".into(), host: None, block_migration: true }),
+            Some(ActionKind::Migrate),
+        );
+        assert_eq!(
+            action_to_kind(&Action::ColdMigrateServer { id: "s1".into() }),
+            Some(ActionKind::Migrate),
+        );
+        assert_eq!(
+            action_to_kind(&Action::ConfirmMigration { id: "s1".into() }),
+            Some(ActionKind::Migrate),
+        );
+        assert_eq!(
+            action_to_kind(&Action::RevertMigration { id: "s1".into() }),
+            Some(ActionKind::Migrate),
+        );
+        // Evacuate should map to Evacuate
+        assert_eq!(
+            action_to_kind(&Action::EvacuateServer { id: "s1".into(), host: None }),
+            Some(ActionKind::Evacuate),
+        );
+        // FetchMigrationProgress is read-only
+        assert_eq!(
+            action_to_kind(&Action::FetchMigrationProgress { server_id: "s1".into() }),
+            None,
+        );
     }
 
     #[test]
