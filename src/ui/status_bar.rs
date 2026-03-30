@@ -39,25 +39,51 @@ impl StatusBar {
             info.message.clone()
         };
 
-        let right = &info.help_hint;
+        // Build styled hint: keys in Cyan+Bold, descriptions in Gray
+        let hint_spans = Self::style_hint(&info.help_hint);
+        let hint_plain_len: usize = hint_spans.iter().map(|s| s.content.len()).sum();
+
         let padding_len = area
             .width
             .saturating_sub(left.len() as u16)
-            .saturating_sub(right.len() as u16) as usize;
+            .saturating_sub(hint_plain_len as u16) as usize;
         let padding = " ".repeat(padding_len);
 
-        let line = Line::from(vec![
+        let mut spans = vec![
             Span::styled(&left, Style::default().fg(Color::White)),
             Span::raw(padding),
-            Span::styled(
-                right.as_str(),
-                Style::default()
-                    .fg(Color::DarkGray)
-                    .add_modifier(Modifier::DIM),
-            ),
-        ]);
+        ];
+        spans.extend(hint_spans);
+
+        let line = Line::from(spans);
         let widget = Paragraph::new(line);
         frame.render_widget(widget, area);
+    }
+
+    /// Parse "Key:Label Key:Label" into styled spans.
+    /// Keys → Cyan+Bold, labels → Gray, separators → dark.
+    fn style_hint(hint: &str) -> Vec<Span<'_>> {
+        let mut spans = Vec::new();
+        for (i, part) in hint.split(' ').enumerate() {
+            if i > 0 {
+                spans.push(Span::styled(" ", Style::default().fg(Color::DarkGray)));
+            }
+            if let Some((key, label)) = part.split_once(':') {
+                spans.push(Span::styled(
+                    key,
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ));
+                spans.push(Span::styled(
+                    format!(":{label}"),
+                    Style::default().fg(Color::Gray),
+                ));
+            } else {
+                spans.push(Span::styled(part, Style::default().fg(Color::Gray)));
+            }
+        }
+        spans
     }
 }
 

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::models::nova::{Address, Server, ServerMigration};
+use crate::models::nova::{Address, Flavor, Server, ServerMigration};
 use crate::ui::detail_view::{DetailData, DetailField, DetailSection};
 use crate::ui::form::FieldDef;
 use crate::ui::resource_list::{ColumnDef, ColumnWidth, Row, RowStyleHint};
@@ -104,12 +104,13 @@ pub fn server_to_row_full(server: &Server, show_tenant: bool, show_host: bool) -
 }
 
 pub fn server_detail_data(server: &Server) -> DetailData {
-    server_detail_data_full(server, None)
+    server_detail_data_full(server, None, None)
 }
 
 pub fn server_detail_data_full(
     server: &Server,
     migration_progress: Option<&ServerMigration>,
+    flavor: Option<&Flavor>,
 ) -> DetailData {
     let mut sections = vec![];
 
@@ -163,10 +164,18 @@ pub fn server_detail_data_full(
         style: None,
     });
     if let Some(ref host) = server.host {
+        let (host_value, host_style) = if let Some(mig) = migration_progress {
+            (
+                format!("{} → {}", mig.source_compute, mig.dest_compute),
+                Some(RowStyleHint::Warning),
+            )
+        } else {
+            (host.clone(), None)
+        };
         basic_fields.push(DetailField::KeyValue {
             key: "Host".into(),
-            value: host.clone(),
-            style: None,
+            value: host_value,
+            style: host_style,
         });
     }
     sections.push(DetailSection {
@@ -174,43 +183,41 @@ pub fn server_detail_data_full(
         fields: basic_fields,
     });
 
-    // Hardware
-    let flavor_name = server
-        .flavor
-        .original_name
-        .as_deref()
-        .unwrap_or(&server.flavor.id);
+    // Hardware — prefer cached Flavor data over server.flavor (which may lack details in older API versions)
+    let (flavor_name, vcpus, ram, disk) = if let Some(f) = flavor {
+        (
+            f.name.clone(),
+            f.vcpus.to_string(),
+            format!("{} MB", f.ram),
+            format!("{} GB", f.disk),
+        )
+    } else {
+        (
+            server.flavor.original_name.as_deref().unwrap_or(&server.flavor.id).to_string(),
+            server.flavor.vcpus.map(|v| v.to_string()).unwrap_or("-".into()),
+            server.flavor.ram.map(|r| format!("{} MB", r)).unwrap_or("-".into()),
+            server.flavor.disk.map(|d| format!("{} GB", d)).unwrap_or("-".into()),
+        )
+    };
     let hw_fields = vec![
         DetailField::KeyValue {
             key: "Flavor".into(),
-            value: flavor_name.to_string(),
+            value: flavor_name,
             style: None,
         },
         DetailField::KeyValue {
             key: "vCPU".into(),
-            value: server
-                .flavor
-                .vcpus
-                .map(|v| v.to_string())
-                .unwrap_or("-".into()),
+            value: vcpus,
             style: None,
         },
         DetailField::KeyValue {
             key: "RAM".into(),
-            value: server
-                .flavor
-                .ram
-                .map(|r| format!("{} MB", r))
-                .unwrap_or("-".into()),
+            value: ram,
             style: None,
         },
         DetailField::KeyValue {
             key: "Disk".into(),
-            value: server
-                .flavor
-                .disk
-                .map(|d| format!("{} GB", d))
-                .unwrap_or("-".into()),
+            value: disk,
             style: None,
         },
     ];
@@ -530,14 +537,14 @@ mod tests {
     #[test]
     fn test_detail_verify_resize_banner() {
         let server = make_server("VERIFY_RESIZE");
-        let data = server_detail_data_full(&server, None);
+        let data = server_detail_data_full(&server, None, None);
         assert_eq!(data.sections[0].name, "⚠ Migration Pending");
     }
 
     #[test]
     fn test_detail_no_banner_for_active() {
         let server = make_server("ACTIVE");
-        let data = server_detail_data_full(&server, None);
+        let data = server_detail_data_full(&server, None, None);
         assert_ne!(data.sections[0].name, "⚠ Migration Pending");
     }
 
@@ -558,7 +565,7 @@ mod tests {
             created_at: None,
             updated_at: None,
         };
-        let data = server_detail_data_full(&server, Some(&mig));
+        let data = server_detail_data_full(&server, Some(&mig), None);
         let mig_section = data.sections.iter().find(|s| s.name == "Migration Progress");
         assert!(mig_section.is_some());
         let fields = &mig_section.unwrap().fields;
@@ -569,7 +576,7 @@ mod tests {
     #[test]
     fn test_detail_no_migration_progress_without_data() {
         let server = make_server("ACTIVE");
-        let data = server_detail_data_full(&server, None);
+        let data = server_detail_data_full(&server, None, None);
         let mig_section = data.sections.iter().find(|s| s.name == "Migration Progress");
         assert!(mig_section.is_none());
     }
@@ -608,7 +615,7 @@ mod tests {
             created_at: None,
             updated_at: None,
         };
-        let data = server_detail_data_full(&server, Some(&mig));
+        let data = server_detail_data_full(&server, Some(&mig), None);
         let mig_section = data.sections.iter().find(|s| s.name == "Migration Progress").unwrap();
         // Status, Source, Dest, Memory = 4 fields (no Disk)
         assert_eq!(mig_section.fields.len(), 4);
@@ -617,7 +624,7 @@ mod tests {
     #[test]
     fn test_detail_verify_resize_banner_fields() {
         let server = make_server("VERIFY_RESIZE");
-        let data = server_detail_data_full(&server, None);
+        let data = server_detail_data_full(&server, None, None);
         let banner = &data.sections[0];
         assert_eq!(banner.name, "⚠ Migration Pending");
         if let DetailField::KeyValue { value, style, .. } = &banner.fields[0] {

@@ -598,20 +598,23 @@ async fn poll_migration_progress(
                         migration,
                     });
                     if done {
-                        return;
+                        break;
                     }
                 } else {
                     // No migrations found — migration may have completed before first poll
-                    return;
+                    break;
                 }
             }
-            Err(e) => {
-                tracing::warn!(server_id, error = %e, "migration progress poll failed");
-                return;
+            Err(_) => {
+                // API error (e.g. 404 after migration completed) — stop polling
+                break;
             }
         }
     }
-    tracing::warn!(server_id, "migration progress polling timed out");
+    // Always notify app to refresh server list when polling ends
+    let _ = event_tx.send(AppEvent::MigrationPollingStopped {
+        server_id: server_id.to_string(),
+    });
 }
 
 fn api_error(operation: &str, error: crate::port::error::ApiError) -> AppEvent {

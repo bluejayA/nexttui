@@ -62,6 +62,7 @@ pub enum AppEvent {
     MigrationReverted { id: String },
     ServerEvacuated { id: String },
     MigrationProgressLoaded { server_id: String, migration: ServerMigration },
+    MigrationPollingStopped { server_id: String },
 
     // Error
     ApiError { operation: String, message: String },

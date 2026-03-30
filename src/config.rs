@@ -215,8 +215,9 @@ impl Config {
             });
         }
 
-        // Determine active cloud
-        let active_cloud = Self::determine_active_cloud(&clouds, None)?;
+        // Determine active cloud (OS_CLOUD env var takes precedence)
+        let os_cloud = std::env::var("OS_CLOUD").ok();
+        let active_cloud = Self::determine_active_cloud(&clouds, os_cloud.as_deref())?;
 
         // Load app config (optional)
         let app = Self::load_app_config();
@@ -701,6 +702,40 @@ clouds:
         let mut config = Config::load_from(&path).unwrap();
         let result = config.switch_cloud("nonexistent");
         assert!(result.is_err());
+    }
+
+    fn make_cloud_config(name: &str) -> CloudConfig {
+        CloudConfig {
+            name: name.to_string(),
+            auth: AuthConfig {
+                auth_url: "https://keystone/v3".to_string(),
+                auth_type: None,
+                username: Some("a".to_string()),
+                password: Some("b".to_string()),
+                project_name: None,
+                project_domain_name: None,
+                user_domain_name: None,
+                application_credential_id: None,
+                application_credential_secret: None,
+            },
+            region_name: None,
+            regions: None,
+            interface: "public".to_string(),
+            identity_api_version: 3,
+            verify: true,
+            cacert: None,
+        }
+    }
+
+    #[test]
+    fn test_os_cloud_preferred_selects_cloud() {
+        let clouds = HashMap::from([
+            ("devstack".to_string(), make_cloud_config("devstack")),
+            ("production".to_string(), make_cloud_config("production")),
+        ]);
+        // Simulates OS_CLOUD=production being passed as preferred
+        let result = Config::determine_active_cloud(&clouds, Some("production")).unwrap();
+        assert_eq!(result, "production");
     }
 
     #[test]
