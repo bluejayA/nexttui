@@ -3,7 +3,7 @@ use crate::models::{
     glance::Image,
     keystone::{Project, User},
     neutron::{FloatingIp, Network, NetworkAgent, SecurityGroup},
-    nova::{Aggregate, ComputeService, Flavor, Hypervisor, Server},
+    nova::{Aggregate, ComputeService, Flavor, Hypervisor, Server, ServerMigration},
 };
 
 #[derive(Debug)]
@@ -54,6 +54,14 @@ pub enum AppEvent {
     ProjectDeleted { id: String },
     UserCreated(User),
     UserDeleted { id: String },
+
+    // Migration results
+    ServerLiveMigrated { id: String },
+    ServerColdMigrated { id: String },
+    MigrationConfirmed { id: String },
+    MigrationReverted { id: String },
+    ServerEvacuated { id: String },
+    MigrationProgressLoaded { server_id: String, migration: ServerMigration },
 
     // Error
     ApiError { operation: String, message: String },
@@ -113,6 +121,36 @@ mod tests {
             }
             _ => panic!("expected TokenRefreshed"),
         }
+    }
+
+    #[test]
+    fn test_migration_event_variants_exist() {
+        use crate::models::nova::ServerMigration;
+        let events: Vec<AppEvent> = vec![
+            AppEvent::ServerLiveMigrated { id: "s1".into() },
+            AppEvent::ServerColdMigrated { id: "s1".into() },
+            AppEvent::MigrationConfirmed { id: "s1".into() },
+            AppEvent::MigrationReverted { id: "s1".into() },
+            AppEvent::ServerEvacuated { id: "s1".into() },
+            AppEvent::MigrationProgressLoaded {
+                server_id: "s1".into(),
+                migration: ServerMigration {
+                    id: 1,
+                    status: "running".into(),
+                    source_compute: "compute-01".into(),
+                    dest_compute: "compute-02".into(),
+                    memory_total_bytes: Some(1024),
+                    memory_processed_bytes: Some(512),
+                    memory_remaining_bytes: Some(512),
+                    disk_total_bytes: Some(4096),
+                    disk_processed_bytes: Some(2048),
+                    disk_remaining_bytes: Some(2048),
+                    created_at: None,
+                    updated_at: None,
+                },
+            },
+        ];
+        assert_eq!(events.len(), 6);
     }
 
     #[test]

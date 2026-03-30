@@ -79,6 +79,22 @@ impl super::nova::NovaPort for MockNovaAdapter {
     async fn evacuate_server(&self, _server_id: &str, _params: &EvacuateParams) -> ApiResult<()> {
         Ok(())
     }
+    async fn list_server_migrations(
+        &self,
+        _server_id: &str,
+    ) -> ApiResult<Vec<crate::models::nova::ServerMigration>> {
+        Ok(vec![])
+    }
+    async fn get_server_migration(
+        &self,
+        _server_id: &str,
+        migration_id: i64,
+    ) -> ApiResult<crate::models::nova::ServerMigration> {
+        Err(ApiError::NotFound {
+            resource_type: "migration".into(),
+            id: migration_id.to_string(),
+        })
+    }
     async fn list_flavors(
         &self,
         _pagination: &PaginationParams,

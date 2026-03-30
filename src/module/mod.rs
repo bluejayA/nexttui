@@ -47,6 +47,12 @@ pub enum PendingAction {
     // Keystone
     DeleteProject { id: String, name: String },
     DeleteUser { id: String, name: String },
+    // Nova: Migration / Evacuate
+    LiveMigrate { id: String },
+    ColdMigrate { id: String },
+    ConfirmMigrate { id: String },
+    RevertMigrate { id: String },
+    Evacuate { id: String },
 }
 
 /// Shared confirm dialog handler. Wraps the ConfirmDialog + PendingAction
@@ -161,6 +167,18 @@ mod tests {
             },
         ];
         assert_eq!(actions.len(), 12);
+    }
+
+    #[test]
+    fn test_migration_pending_action_variants() {
+        let actions: Vec<PendingAction> = vec![
+            PendingAction::LiveMigrate { id: "s1".into() },
+            PendingAction::ColdMigrate { id: "s1".into() },
+            PendingAction::ConfirmMigrate { id: "s1".into() },
+            PendingAction::RevertMigrate { id: "s1".into() },
+            PendingAction::Evacuate { id: "s1".into() },
+        ];
+        assert_eq!(actions.len(), 5);
     }
 
     #[test]

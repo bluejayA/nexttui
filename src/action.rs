@@ -64,6 +64,14 @@ pub enum Action {
     SelectResource { id: String },
     NavigateToResource { route: Route, id: String },
 
+    // Migration / Evacuate
+    LiveMigrateServer { id: String, host: Option<String> },
+    ColdMigrateServer { id: String },
+    ConfirmMigration { id: String },
+    RevertMigration { id: String },
+    EvacuateServer { id: String, host: Option<String> },
+    FetchMigrationProgress { server_id: String },
+
     // All Tenants
     ToggleAllTenants,
 
@@ -126,5 +134,18 @@ mod tests {
             Action::Quit,
         ];
         assert!(actions.len() >= 18);
+    }
+
+    #[test]
+    fn test_migration_action_variants_exist() {
+        let actions: Vec<Action> = vec![
+            Action::LiveMigrateServer { id: "s1".into(), host: None },
+            Action::ColdMigrateServer { id: "s1".into() },
+            Action::ConfirmMigration { id: "s1".into() },
+            Action::RevertMigration { id: "s1".into() },
+            Action::EvacuateServer { id: "s1".into(), host: Some("compute-02".into()) },
+            Action::FetchMigrationProgress { server_id: "s1".into() },
+        ];
+        assert_eq!(actions.len(), 6);
     }
 }

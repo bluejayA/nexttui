@@ -113,6 +113,30 @@ pub struct Hypervisor {
     pub state: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct ServerMigration {
+    pub id: i64,
+    pub status: String,
+    pub source_compute: String,
+    pub dest_compute: String,
+    #[serde(default)]
+    pub memory_total_bytes: Option<i64>,
+    #[serde(default)]
+    pub memory_processed_bytes: Option<i64>,
+    #[serde(default)]
+    pub memory_remaining_bytes: Option<i64>,
+    #[serde(default)]
+    pub disk_total_bytes: Option<i64>,
+    #[serde(default)]
+    pub disk_processed_bytes: Option<i64>,
+    #[serde(default)]
+    pub disk_remaining_bytes: Option<i64>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,6 +221,46 @@ mod tests {
         assert_eq!(svc.binary, "nova-compute");
         assert_eq!(svc.status, "enabled");
         assert_eq!(svc.state, "up");
+    }
+
+    #[test]
+    fn test_server_migration_deserialize() {
+        let json = r#"{
+            "id": 42,
+            "status": "running",
+            "source_compute": "compute-01",
+            "dest_compute": "compute-02",
+            "memory_total_bytes": 1073741824,
+            "memory_processed_bytes": 536870912,
+            "memory_remaining_bytes": 536870912,
+            "disk_total_bytes": 10737418240,
+            "disk_processed_bytes": 5368709120,
+            "disk_remaining_bytes": 5368709120,
+            "created_at": "2026-03-28T10:00:00Z",
+            "updated_at": "2026-03-28T10:01:00Z"
+        }"#;
+        let mig: ServerMigration = serde_json::from_str(json).unwrap();
+        assert_eq!(mig.id, 42);
+        assert_eq!(mig.status, "running");
+        assert_eq!(mig.source_compute, "compute-01");
+        assert_eq!(mig.dest_compute, "compute-02");
+        assert_eq!(mig.memory_total_bytes, Some(1_073_741_824));
+        assert_eq!(mig.disk_processed_bytes, Some(5_368_709_120));
+    }
+
+    #[test]
+    fn test_server_migration_deserialize_minimal() {
+        let json = r#"{
+            "id": 1,
+            "status": "completed",
+            "source_compute": "node-a",
+            "dest_compute": "node-b"
+        }"#;
+        let mig: ServerMigration = serde_json::from_str(json).unwrap();
+        assert_eq!(mig.id, 1);
+        assert_eq!(mig.status, "completed");
+        assert!(mig.memory_total_bytes.is_none());
+        assert!(mig.created_at.is_none());
     }
 
     #[test]

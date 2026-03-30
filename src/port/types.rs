@@ -286,7 +286,6 @@ pub struct NetworkAttachment {
 #[derive(Debug, Clone)]
 pub struct LiveMigrateParams {
     pub host: Option<String>,
-    pub block_migration: bool,
 }
 
 #[derive(Debug, Clone)]
