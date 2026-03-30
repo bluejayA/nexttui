@@ -1,11 +1,15 @@
 use std::collections::HashMap;
 
-use crate::models::nova::{Address, Server};
+use crate::models::nova::{Address, Server, ServerMigration};
 use crate::ui::detail_view::{DetailData, DetailField, DetailSection};
 use crate::ui::form::FieldDef;
 use crate::ui::resource_list::{ColumnDef, ColumnWidth, Row, RowStyleHint};
 
 pub fn server_columns(show_tenant: bool) -> Vec<ColumnDef> {
+    server_columns_full(show_tenant, false)
+}
+
+pub fn server_columns_full(show_tenant: bool, show_host: bool) -> Vec<ColumnDef> {
     let mut cols = vec![
         ColumnDef {
             name: "".into(),
@@ -21,6 +25,13 @@ pub fn server_columns(show_tenant: bool) -> Vec<ColumnDef> {
     if show_tenant {
         cols.push(ColumnDef {
             name: "Project".into(),
+            width: ColumnWidth::Percent(12),
+            alignment: ratatui::layout::Alignment::Left,
+        });
+    }
+    if show_host {
+        cols.push(ColumnDef {
+            name: "Host".into(),
             width: ColumnWidth::Percent(12),
             alignment: ratatui::layout::Alignment::Left,
         });
@@ -51,6 +62,10 @@ pub fn server_columns(show_tenant: bool) -> Vec<ColumnDef> {
 }
 
 pub fn server_to_row(server: &Server, show_tenant: bool) -> Row {
+    server_to_row_full(server, show_tenant, false)
+}
+
+pub fn server_to_row_full(server: &Server, show_tenant: bool, show_host: bool) -> Row {
     let (icon, style) = status_display(&server.status);
     let flavor_name = server
         .flavor
@@ -71,6 +86,9 @@ pub fn server_to_row(server: &Server, show_tenant: bool) -> Row {
     if show_tenant {
         cells.push(server.tenant_id.as_deref().unwrap_or("-").to_string());
     }
+    if show_host {
+        cells.push(server.host.as_deref().unwrap_or("-").to_string());
+    }
     cells.extend([
         server.status.clone(),
         ips,
@@ -86,7 +104,26 @@ pub fn server_to_row(server: &Server, show_tenant: bool) -> Row {
 }
 
 pub fn server_detail_data(server: &Server) -> DetailData {
+    server_detail_data_full(server, None)
+}
+
+pub fn server_detail_data_full(
+    server: &Server,
+    migration_progress: Option<&ServerMigration>,
+) -> DetailData {
     let mut sections = vec![];
+
+    // VERIFY_RESIZE banner
+    if server.status == "VERIFY_RESIZE" {
+        sections.push(DetailSection {
+            name: "⚠ Migration Pending".into(),
+            fields: vec![DetailField::KeyValue {
+                key: "Action Required".into(),
+                value: "Confirm(Y) or Revert(N) migration".into(),
+                style: Some(RowStyleHint::Warning),
+            }],
+        });
+    }
 
     // Basic info
     let mut basic_fields = vec![
@@ -206,9 +243,69 @@ pub fn server_detail_data(server: &Server) -> DetailData {
         });
     }
 
+    // Migration Progress
+    if let Some(mig) = migration_progress {
+        let mut mig_fields = vec![
+            DetailField::KeyValue {
+                key: "Status".into(),
+                value: mig.status.clone(),
+                style: None,
+            },
+            DetailField::KeyValue {
+                key: "Source".into(),
+                value: mig.source_compute.clone(),
+                style: None,
+            },
+            DetailField::KeyValue {
+                key: "Dest".into(),
+                value: mig.dest_compute.clone(),
+                style: None,
+            },
+        ];
+        if let (Some(total), Some(processed)) =
+            (mig.memory_total_bytes, mig.memory_processed_bytes)
+        {
+            let pct = if total > 0 { processed * 100 / total } else { 0 };
+            mig_fields.push(DetailField::KeyValue {
+                key: "Memory".into(),
+                value: format!("{}% ({}/{})", pct, format_bytes(processed), format_bytes(total)),
+                style: None,
+            });
+        }
+        if let (Some(total), Some(processed)) =
+            (mig.disk_total_bytes, mig.disk_processed_bytes)
+        {
+            let pct = if total > 0 { processed * 100 / total } else { 0 };
+            mig_fields.push(DetailField::KeyValue {
+                key: "Disk".into(),
+                value: format!("{}% ({}/{})", pct, format_bytes(processed), format_bytes(total)),
+                style: None,
+            });
+        }
+        sections.push(DetailSection {
+            name: "Migration Progress".into(),
+            fields: mig_fields,
+        });
+    }
+
     DetailData {
         title: format!("Server: {}", server.name),
         sections,
+    }
+}
+
+fn format_bytes(bytes: i64) -> String {
+    const KB: i64 = 1024;
+    const MB: i64 = KB * 1024;
+    const GB: i64 = MB * 1024;
+    if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
     }
 }
 
@@ -404,5 +501,131 @@ mod tests {
         assert!(!defs[4].validations().contains(&Validation::Required));
         assert_eq!(defs[5].name(), "Key Pair");
         assert_eq!(defs[6].name(), "Availability Zone");
+    }
+
+    #[test]
+    fn test_server_columns_with_host() {
+        let cols = server_columns_full(false, true);
+        assert_eq!(cols.len(), 7); // base 6 + Host
+        assert_eq!(cols[2].name, "Host");
+    }
+
+    #[test]
+    fn test_server_columns_with_tenant_and_host() {
+        let cols = server_columns_full(true, true);
+        assert_eq!(cols.len(), 8); // base 6 + Project + Host
+        assert_eq!(cols[2].name, "Project");
+        assert_eq!(cols[3].name, "Host");
+    }
+
+    #[test]
+    fn test_server_to_row_with_host() {
+        let server = make_server("ACTIVE");
+        let row = server_to_row_full(&server, false, true);
+        // cells: icon, name, host, status, ip, flavor, image
+        assert_eq!(row.cells[2], "compute-01");
+        assert_eq!(row.cells[3], "ACTIVE");
+    }
+
+    #[test]
+    fn test_detail_verify_resize_banner() {
+        let server = make_server("VERIFY_RESIZE");
+        let data = server_detail_data_full(&server, None);
+        assert_eq!(data.sections[0].name, "⚠ Migration Pending");
+    }
+
+    #[test]
+    fn test_detail_no_banner_for_active() {
+        let server = make_server("ACTIVE");
+        let data = server_detail_data_full(&server, None);
+        assert_ne!(data.sections[0].name, "⚠ Migration Pending");
+    }
+
+    #[test]
+    fn test_detail_migration_progress_section() {
+        let server = make_server("MIGRATING");
+        let mig = ServerMigration {
+            id: 1,
+            status: "running".into(),
+            source_compute: "compute-01".into(),
+            dest_compute: "compute-02".into(),
+            memory_total_bytes: Some(1024 * 1024_i64),
+            memory_processed_bytes: Some(512 * 1024_i64),
+            memory_remaining_bytes: Some(512 * 1024_i64),
+            disk_total_bytes: Some(10 * 1024 * 1024 * 1024_i64),
+            disk_processed_bytes: Some(5 * 1024 * 1024 * 1024_i64),
+            disk_remaining_bytes: Some(5 * 1024 * 1024 * 1024_i64),
+            created_at: None,
+            updated_at: None,
+        };
+        let data = server_detail_data_full(&server, Some(&mig));
+        let mig_section = data.sections.iter().find(|s| s.name == "Migration Progress");
+        assert!(mig_section.is_some());
+        let fields = &mig_section.unwrap().fields;
+        // Status, Source, Dest, Memory, Disk = 5 fields
+        assert_eq!(fields.len(), 5);
+    }
+
+    #[test]
+    fn test_detail_no_migration_progress_without_data() {
+        let server = make_server("ACTIVE");
+        let data = server_detail_data_full(&server, None);
+        let mig_section = data.sections.iter().find(|s| s.name == "Migration Progress");
+        assert!(mig_section.is_none());
+    }
+
+    #[test]
+    fn test_format_bytes_units() {
+        assert_eq!(format_bytes(0), "0 B");
+        assert_eq!(format_bytes(500), "500 B");
+        assert_eq!(format_bytes(1024), "1.0 KB");
+        assert_eq!(format_bytes(1048576), "1.0 MB");
+        assert_eq!(format_bytes(1073741824), "1.0 GB");
+    }
+
+    #[test]
+    fn test_server_to_row_host_none_shows_dash() {
+        let mut server = make_server("ACTIVE");
+        server.host = None;
+        let row = server_to_row_full(&server, false, true);
+        assert_eq!(row.cells[2], "-");
+    }
+
+    #[test]
+    fn test_detail_migration_progress_memory_only() {
+        let server = make_server("MIGRATING");
+        let mig = ServerMigration {
+            id: 1,
+            status: "running".into(),
+            source_compute: "c1".into(),
+            dest_compute: "c2".into(),
+            memory_total_bytes: Some(2048),
+            memory_processed_bytes: Some(1024),
+            memory_remaining_bytes: Some(1024),
+            disk_total_bytes: None,
+            disk_processed_bytes: None,
+            disk_remaining_bytes: None,
+            created_at: None,
+            updated_at: None,
+        };
+        let data = server_detail_data_full(&server, Some(&mig));
+        let mig_section = data.sections.iter().find(|s| s.name == "Migration Progress").unwrap();
+        // Status, Source, Dest, Memory = 4 fields (no Disk)
+        assert_eq!(mig_section.fields.len(), 4);
+    }
+
+    #[test]
+    fn test_detail_verify_resize_banner_fields() {
+        let server = make_server("VERIFY_RESIZE");
+        let data = server_detail_data_full(&server, None);
+        let banner = &data.sections[0];
+        assert_eq!(banner.name, "⚠ Migration Pending");
+        if let DetailField::KeyValue { value, style, .. } = &banner.fields[0] {
+            assert!(value.contains("Confirm(Y)"));
+            assert!(value.contains("Revert(N)"));
+            assert_eq!(*style, Some(RowStyleHint::Warning));
+        } else {
+            panic!("Expected KeyValue in banner");
+        }
     }
 }
