@@ -1,4 +1,5 @@
 pub mod confirm;
+pub mod select_popup;
 pub mod detail_view;
 pub mod form;
 pub mod header;
