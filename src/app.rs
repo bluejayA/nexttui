@@ -292,6 +292,9 @@ impl App {
         // Migration complete → refresh server list to reflect status change
         let refresh_servers = matches!(
             event,
+            AppEvent::MigrationPollingStopped { .. }
+        ) || matches!(
+            event,
             AppEvent::ServerLiveMigrated { .. }
             | AppEvent::ServerColdMigrated { .. }
             | AppEvent::MigrationConfirmed { .. }
@@ -448,9 +451,18 @@ impl App {
         }
 
         // Status bar
+        let component_hint = self.components
+            .get(&self.router.current())
+            .map(|c| c.help_hint())
+            .unwrap_or("");
+        let help_hint = if component_hint.is_empty() {
+            "←→:Navigate q:Quit /:Search".to_string()
+        } else {
+            component_hint.to_string()
+        };
         let info = StatusInfo {
             message: format!("{} | {:?}", route_label, self.input_mode),
-            help_hint: "←→:Navigate q:Quit /:Search Ctrl+A:AllTenants".into(),
+            help_hint,
             item_count: None,
             selected_index: None,
         };

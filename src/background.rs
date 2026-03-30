@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 const TOAST_TTL_SUCCESS: Duration = Duration::from_secs(5);
-const TOAST_TTL_ERROR: Duration = Duration::from_secs(10);
+const TOAST_TTL_ERROR: Duration = Duration::from_secs(30);
 const TOAST_TTL_INFO: Duration = Duration::from_secs(5);
 const GC_AGE: Duration = Duration::from_secs(60);
 

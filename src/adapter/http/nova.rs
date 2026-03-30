@@ -321,7 +321,8 @@ impl NovaPort for NovaHttpAdapter {
         let body = serde_json::json!({
             "os-migrateLive": {
                 "host": params.host,
-                "block_migration": "auto"
+                "block_migration": true,
+                "disk_over_commit": false
             }
         });
         let req = self
@@ -384,7 +385,8 @@ impl NovaPort for NovaHttpAdapter {
         let req = self
             .base
             .get(&format!("/servers/{}/migrations", encode_param(server_id)))
-            .await?;
+            .await?
+            .header("OpenStack-API-Version", "compute 2.80");
         let resp: NovaMigrationsResponse = self.base.send_json(req).await?;
         Ok(resp.migrations)
     }
@@ -393,7 +395,8 @@ impl NovaPort for NovaHttpAdapter {
         let req = self
             .base
             .get(&format!("/servers/{}/migrations/{}", encode_param(server_id), migration_id))
-            .await?;
+            .await?
+            .header("OpenStack-API-Version", "compute 2.80");
         let resp: NovaMigrationWrapper = self.base.send_json(req).await?;
         Ok(resp.migration)
     }
@@ -730,13 +733,13 @@ mod tests {
         let body = serde_json::json!({
             "os-migrateLive": {
                 "host": params.host,
-                "block_migration": "auto"
+                "block_migration": true
             }
         });
         let obj = body.as_object().unwrap();
         let inner = obj["os-migrateLive"].as_object().unwrap();
         assert_eq!(inner["host"], "compute-02");
-        assert_eq!(inner["block_migration"], "auto");
+        assert_eq!(inner["block_migration"], true);
     }
 
     #[test]
@@ -747,12 +750,12 @@ mod tests {
         let body = serde_json::json!({
             "os-migrateLive": {
                 "host": params.host,
-                "block_migration": "auto"
+                "block_migration": true
             }
         });
         let inner = &body["os-migrateLive"];
         assert!(inner["host"].is_null());
-        assert_eq!(inner["block_migration"], "auto");
+        assert_eq!(inner["block_migration"], true);
     }
 
     #[test]

@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 use crate::action::Action;
 use crate::component::Component;
 use crate::event::AppEvent;
-use crate::models::nova::{Server, ServerMigration};
+use crate::models::nova::{Flavor, Server, ServerMigration};
 use crate::module::{ConfirmHandler, PendingAction, ViewState};
 use crate::port::types::{NetworkAttachment, ServerCreateParams};
 use crate::ui::confirm::ConfirmDialog;
@@ -30,6 +30,7 @@ pub struct ServerModule {
     all_tenants: bool,
     is_admin: bool,
     migration_progress: Option<(String, ServerMigration)>,
+    cached_flavors: Vec<Flavor>,
     // Cached dropdown options — populated by handle_event, applied to form on open/load
     cached_flavor_opts: Vec<SelectOption>,
     cached_image_opts: Vec<SelectOption>,
@@ -51,6 +52,7 @@ impl ServerModule {
             all_tenants: false,
             is_admin: false,
             migration_progress: None, // (server_id, ServerMigration)
+            cached_flavors: Vec::new(),
             cached_flavor_opts: Vec::new(),
             cached_image_opts: Vec::new(),
             cached_network_opts: Vec::new(),
@@ -412,10 +414,12 @@ impl Component for ServerModule {
             AppEvent::ServerLiveMigrated { .. }
             | AppEvent::MigrationConfirmed { .. }
             | AppEvent::MigrationReverted { .. }
-            | AppEvent::ServerEvacuated { .. } => {
+            | AppEvent::ServerEvacuated { .. }
+            | AppEvent::MigrationPollingStopped { .. } => {
                 self.migration_progress = None;
             }
             AppEvent::FlavorsLoaded(flavors) => {
+                self.cached_flavors = flavors.clone();
                 let opts: Vec<SelectOption> = flavors
                     .iter()
                     .map(|f| SelectOption::new(&f.id, format!("{} ({}vCPU/{}MB/{}GB)", f.name, f.vcpus, f.ram, f.disk)))
@@ -472,7 +476,8 @@ impl Component for ServerModule {
             }
             ViewState::Detail(id) => {
                 if let Some(server) = self.servers.iter().find(|s| s.id == *id) {
-                    let data = server_detail_data_full(server, self.migration_progress_for(id));
+                    let matched_flavor = self.cached_flavors.iter().find(|f| f.id == server.flavor.id);
+                    let data = server_detail_data_full(server, self.migration_progress_for(id), matched_flavor);
                     let mut dv = crate::ui::detail_view::DetailView::new();
                     dv.set_data(data);
                     dv.render(frame, area);
@@ -491,6 +496,30 @@ impl Component for ServerModule {
 
         // Overlay: ConfirmDialog
         self.confirm.render(frame, area);
+    }
+
+    fn help_hint(&self) -> &str {
+        match &self.view_state {
+            ViewState::List => "Enter:Detail c:Create d:Delete r:Refresh",
+            ViewState::Detail(id) => {
+                let server = self.servers.iter().find(|s| s.id == *id);
+                let is_verify = server.is_some_and(|s| s.status == "VERIFY_RESIZE");
+                let is_error = server.is_some_and(|s| s.status == "ERROR");
+
+                if is_verify && self.is_admin {
+                    "Esc:Back R:Reboot S:Start X:Stop M:Migrate C:Cold Y:Confirm N:Revert"
+                } else if is_verify {
+                    "Esc:Back R:Reboot S:Start X:Stop Y:Confirm N:Revert"
+                } else if is_error && self.is_admin {
+                    "Esc:Back R:Reboot S:Start X:Stop M:Migrate C:Cold E:Evacuate"
+                } else if self.is_admin {
+                    "Esc:Back R:Reboot S:Start X:Stop M:Migrate C:Cold"
+                } else {
+                    "Esc:Back R:Reboot S:Start X:Stop"
+                }
+            }
+            ViewState::Create => "Esc:Cancel Tab:Next Enter:Submit",
+        }
     }
 }
 
@@ -1098,5 +1127,38 @@ mod tests {
         } else {
             panic!("Expected Dropdown for Flavor field");
         }
+    }
+
+    // -- help_hint tests ---------------------------------------------------
+
+    #[test]
+    fn test_help_hint_list_view() {
+        let (module, _rx) = setup();
+        let hint = module.help_hint();
+        assert!(hint.contains("Enter"), "List hint should mention Enter");
+        assert!(hint.contains("c:Create"), "List hint should mention Create");
+    }
+
+    #[test]
+    fn test_help_hint_detail_view_admin() {
+        let (module, _rx) = setup_admin_detail("ACTIVE");
+        let hint = module.help_hint();
+        assert!(hint.contains("M:Migrate"), "Admin detail hint should mention Migrate");
+    }
+
+    #[test]
+    fn test_help_hint_detail_verify_resize() {
+        let (module, _rx) = setup_admin_detail("VERIFY_RESIZE");
+        let hint = module.help_hint();
+        assert!(hint.contains("Y:Confirm"), "VERIFY_RESIZE hint should mention Confirm");
+        assert!(hint.contains("N:Revert"), "VERIFY_RESIZE hint should mention Revert");
+    }
+
+    #[test]
+    fn test_help_hint_detail_non_admin() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Enter)); // enter detail
+        let hint = module.help_hint();
+        assert!(!hint.contains("M:Migrate"), "Non-admin should not see Migrate");
     }
 }

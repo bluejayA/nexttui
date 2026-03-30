@@ -94,8 +94,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             cloud.region_name.clone(),
         )?);
 
-        // Initialize RBAC from token roles
+        // Trigger initial authentication, then initialize RBAC from token roles
         let rbac = std::sync::Arc::new(nexttui::infra::rbac::RbacGuard::new());
+        let _ = auth_provider.get_token().await; // force auth before reading roles
         if let Ok(token) = auth_provider.get_token_info().await {
             rbac.update_roles(token.roles, Some(token.project.id));
         }

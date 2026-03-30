@@ -11,6 +11,7 @@ pub trait Component {
     fn render(&self, frame: &mut Frame, area: Rect);
     fn set_admin(&mut self, _is_admin: bool) {}
     fn set_all_tenants(&mut self, _all_tenants: bool) {}
+    fn help_hint(&self) -> &str { "" }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

@@ -118,7 +118,7 @@ impl ConfirmDialog {
 
         // Calculate centered modal area (50% width, 5 lines tall)
         let width = (area.width / 2).max(30).min(area.width);
-        let height = 5u16.min(area.height);
+        let height = 7u16.min(area.height);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
         let modal_area = Rect::new(x, y, width, height);
@@ -136,10 +136,12 @@ impl ConfirmDialog {
                             .add_modifier(Modifier::BOLD),
                     )),
                     Line::from(""),
-                    Line::from(Span::styled(
-                        "[Y]es  [N]o",
-                        Style::default().fg(Color::White),
-                    )),
+                    Line::from(vec![
+                        Span::styled("[Y]", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                        Span::styled("es  ", Style::default().fg(Color::White)),
+                        Span::styled("[N]", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                        Span::styled("o", Style::default().fg(Color::White)),
+                    ]),
                 ]
             }
             ConfirmMode::TypeToConfirm {
@@ -172,10 +174,12 @@ impl ConfirmDialog {
         let block = Block::default()
             .title(" Confirm ")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Yellow));
+            .border_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+            .style(Style::default().bg(Color::Rgb(30, 30, 40)));
         let widget = Paragraph::new(lines)
             .block(block)
-            .alignment(Alignment::Center);
+            .alignment(Alignment::Center)
+            .style(Style::default().bg(Color::Rgb(30, 30, 40)));
         frame.render_widget(widget, modal_area);
     }
 }
