@@ -29,7 +29,7 @@ pub struct ServerModule {
     form: Option<FormWidget>,
     all_tenants: bool,
     is_admin: bool,
-    migration_progress: Option<ServerMigration>,
+    migration_progress: Option<(String, ServerMigration)>,
     // Cached dropdown options — populated by handle_event, applied to form on open/load
     cached_flavor_opts: Vec<SelectOption>,
     cached_image_opts: Vec<SelectOption>,
@@ -50,7 +50,7 @@ impl ServerModule {
             form: None,
             all_tenants: false,
             is_admin: false,
-            migration_progress: None,
+            migration_progress: None, // (server_id, ServerMigration)
             cached_flavor_opts: Vec::new(),
             cached_image_opts: Vec::new(),
             cached_network_opts: Vec::new(),
@@ -76,7 +76,14 @@ impl ServerModule {
     }
 
     pub fn migration_progress(&self) -> Option<&ServerMigration> {
-        self.migration_progress.as_ref()
+        self.migration_progress.as_ref().map(|(_, m)| m)
+    }
+
+    pub fn migration_progress_for(&self, server_id: &str) -> Option<&ServerMigration> {
+        self.migration_progress
+            .as_ref()
+            .filter(|(sid, _)| sid == server_id)
+            .map(|(_, m)| m)
     }
 
     fn selected_server(&self) -> Option<&Server> {
@@ -98,7 +105,6 @@ impl ServerModule {
             PendingAction::LiveMigrate { id } => Some(Action::LiveMigrateServer {
                 id,
                 host: None,
-                block_migration: true,
             }),
             PendingAction::ColdMigrate { id } => Some(Action::ColdMigrateServer { id }),
             PendingAction::ConfirmMigrate { id } => Some(Action::ConfirmMigration { id }),
@@ -400,8 +406,8 @@ impl Component for ServerModule {
             | AppEvent::ServerCreated(_) => {
                 let _ = self.action_tx.send(Action::FetchServers);
             }
-            AppEvent::MigrationProgressLoaded { migration, .. } => {
-                self.migration_progress = Some(migration.clone());
+            AppEvent::MigrationProgressLoaded { server_id, migration } => {
+                self.migration_progress = Some((server_id.clone(), migration.clone()));
             }
             AppEvent::ServerLiveMigrated { .. }
             | AppEvent::MigrationConfirmed { .. }
@@ -466,7 +472,7 @@ impl Component for ServerModule {
             }
             ViewState::Detail(id) => {
                 if let Some(server) = self.servers.iter().find(|s| s.id == *id) {
-                    let data = server_detail_data_full(server, self.migration_progress.as_ref());
+                    let data = server_detail_data_full(server, self.migration_progress_for(id));
                     let mut dv = crate::ui::detail_view::DetailView::new();
                     dv.set_data(data);
                     dv.render(frame, area);
@@ -839,7 +845,7 @@ mod tests {
     #[test]
     fn test_migration_progress_cleared_on_confirm() {
         let (mut module, _rx) = setup();
-        module.migration_progress = Some(ServerMigration {
+        module.migration_progress = Some(("s1".into(), ServerMigration {
             id: 1,
             status: "running".into(),
             source_compute: "c1".into(),
@@ -852,7 +858,7 @@ mod tests {
             disk_remaining_bytes: None,
             created_at: None,
             updated_at: None,
-        });
+        }));
         module.handle_event(&AppEvent::MigrationConfirmed { id: "s1".into() });
         assert!(module.migration_progress().is_none());
     }
@@ -975,7 +981,7 @@ mod tests {
     #[test]
     fn test_resolve_live_migrate() {
         let action = ServerModule::resolve_action(PendingAction::LiveMigrate { id: "s1".into() });
-        assert!(matches!(action, Some(Action::LiveMigrateServer { id, host: None, block_migration: true }) if id == "s1"));
+        assert!(matches!(action, Some(Action::LiveMigrateServer { id, host: None }) if id == "s1"));
     }
 
     #[test]
@@ -1022,7 +1028,7 @@ mod tests {
     #[test]
     fn test_migration_progress_cleared_on_evacuate() {
         let (mut module, _rx) = setup();
-        module.migration_progress = Some(ServerMigration {
+        module.migration_progress = Some(("s1".into(), ServerMigration {
             id: 1,
             status: "running".into(),
             source_compute: "c1".into(),
@@ -1035,9 +1041,36 @@ mod tests {
             disk_remaining_bytes: None,
             created_at: None,
             updated_at: None,
-        });
+        }));
         module.handle_event(&AppEvent::ServerEvacuated { id: "s1".into() });
         assert!(module.migration_progress().is_none());
+    }
+
+    #[test]
+    fn test_migration_progress_not_shown_for_different_server() {
+        let (mut module, _rx) = setup();
+        // Load progress for server s1
+        module.handle_event(&AppEvent::MigrationProgressLoaded {
+            server_id: "s1".into(),
+            migration: ServerMigration {
+                id: 1,
+                status: "running".into(),
+                source_compute: "c1".into(),
+                dest_compute: "c2".into(),
+                memory_total_bytes: None,
+                memory_processed_bytes: None,
+                memory_remaining_bytes: None,
+                disk_total_bytes: None,
+                disk_processed_bytes: None,
+                disk_remaining_bytes: None,
+                created_at: None,
+                updated_at: None,
+            },
+        });
+        // migration_progress_for should return None for s2
+        assert!(module.migration_progress_for("s2").is_none());
+        // but Some for s1
+        assert!(module.migration_progress_for("s1").is_some());
     }
 
     #[test]

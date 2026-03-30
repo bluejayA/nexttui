@@ -65,7 +65,7 @@ pub enum Action {
     NavigateToResource { route: Route, id: String },
 
     // Migration / Evacuate
-    LiveMigrateServer { id: String, host: Option<String>, block_migration: bool },
+    LiveMigrateServer { id: String, host: Option<String> },
     ColdMigrateServer { id: String },
     ConfirmMigration { id: String },
     RevertMigration { id: String },
@@ -139,7 +139,7 @@ mod tests {
     #[test]
     fn test_migration_action_variants_exist() {
         let actions: Vec<Action> = vec![
-            Action::LiveMigrateServer { id: "s1".into(), host: None, block_migration: true },
+            Action::LiveMigrateServer { id: "s1".into(), host: None },
             Action::ColdMigrateServer { id: "s1".into() },
             Action::ConfirmMigration { id: "s1".into() },
             Action::RevertMigration { id: "s1".into() },

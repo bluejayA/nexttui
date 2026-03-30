@@ -726,7 +726,6 @@ mod tests {
     fn test_live_migrate_body_with_host() {
         let params = LiveMigrateParams {
             host: Some("compute-02".into()),
-            block_migration: true,
         };
         let body = serde_json::json!({
             "os-migrateLive": {
@@ -744,7 +743,6 @@ mod tests {
     fn test_live_migrate_body_auto_host() {
         let params = LiveMigrateParams {
             host: None,
-            block_migration: false,
         };
         let body = serde_json::json!({
             "os-migrateLive": {

@@ -39,15 +39,9 @@ pub async fn run_worker(
         let event_tx = event_tx.clone();
         let all_tenants = all_tenants.clone();
 
-        // Check if this action should trigger migration polling after completion
-        let should_poll_migration = matches!(&action, Action::LiveMigrateServer { .. });
-        let poll_server_id = if should_poll_migration {
-            match &action {
-                Action::LiveMigrateServer { id, .. } => Some(id.clone()),
-                _ => None,
-            }
-        } else {
-            None
+        let poll_server_id = match &action {
+            Action::LiveMigrateServer { id, .. } => Some(id.clone()),
+            _ => None,
         };
 
         let span = tracing::info_span!("worker_task", action = action_name(&action));
@@ -235,8 +229,8 @@ async fn handle_action(registry: &AdapterRegistry, all_tenants: &AtomicBool, act
         }
 
         // -- Nova: Migration / Evacuate ------------------------------------
-        Action::LiveMigrateServer { id, host, block_migration } => {
-            let params = LiveMigrateParams { host, block_migration };
+        Action::LiveMigrateServer { id, host } => {
+            let params = LiveMigrateParams { host };
             match registry.nova.live_migrate_server(&id, &params).await {
                 Ok(()) => Some(AppEvent::ServerLiveMigrated { id }),
                 Err(e) => Some(api_error("LiveMigrateServer", e)),
@@ -658,7 +652,7 @@ mod tests {
 
         // Migration actions should map to Migrate
         assert_eq!(
-            action_to_kind(&Action::LiveMigrateServer { id: "s1".into(), host: None, block_migration: true }),
+            action_to_kind(&Action::LiveMigrateServer { id: "s1".into(), host: None }),
             Some(ActionKind::Migrate),
         );
         assert_eq!(

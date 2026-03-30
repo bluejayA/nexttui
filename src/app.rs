@@ -710,7 +710,7 @@ mod tests {
     fn test_dispatch_migration_action_adds_progress_toast() {
         let mut app = make_app();
         app.dispatch_action(Action::LiveMigrateServer {
-            id: "s1".into(), host: None, block_migration: true,
+            id: "s1".into(), host: None,
         });
         let toasts = app.background_tracker().active_toasts();
         assert!(toasts.iter().any(|t| t.message.contains("Live migrating")));
