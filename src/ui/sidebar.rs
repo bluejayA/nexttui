@@ -1,8 +1,10 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
+use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState};
+
+use super::theme::Theme;
 use ratatui::Frame;
 
 use crate::action::Action;
@@ -105,21 +107,13 @@ impl Sidebar {
                     " "
                 };
                 let style = if i == self.selected_index && focused {
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD)
+                    Theme::focus_border().add_modifier(Modifier::BOLD)
                 } else if i == self.selected_index {
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::DarkGray)
-                        .add_modifier(Modifier::BOLD)
+                    Theme::unfocus_border().add_modifier(Modifier::BOLD)
                 } else if item.admin_only {
-                    Style::default()
-                        .fg(Color::DarkGray)
-                        .add_modifier(Modifier::DIM)
+                    Theme::disabled()
                 } else {
-                    Style::default().fg(Color::White)
+                    Style::default().fg(ratatui::style::Color::White)
                 };
                 let line = Line::from(Span::styled(
                     format!("{marker} {}", item.label),
@@ -130,13 +124,14 @@ impl Sidebar {
             .collect();
 
         let border_style = if focused {
-            Style::default().fg(Color::Cyan)
+            Theme::focus_border()
         } else {
-            Style::default().fg(Color::DarkGray)
+            Theme::unfocus_border()
         };
         let block = Block::default()
             .title(" Modules ")
-            .borders(Borders::RIGHT)
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
             .border_style(border_style);
         let list = List::new(items).block(block);
         let mut state = ListState::default();
@@ -224,6 +219,19 @@ mod tests {
         let mut sidebar = Sidebar::new(sample_items());
         sidebar.sync_active(&Route::Networks, true);
         assert_eq!(sidebar.selected_index(), 1);
+    }
+
+    #[test]
+    fn test_sidebar_theme_tokens_for_focus_and_disabled() {
+        // Block getter 미제공으로 Borders::ALL, BorderType::Rounded는 간접 검증.
+        // render()에서 사용하는 Theme 토큰 반환값을 확인.
+        let focus_style = super::Theme::focus_border();
+        assert_eq!(focus_style.fg, Some(ratatui::style::Color::Cyan));
+        let unfocus_style = super::Theme::unfocus_border();
+        assert_eq!(unfocus_style.fg, Some(ratatui::style::Color::DarkGray));
+        let disabled = super::Theme::disabled();
+        assert_eq!(disabled.fg, Some(ratatui::style::Color::DarkGray));
+        assert!(disabled.add_modifier.contains(Modifier::DIM));
     }
 
     #[test]

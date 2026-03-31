@@ -1,14 +1,27 @@
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
+use super::theme;
+
 pub struct StatusInfo {
-    pub message: String,
-    pub help_hint: String,
+    pub panel_name: String,
     pub item_count: Option<usize>,
     pub selected_index: Option<usize>,
+    pub context_hints: Vec<(String, String)>,
+}
+
+impl StatusInfo {
+    /// Build left-side text: `[PanelName] idx/count` or `[PanelName]`.
+    pub fn left_text(&self) -> String {
+        if let (Some(count), Some(idx)) = (self.item_count, self.selected_index) {
+            format!("[{}] {}/{}", self.panel_name, idx + 1, count)
+        } else {
+            format!("[{}]", self.panel_name)
+        }
+    }
 }
 
 pub struct StatusBar;
@@ -24,57 +37,34 @@ impl StatusBar {
         area: Rect,
         info: &StatusInfo,
     ) {
-        let left = if let (Some(count), Some(idx)) = (info.item_count, info.selected_index) {
-            format!("{} | {}/{}", info.message, idx + 1, count)
-        } else {
-            info.message.clone()
-        };
+        // Paragraph bg applies to spans without explicit bg (ratatui style merge)
+        let bg = Style::default().bg(Color::DarkGray).fg(Color::White);
+        let left = info.left_text();
 
-        // Build styled hint: keys in Cyan+Bold, descriptions in Gray
-        let hint_spans = Self::style_hint(&info.help_hint);
+        // Right: key hints using theme::key_hint()
+        let mut hint_spans: Vec<Span> = Vec::new();
+        for (i, (key, desc)) in info.context_hints.iter().enumerate() {
+            if i > 0 {
+                hint_spans.push(Span::raw("  "));
+            }
+            hint_spans.extend(theme::key_hint(key, desc));
+        }
         let hint_plain_len: usize = hint_spans.iter().map(|s| s.content.len()).sum();
 
-        let padding_len = area
-            .width
-            .saturating_sub(left.len() as u16)
-            .saturating_sub(hint_plain_len as u16) as usize;
+        let padding_len = (area.width as usize)
+            .saturating_sub(left.len())
+            .saturating_sub(hint_plain_len);
         let padding = " ".repeat(padding_len);
 
         let mut spans = vec![
-            Span::styled(&left, Style::default().fg(Color::White)),
-            Span::raw(padding),
+            Span::styled(&left, bg),
+            Span::styled(padding, bg),
         ];
         spans.extend(hint_spans);
 
         let line = Line::from(spans);
-        let widget = Paragraph::new(line);
+        let widget = Paragraph::new(line).style(bg);
         frame.render_widget(widget, area);
-    }
-
-    /// Parse "Key:Label Key:Label" into styled spans.
-    /// Keys → Cyan+Bold, labels → Gray, separators → dark.
-    fn style_hint(hint: &str) -> Vec<Span<'_>> {
-        let mut spans = Vec::new();
-        for (i, part) in hint.split(' ').enumerate() {
-            if i > 0 {
-                spans.push(Span::styled(" ", Style::default().fg(Color::DarkGray)));
-            }
-            if let Some((key, label)) = part.split_once(':') {
-                spans.push(Span::styled(
-                    key,
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ));
-                spans.push(Span::styled(
-                    format!(":{label}"),
-                    Style::default().fg(Color::Gray),
-                ));
-            } else {
-                spans.push(Span::styled(part, Style::default().fg(Color::Gray)));
-            }
-        }
-        spans
     }
 }
 
@@ -88,15 +78,49 @@ impl Default for StatusBar {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_status_info_creation() {
-        let info = StatusInfo {
-            message: "5 servers loaded".to_string(),
-            help_hint: ":help | j/k | Enter".to_string(),
+    fn sample_info() -> StatusInfo {
+        StatusInfo {
+            panel_name: "Servers".to_string(),
             item_count: Some(5),
             selected_index: Some(2),
-        };
+            context_hints: vec![
+                ("j/k".into(), "이동".into()),
+                ("Enter".into(), "상세".into()),
+            ],
+        }
+    }
+
+    #[test]
+    fn test_status_info_new_fields() {
+        let info = sample_info();
+        assert_eq!(info.panel_name, "Servers");
         assert_eq!(info.item_count, Some(5));
         assert_eq!(info.selected_index, Some(2));
+        assert_eq!(info.context_hints.len(), 2);
+        assert_eq!(info.context_hints[0], ("j/k".into(), "이동".into()));
+    }
+
+    #[test]
+    fn test_status_info_left_text_with_count() {
+        let info = sample_info();
+        assert_eq!(info.left_text(), "[Servers] 3/5");
+    }
+
+    #[test]
+    fn test_status_info_left_text_without_count() {
+        let info = StatusInfo {
+            panel_name: "Flavors".to_string(),
+            item_count: None,
+            selected_index: None,
+            context_hints: vec![],
+        };
+        assert_eq!(info.left_text(), "[Flavors]");
+    }
+
+    #[test]
+    fn test_status_bar_key_hint_integration() {
+        let spans = theme::key_hint("Tab", "패널");
+        assert_eq!(spans.len(), 3); // key + separator + desc
+        assert_eq!(spans[0].style.fg, Some(ratatui::style::Color::Cyan));
     }
 }
