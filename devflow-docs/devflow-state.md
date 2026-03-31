@@ -4,7 +4,10 @@
 CONSTRUCTION
 
 ## Current Stage
-code-generation (Unit 4 구현 완료, 리뷰 → 커밋 → PR 대기)
+finishing (PR pending)
+
+## Finishing Choice
+B (PR pending)
 
 ## Completed Units
 - Unit 1+2: Theme 시스템 + LayoutManager toast_bar + Toast (694→717 tests, PR #51 merged)
