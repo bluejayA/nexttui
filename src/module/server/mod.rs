@@ -593,7 +593,8 @@ impl Component for ServerModule {
             ViewState::Detail(id) => {
                 if let Some(server) = self.servers.iter().find(|s| s.id == *id) {
                     let matched_flavor = self.cached_flavors.iter().find(|f| f.id == server.flavor.id);
-                    let data = server_detail_data_full(server, self.migration_progress_for(id), matched_flavor);
+                    let is_resize = self.resize_pending.as_ref().is_some_and(|rp| rp.server_id == *id);
+                    let data = server_detail_data_full(server, self.migration_progress_for(id), matched_flavor, is_resize);
                     let mut dv = crate::ui::detail_view::DetailView::new();
                     dv.set_data(data);
                     dv.render(frame, area);

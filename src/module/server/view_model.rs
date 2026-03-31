@@ -104,23 +104,29 @@ pub fn server_to_row_full(server: &Server, show_tenant: bool, show_host: bool) -
 }
 
 pub fn server_detail_data(server: &Server) -> DetailData {
-    server_detail_data_full(server, None, None)
+    server_detail_data_full(server, None, None, false)
 }
 
 pub fn server_detail_data_full(
     server: &Server,
     migration_progress: Option<&ServerMigration>,
     flavor: Option<&Flavor>,
+    is_resize_pending: bool,
 ) -> DetailData {
     let mut sections = vec![];
 
-    // VERIFY_RESIZE banner
+    // VERIFY_RESIZE banner — distinguish resize vs migration
     if server.status == "VERIFY_RESIZE" {
+        let (banner_title, banner_text) = if is_resize_pending {
+            ("⚠ Resize Pending", "Confirm(Y) or Revert(N) resize")
+        } else {
+            ("⚠ Migration Pending", "Confirm(Y) or Revert(N) migration")
+        };
         sections.push(DetailSection {
-            name: "⚠ Migration Pending".into(),
+            name: banner_title.into(),
             fields: vec![DetailField::KeyValue {
                 key: "Action Required".into(),
-                value: "Confirm(Y) or Revert(N) migration".into(),
+                value: banner_text.into(),
                 style: Some(RowStyleHint::Warning),
             }],
         });
@@ -537,14 +543,14 @@ mod tests {
     #[test]
     fn test_detail_verify_resize_banner() {
         let server = make_server("VERIFY_RESIZE");
-        let data = server_detail_data_full(&server, None, None);
+        let data = server_detail_data_full(&server, None, None, false);
         assert_eq!(data.sections[0].name, "⚠ Migration Pending");
     }
 
     #[test]
     fn test_detail_no_banner_for_active() {
         let server = make_server("ACTIVE");
-        let data = server_detail_data_full(&server, None, None);
+        let data = server_detail_data_full(&server, None, None, false);
         assert_ne!(data.sections[0].name, "⚠ Migration Pending");
     }
 
@@ -565,7 +571,7 @@ mod tests {
             created_at: None,
             updated_at: None,
         };
-        let data = server_detail_data_full(&server, Some(&mig), None);
+        let data = server_detail_data_full(&server, Some(&mig), None, false);
         let mig_section = data.sections.iter().find(|s| s.name == "Migration Progress");
         assert!(mig_section.is_some());
         let fields = &mig_section.unwrap().fields;
@@ -576,7 +582,7 @@ mod tests {
     #[test]
     fn test_detail_no_migration_progress_without_data() {
         let server = make_server("ACTIVE");
-        let data = server_detail_data_full(&server, None, None);
+        let data = server_detail_data_full(&server, None, None, false);
         let mig_section = data.sections.iter().find(|s| s.name == "Migration Progress");
         assert!(mig_section.is_none());
     }
@@ -615,21 +621,35 @@ mod tests {
             created_at: None,
             updated_at: None,
         };
-        let data = server_detail_data_full(&server, Some(&mig), None);
+        let data = server_detail_data_full(&server, Some(&mig), None, false);
         let mig_section = data.sections.iter().find(|s| s.name == "Migration Progress").unwrap();
         // Status, Source, Dest, Memory = 4 fields (no Disk)
         assert_eq!(mig_section.fields.len(), 4);
     }
 
     #[test]
-    fn test_detail_verify_resize_banner_fields() {
+    fn test_detail_verify_resize_banner_migration() {
         let server = make_server("VERIFY_RESIZE");
-        let data = server_detail_data_full(&server, None, None);
+        let data = server_detail_data_full(&server, None, None, false);
         let banner = &data.sections[0];
         assert_eq!(banner.name, "⚠ Migration Pending");
         if let DetailField::KeyValue { value, style, .. } = &banner.fields[0] {
-            assert!(value.contains("Confirm(Y)"));
-            assert!(value.contains("Revert(N)"));
+            assert!(value.contains("migration"));
+            assert_eq!(*style, Some(RowStyleHint::Warning));
+        } else {
+            panic!("Expected KeyValue in banner");
+        }
+    }
+
+    #[test]
+    fn test_detail_verify_resize_banner_resize() {
+        let server = make_server("VERIFY_RESIZE");
+        let data = server_detail_data_full(&server, None, None, true);
+        let banner = &data.sections[0];
+        assert_eq!(banner.name, "⚠ Resize Pending");
+        if let DetailField::KeyValue { value, style, .. } = &banner.fields[0] {
+            assert!(value.contains("resize"));
+            assert!(!value.contains("migration"));
             assert_eq!(*style, Some(RowStyleHint::Warning));
         } else {
             panic!("Expected KeyValue in banner");
