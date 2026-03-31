@@ -14,10 +14,17 @@ use crate::port::types::{NetworkAttachment, ServerCreateParams};
 use crate::ui::confirm::ConfirmDialog;
 use crate::ui::form::{FormAction, FormWidget, SelectOption};
 use crate::ui::resource_list::{ResourceList, Row};
+use crate::ui::select_popup::{ItemHint, SelectItem, SelectPopup, SelectResult};
 
 use self::view_model::{
     server_columns_full, server_create_defs, server_detail_data_full, server_to_row_full,
 };
+
+#[derive(Debug, Clone)]
+pub struct ResizePendingInfo {
+    pub old_flavor_id: String,
+    pub new_flavor_id: String,
+}
 
 pub struct ServerModule {
     view_state: ViewState,
@@ -30,6 +37,8 @@ pub struct ServerModule {
     all_tenants: bool,
     is_admin: bool,
     migration_progress: Option<(String, ServerMigration)>,
+    select_popup: Option<SelectPopup>,
+    resize_pending: Option<ResizePendingInfo>,
     cached_flavors: Vec<Flavor>,
     // Cached dropdown options — populated by handle_event, applied to form on open/load
     cached_flavor_opts: Vec<SelectOption>,
@@ -51,7 +60,9 @@ impl ServerModule {
             form: None,
             all_tenants: false,
             is_admin: false,
-            migration_progress: None, // (server_id, ServerMigration)
+            migration_progress: None,
+            select_popup: None,
+            resize_pending: None,
             cached_flavors: Vec::new(),
             cached_flavor_opts: Vec::new(),
             cached_image_opts: Vec::new(),
@@ -104,6 +115,7 @@ impl ServerModule {
             PendingAction::Delete { id, name } => Some(Action::DeleteServer { id, name }),
             PendingAction::Reboot { id, hard } => Some(Action::RebootServer { id, hard }),
             PendingAction::Stop { id } => Some(Action::StopServer { id }),
+            PendingAction::Resize { id, flavor_id } => Some(Action::ResizeServer { id, flavor_id }),
             PendingAction::ConfirmResize { id } => Some(Action::ConfirmResize { id }),
             PendingAction::RevertResize { id } => Some(Action::RevertResize { id }),
             PendingAction::LiveMigrate { id } => Some(Action::LiveMigrateServer {
@@ -187,7 +199,56 @@ impl ServerModule {
         }
     }
 
+    fn build_flavor_items(&self, current_flavor_id: &str, current_disk: Option<u32>) -> Vec<SelectItem> {
+        self.cached_flavors
+            .iter()
+            .map(|f| {
+                let hint = if f.id == current_flavor_id {
+                    ItemHint::Current
+                } else if current_disk.is_some_and(|d| f.disk < d) {
+                    ItemHint::Warning("disk shrink".into())
+                } else {
+                    ItemHint::Normal
+                };
+                SelectItem {
+                    id: f.id.clone(),
+                    label: format!("{} ({}vCPU / {}MB / {}GB)", f.name, f.vcpus, f.ram, f.disk),
+                    hint,
+                }
+            })
+            .collect()
+    }
+
     fn handle_detail_key(&mut self, key: KeyEvent) -> Option<Action> {
+        // SelectPopup takes priority after ConfirmDialog
+        if let Some(ref mut popup) = self.select_popup {
+            match popup.handle_key(key) {
+                SelectResult::Selected(flavor_id) => {
+                    let flavor_name = self.cached_flavors.iter()
+                        .find(|f| f.id == flavor_id)
+                        .map(|f| f.name.as_str())
+                        .unwrap_or(&flavor_id);
+                    let msg = format!("Resize to {flavor_name}?");
+                    if let ViewState::Detail(ref id) = self.view_state {
+                        let id = id.clone();
+                        self.select_popup = None;
+                        self.confirm.open(
+                            ConfirmDialog::yes_no(msg),
+                            PendingAction::Resize { id, flavor_id },
+                        );
+                    } else {
+                        self.select_popup = None;
+                    }
+                    return None;
+                }
+                SelectResult::Cancelled => {
+                    self.select_popup = None;
+                    return None;
+                }
+                SelectResult::Pending => return None,
+            }
+        }
+
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Left => {
                 self.view_state = ViewState::List;
@@ -219,6 +280,23 @@ impl ServerModule {
                 }
                 None
             }
+            // Resize (ACTIVE/SHUTOFF)
+            KeyCode::Char('F') => {
+                if let ViewState::Detail(ref id) = self.view_state {
+                    let server = self.servers.iter().find(|s| s.id == *id);
+                    if server.is_some_and(|s| s.status == "ACTIVE" || s.status == "SHUTOFF") {
+                        if self.cached_flavors.is_empty() {
+                            let _ = self.action_tx.send(Action::FetchFlavors);
+                        } else {
+                            let current_flavor_id = server.map(|s| s.flavor.id.as_str()).unwrap_or("");
+                            let current_disk = server.and_then(|s| s.flavor.disk);
+                            let items = self.build_flavor_items(current_flavor_id, current_disk);
+                            self.select_popup = Some(SelectPopup::new("Select Flavor", items));
+                        }
+                    }
+                }
+                None
+            }
             // Migration (admin-only)
             KeyCode::Char('M') if self.is_admin => {
                 if let ViewState::Detail(ref id) = self.view_state {
@@ -240,16 +318,23 @@ impl ServerModule {
                 }
                 None
             }
-            // Confirm/Revert (VERIFY_RESIZE only)
+            // Confirm/Revert (VERIFY_RESIZE only) — branches on resize_pending
             KeyCode::Char('Y') => {
                 if let ViewState::Detail(ref id) = self.view_state {
                     let server = self.servers.iter().find(|s| s.id == *id);
                     if server.is_some_and(|s| s.status == "VERIFY_RESIZE") {
                         let id = id.clone();
-                        self.confirm.open(
-                            ConfirmDialog::yes_no("Confirm migration?"),
-                            PendingAction::ConfirmMigrate { id },
-                        );
+                        if self.resize_pending.is_some() {
+                            self.confirm.open(
+                                ConfirmDialog::yes_no("Confirm resize?"),
+                                PendingAction::ConfirmResize { id },
+                            );
+                        } else {
+                            self.confirm.open(
+                                ConfirmDialog::yes_no("Confirm migration?"),
+                                PendingAction::ConfirmMigrate { id },
+                            );
+                        }
                     }
                 }
                 None
@@ -259,10 +344,17 @@ impl ServerModule {
                     let server = self.servers.iter().find(|s| s.id == *id);
                     if server.is_some_and(|s| s.status == "VERIFY_RESIZE") {
                         let id = id.clone();
-                        self.confirm.open(
-                            ConfirmDialog::yes_no("Revert migration?"),
-                            PendingAction::RevertMigrate { id },
-                        );
+                        if self.resize_pending.is_some() {
+                            self.confirm.open(
+                                ConfirmDialog::yes_no("Revert resize?"),
+                                PendingAction::RevertResize { id },
+                            );
+                        } else {
+                            self.confirm.open(
+                                ConfirmDialog::yes_no("Revert migration?"),
+                                PendingAction::RevertMigrate { id },
+                            );
+                        }
                     }
                 }
                 None
@@ -410,6 +502,18 @@ impl Component for ServerModule {
             | AppEvent::ServerCreated(_) => {
                 let _ = self.action_tx.send(Action::FetchServers);
             }
+            AppEvent::ServerResized { .. } => {
+                // Server is now in VERIFY_RESIZE — mark as resize pending
+                // We don't have old/new flavor info from the event, but we can derive
+                // from the ResizeServer action that was dispatched. For now, set a marker.
+                self.resize_pending = Some(super::server::ResizePendingInfo {
+                    old_flavor_id: String::new(),
+                    new_flavor_id: String::new(),
+                });
+            }
+            AppEvent::ResizeConfirmed { .. } | AppEvent::ResizeReverted { .. } => {
+                self.resize_pending = None;
+            }
             AppEvent::MigrationProgressLoaded { server_id, migration } => {
                 self.migration_progress = Some((server_id.clone(), migration.clone()));
             }
@@ -496,7 +600,11 @@ impl Component for ServerModule {
             }
         }
 
-        // Overlay: ConfirmDialog
+        // Overlay: SelectPopup
+        if let Some(ref popup) = self.select_popup {
+            popup.render(frame, area);
+        }
+        // Overlay: ConfirmDialog (highest priority)
         self.confirm.render(frame, area);
     }
 
@@ -509,15 +617,15 @@ impl Component for ServerModule {
                 let is_error = server.is_some_and(|s| s.status == "ERROR");
 
                 if is_verify && self.is_admin {
-                    "Esc:Back R:Reboot S:Start X:Stop M:Migrate C:Cold Y:Confirm N:Revert"
+                    "Esc:Back R:Reboot S:Start X:Stop F:Resize M:Migrate C:Cold Y:Confirm N:Revert"
                 } else if is_verify {
-                    "Esc:Back R:Reboot S:Start X:Stop Y:Confirm N:Revert"
+                    "Esc:Back R:Reboot S:Start X:Stop F:Resize Y:Confirm N:Revert"
                 } else if is_error && self.is_admin {
-                    "Esc:Back R:Reboot S:Start X:Stop M:Migrate C:Cold E:Evacuate"
+                    "Esc:Back R:Reboot S:Start X:Stop F:Resize M:Migrate C:Cold E:Evacuate"
                 } else if self.is_admin {
-                    "Esc:Back R:Reboot S:Start X:Stop M:Migrate C:Cold"
+                    "Esc:Back R:Reboot S:Start X:Stop F:Resize M:Migrate C:Cold"
                 } else {
-                    "Esc:Back R:Reboot S:Start X:Stop"
+                    "Esc:Back R:Reboot S:Start X:Stop F:Resize"
                 }
             }
             ViewState::Create => "Esc:Cancel Tab:Next Enter:Submit",
@@ -1162,5 +1270,206 @@ mod tests {
         module.handle_key(key(KeyCode::Enter)); // enter detail
         let hint = module.help_hint();
         assert!(!hint.contains("M:Migrate"), "Non-admin should not see Migrate");
+        assert!(hint.contains("F:Resize"), "Non-admin should see Resize");
+    }
+
+    // -- Resize keybinding tests -----------------------------------------------
+
+    fn setup_with_flavors() -> (ServerModule, mpsc::UnboundedReceiver<Action>) {
+        use crate::models::nova::Flavor;
+        let (tx, rx) = mpsc::unbounded_channel();
+        let mut module = ServerModule::new(tx);
+        let servers = vec![make_test_server("s1", "web-01", "ACTIVE")];
+        module.handle_event(&AppEvent::ServersLoaded(servers));
+        module.handle_event(&AppEvent::FlavorsLoaded(vec![
+            Flavor { id: "flv-1".into(), name: "m1.small".into(), vcpus: 1, ram: 2048, disk: 20, is_public: true },
+            Flavor { id: "flv-2".into(), name: "m1.medium".into(), vcpus: 2, ram: 4096, disk: 40, is_public: true },
+        ]));
+        (module, rx)
+    }
+
+    #[test]
+    fn test_detail_f_opens_select_popup_with_flavors() {
+        let (mut module, _rx) = setup_with_flavors();
+        module.handle_key(key(KeyCode::Enter)); // enter detail
+        assert!(module.select_popup.is_none());
+        module.handle_key(key(KeyCode::Char('F')));
+        assert!(module.select_popup.is_some());
+    }
+
+    #[test]
+    fn test_detail_f_no_op_on_shutoff() {
+        use crate::models::nova::Flavor;
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut module = ServerModule::new(tx);
+        let servers = vec![make_test_server("s1", "web-01", "SHUTOFF")];
+        module.handle_event(&AppEvent::ServersLoaded(servers));
+        module.handle_event(&AppEvent::FlavorsLoaded(vec![
+            Flavor { id: "flv-1".into(), name: "m1.small".into(), vcpus: 1, ram: 2048, disk: 20, is_public: true },
+        ]));
+        module.handle_key(key(KeyCode::Enter));
+        module.handle_key(key(KeyCode::Char('F')));
+        assert!(module.select_popup.is_some(), "F should work on SHUTOFF");
+    }
+
+    #[test]
+    fn test_detail_f_no_op_on_error_status() {
+        use crate::models::nova::Flavor;
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut module = ServerModule::new(tx);
+        let servers = vec![make_test_server("s1", "web-01", "ERROR")];
+        module.handle_event(&AppEvent::ServersLoaded(servers));
+        module.handle_event(&AppEvent::FlavorsLoaded(vec![
+            Flavor { id: "flv-1".into(), name: "m1.small".into(), vcpus: 1, ram: 2048, disk: 20, is_public: true },
+        ]));
+        module.handle_key(key(KeyCode::Enter));
+        module.handle_key(key(KeyCode::Char('F')));
+        assert!(module.select_popup.is_none(), "F should not work on ERROR status");
+    }
+
+    #[test]
+    fn test_detail_f_fetches_flavors_when_cache_empty() {
+        let (mut module, mut rx) = setup();
+        module.handle_key(key(KeyCode::Enter)); // detail
+        module.handle_key(key(KeyCode::Char('F')));
+        assert!(module.select_popup.is_none(), "No popup when flavors not cached");
+        let action = rx.try_recv().unwrap();
+        assert!(matches!(action, Action::FetchFlavors));
+    }
+
+    #[test]
+    fn test_select_popup_cancel_closes() {
+        let (mut module, _rx) = setup_with_flavors();
+        module.handle_key(key(KeyCode::Enter));
+        module.handle_key(key(KeyCode::Char('F')));
+        assert!(module.select_popup.is_some());
+        module.handle_key(key(KeyCode::Esc));
+        assert!(module.select_popup.is_none());
+    }
+
+    #[test]
+    fn test_select_popup_enter_opens_confirm() {
+        let (mut module, _rx) = setup_with_flavors();
+        module.handle_key(key(KeyCode::Enter)); // detail
+        module.handle_key(key(KeyCode::Char('F'))); // open popup
+        module.handle_key(key(KeyCode::Enter)); // select first flavor
+        assert!(module.select_popup.is_none());
+        assert!(module.confirm.is_active());
+    }
+
+    #[test]
+    fn test_select_popup_confirm_dispatches_resize() {
+        let (mut module, _rx) = setup_with_flavors();
+        module.handle_key(key(KeyCode::Enter)); // detail
+        module.handle_key(key(KeyCode::Char('F'))); // open popup
+        module.handle_key(key(KeyCode::Char('j'))); // move to m1.medium
+        module.handle_key(key(KeyCode::Enter)); // select
+        // Now confirm dialog is active
+        let action = module.handle_key(key(KeyCode::Char('y'))); // confirm
+        assert!(matches!(action, Some(Action::ResizeServer { id, flavor_id }) if id == "s1" && flavor_id == "flv-2"));
+    }
+
+    #[test]
+    fn test_resize_pending_set_on_server_resized() {
+        let (mut module, _rx) = setup();
+        assert!(module.resize_pending.is_none());
+        module.handle_event(&AppEvent::ServerResized { id: "s1".into() });
+        assert!(module.resize_pending.is_some());
+    }
+
+    #[test]
+    fn test_resize_pending_cleared_on_confirm() {
+        let (mut module, _rx) = setup();
+        module.resize_pending = Some(ResizePendingInfo {
+            old_flavor_id: "flv-1".into(),
+            new_flavor_id: "flv-2".into(),
+        });
+        module.handle_event(&AppEvent::ResizeConfirmed { id: "s1".into() });
+        assert!(module.resize_pending.is_none());
+    }
+
+    #[test]
+    fn test_resize_pending_cleared_on_revert() {
+        let (mut module, _rx) = setup();
+        module.resize_pending = Some(ResizePendingInfo {
+            old_flavor_id: "flv-1".into(),
+            new_flavor_id: "flv-2".into(),
+        });
+        module.handle_event(&AppEvent::ResizeReverted { id: "s1".into() });
+        assert!(module.resize_pending.is_none());
+    }
+
+    #[test]
+    fn test_y_confirm_resize_when_resize_pending() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut module = ServerModule::new(tx);
+        let servers = vec![make_test_server("s1", "web-01", "VERIFY_RESIZE")];
+        module.handle_event(&AppEvent::ServersLoaded(servers));
+        module.resize_pending = Some(ResizePendingInfo {
+            old_flavor_id: "flv-1".into(),
+            new_flavor_id: "flv-2".into(),
+        });
+        module.handle_key(key(KeyCode::Enter)); // detail
+        module.handle_key(key(KeyCode::Char('Y'))); // confirm
+        assert!(module.confirm.is_active());
+        let action = module.handle_key(key(KeyCode::Char('y')));
+        assert!(matches!(action, Some(Action::ConfirmResize { .. })));
+    }
+
+    #[test]
+    fn test_y_confirm_migration_when_no_resize_pending() {
+        let (mut module, _rx) = setup_admin_detail("VERIFY_RESIZE");
+        // No resize_pending → should confirm migration
+        module.handle_key(key(KeyCode::Char('Y')));
+        assert!(module.confirm.is_active());
+        let action = module.handle_key(key(KeyCode::Char('y')));
+        assert!(matches!(action, Some(Action::ConfirmMigration { .. })));
+    }
+
+    #[test]
+    fn test_n_revert_resize_when_resize_pending() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut module = ServerModule::new(tx);
+        let servers = vec![make_test_server("s1", "web-01", "VERIFY_RESIZE")];
+        module.handle_event(&AppEvent::ServersLoaded(servers));
+        module.resize_pending = Some(ResizePendingInfo {
+            old_flavor_id: "flv-1".into(),
+            new_flavor_id: "flv-2".into(),
+        });
+        module.handle_key(key(KeyCode::Enter));
+        module.handle_key(key(KeyCode::Char('N')));
+        assert!(module.confirm.is_active());
+        let action = module.handle_key(key(KeyCode::Char('y')));
+        assert!(matches!(action, Some(Action::RevertResize { .. })));
+    }
+
+    // -- resolve_action for resize ---------------------------------------------
+
+    #[test]
+    fn test_resolve_resize() {
+        let action = ServerModule::resolve_action(PendingAction::Resize {
+            id: "s1".into(), flavor_id: "f2".into(),
+        });
+        assert!(matches!(action, Some(Action::ResizeServer { id, flavor_id }) if id == "s1" && flavor_id == "f2"));
+    }
+
+    #[test]
+    fn test_resolve_confirm_resize() {
+        let action = ServerModule::resolve_action(PendingAction::ConfirmResize { id: "s1".into() });
+        assert!(matches!(action, Some(Action::ConfirmResize { id }) if id == "s1"));
+    }
+
+    #[test]
+    fn test_resolve_revert_resize() {
+        let action = ServerModule::resolve_action(PendingAction::RevertResize { id: "s1".into() });
+        assert!(matches!(action, Some(Action::RevertResize { id }) if id == "s1"));
+    }
+
+    #[test]
+    fn test_help_hint_includes_resize() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Enter));
+        let hint = module.help_hint();
+        assert!(hint.contains("F:Resize"));
     }
 }

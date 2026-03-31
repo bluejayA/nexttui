@@ -48,6 +48,7 @@ pub enum PendingAction {
     DeleteProject { id: String, name: String },
     DeleteUser { id: String, name: String },
     // Nova: Resize
+    Resize { id: String, flavor_id: String },
     ConfirmResize { id: String },
     RevertResize { id: String },
     // Nova: Migration / Evacuate
@@ -187,10 +188,11 @@ mod tests {
     #[test]
     fn test_resize_pending_action_variants() {
         let actions: Vec<PendingAction> = vec![
+            PendingAction::Resize { id: "s1".into(), flavor_id: "f2".into() },
             PendingAction::ConfirmResize { id: "s1".into() },
             PendingAction::RevertResize { id: "s1".into() },
         ];
-        assert_eq!(actions.len(), 2);
+        assert_eq!(actions.len(), 3);
     }
 
     #[test]
