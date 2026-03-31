@@ -1,7 +1,7 @@
 # DevFlow State
 
 ## Current Phase
-CONSTRUCTION
+finished
 
 ## Current Stage
 finishing (PR pending)
@@ -12,11 +12,8 @@ B (PR pending)
 ## Completed Units
 - Unit 1+2: Theme 시스템 + LayoutManager toast_bar + Toast (694→717 tests, PR #51 merged)
 - Unit 3: Sidebar + Header + StatusBar 리디자인 (717→726 tests, PR #52 merged)
-
-## In Progress
-- Unit 4: ResourceList + DetailView + 팝업 Theme (726→729 tests, 코드 완료, 미커밋)
+- Unit 4: ResourceList + DetailView + 팝업 Theme (726→729 tests, 커밋 완료, PR 대기)
   - 브랜치: feature/ui-redesign-unit4
-  - 다음 단계: 리뷰 → 커밋 → PR
 
 ## Complexity
 Standard
