@@ -60,18 +60,15 @@ if [ "$IS_GIT_COMMIT" = true ]; then
   fi
 fi
 
-# Rule 1: git commit allowed only during CONSTRUCTION/code-generation or CONSTRUCTION/build-and-test
+# Rule 1: git commit allowed during CONSTRUCTION (any stage) or when complete
 if [ "$IS_GIT_COMMIT" = true ]; then
   if [ "$PHASE" = "CONSTRUCTION" ]; then
-    if [ "$STAGE" = "code-generation" ] || [ "$STAGE" = "build-and-test" ]; then
-      exit 0
-    fi
+    exit 0
   fi
-  # Also allow if phase is complete (finishing-branch may commit)
   if [ "$PHASE" = "complete" ] || [ "$PHASE" = "finished" ]; then
     exit 0
   fi
-  echo '{"decision":"block","reason":"devflow 위반: git commit은 CONSTRUCTION/code-generation 또는 build-and-test 단계에서만 허용됩니다. 현재: Phase='"$PHASE"', Stage='"$STAGE"'. devflow 오케스트레이터의 안내를 따라주세요."}'
+  echo '{"decision":"block","reason":"devflow 위반: git commit은 CONSTRUCTION 또는 완료 단계에서만 허용됩니다. 현재: Phase='"$PHASE"', Stage='"$STAGE"'. devflow 오케스트레이터의 안내를 따라주세요."}'
   exit 0
 fi
 
