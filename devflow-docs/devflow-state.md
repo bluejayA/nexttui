@@ -4,10 +4,13 @@
 CONSTRUCTION
 
 ## Current Stage
-code-generation (Unit 1+2 합산, code-plan 작성 완료 → B 승인 대기)
+finishing (Unit 1+2 완료, PR 대기)
+
+## Finishing Choice
+B (PR pending)
 
 ## Completed Units
-(없음 — Unit 1 코드 미머지 확인, Unit 1+2 통합 재작성)
+- Unit 1+2: Theme 시스템 + LayoutManager toast_bar + Toast (694→717 tests, 5-agent review PASS)
 
 ## Complexity
 Standard
