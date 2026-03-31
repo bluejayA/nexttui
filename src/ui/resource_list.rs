@@ -1,6 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Color, Modifier, Style};
+
+use super::theme::Theme;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row as TuiRow, Table, TableState};
 use ratatui::Frame;
@@ -48,13 +50,13 @@ pub enum RowStyleHint {
 }
 
 impl RowStyleHint {
-    pub fn color(&self) -> Color {
+    pub fn style(&self) -> Style {
         match self {
-            RowStyleHint::Normal => Color::White,
-            RowStyleHint::Active => Color::Green,
-            RowStyleHint::Error => Color::Red,
-            RowStyleHint::Warning => Color::Yellow,
-            RowStyleHint::Disabled => Color::DarkGray,
+            RowStyleHint::Normal => Style::default().fg(Color::White),
+            RowStyleHint::Active => Theme::done(),
+            RowStyleHint::Error => Theme::error(),
+            RowStyleHint::Warning => Theme::warning(),
+            RowStyleHint::Disabled => Theme::disabled(),
         }
     }
 }
@@ -174,9 +176,7 @@ impl ResourceList {
         if self.loading {
             let spinner = Paragraph::new(Line::from(Span::styled(
                 "Loading...",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
+                Theme::active(),
             )))
             .alignment(ratatui::layout::Alignment::Center);
             frame.render_widget(spinner, area);
@@ -186,7 +186,7 @@ impl ResourceList {
         if self.filtered_indices.is_empty() {
             let empty = Paragraph::new(Line::from(Span::styled(
                 "No items found",
-                Style::default().fg(Color::DarkGray),
+                Theme::waiting(),
             )))
             .alignment(ratatui::layout::Alignment::Center);
             frame.render_widget(empty, area);
@@ -215,18 +215,15 @@ impl ResourceList {
             .enumerate()
             .map(|(vi, &ri)| {
                 let row = &self.rows[ri];
-                let base_color = row
+                let base_style = row
                     .style_hint
                     .as_ref()
-                    .map(|h| h.color())
-                    .unwrap_or(Color::White);
+                    .map(|h| h.style())
+                    .unwrap_or_else(|| Style::default().fg(Color::White));
                 let style = if vi == self.selected {
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::White)
-                        .add_modifier(Modifier::BOLD)
+                    base_style.patch(Theme::highlight())
                 } else {
-                    Style::default().fg(base_color)
+                    base_style
                 };
                 let cells: Vec<Cell> = row.cells.iter().map(|c| Cell::from(c.as_str())).collect();
                 TuiRow::new(cells).style(style)
@@ -384,5 +381,26 @@ mod tests {
         list.handle_key(key(KeyCode::Char('j')));
         assert_eq!(list.selected_index(), 0);
         assert!(list.selected_id().is_none());
+    }
+
+    #[test]
+    fn test_row_style_active_uses_theme_done() {
+        let style = RowStyleHint::Active.style();
+        assert_eq!(style.fg, Some(Color::Green)); // Theme::done()
+    }
+
+    #[test]
+    fn test_row_style_error_uses_theme_error() {
+        let style = RowStyleHint::Error.style();
+        assert_eq!(style.fg, Some(Color::Red)); // Theme::error()
+    }
+
+    #[test]
+    fn test_selection_preserves_semantic_color() {
+        // Theme::highlight() is Bold only (no fg) — patch preserves base fg
+        let base = RowStyleHint::Active.style(); // Green
+        let selected = base.patch(super::Theme::highlight());
+        assert_eq!(selected.fg, Some(Color::Green)); // Green preserved
+        assert!(selected.add_modifier.contains(Modifier::BOLD)); // Bold added
     }
 }

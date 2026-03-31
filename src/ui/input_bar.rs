@@ -2,10 +2,12 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 const MAX_BUFFER_LEN: usize = 256;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
+
+use super::theme::Theme;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InputMode {
@@ -114,23 +116,18 @@ impl InputBar {
         let (prefix, style) = match self.mode {
             InputMode::Normal => {
                 let hint = "Press : for command, / for search";
-                let widget = Paragraph::new(Span::styled(
-                    hint,
-                    Style::default()
-                        .fg(Color::DarkGray)
-                        .add_modifier(Modifier::DIM),
-                ));
+                let widget = Paragraph::new(Span::styled(hint, Theme::disabled()));
                 frame.render_widget(widget, area);
                 return;
             }
-            InputMode::Command => (":", Style::default().fg(Color::Yellow)),
-            InputMode::Search => ("/", Style::default().fg(Color::Cyan)),
+            InputMode::Command => (":", Theme::warning()),
+            InputMode::Search => ("/", Theme::focus_border()),
         };
 
         let line = Line::from(vec![
             Span::styled(prefix, style),
             Span::styled(&self.buffer, Style::default().fg(Color::White)),
-            Span::styled("_", Style::default().fg(Color::Gray)),
+            Span::styled("_", Theme::waiting()),
         ]);
         frame.render_widget(Paragraph::new(line), area);
     }

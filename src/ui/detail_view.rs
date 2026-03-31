@@ -8,6 +8,7 @@ use ratatui::Frame;
 use crate::action::Action;
 use crate::models::common::Route;
 use crate::ui::resource_list::RowStyleHint;
+use super::theme::Theme;
 
 pub struct DetailData {
     pub title: String,
@@ -137,9 +138,7 @@ impl DetailView {
         if self.loading {
             let widget = Paragraph::new(Line::from(Span::styled(
                 "Loading...",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
+                Theme::active(),
             )))
             .alignment(ratatui::layout::Alignment::Center);
             frame.render_widget(widget, area);
@@ -157,18 +156,16 @@ impl DetailView {
 
         let mut lines = vec![Line::from(Span::styled(
             &data.title,
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
+            Theme::highlight(),
         ))];
         lines.push(Line::from(""));
 
         for section in &data.sections {
             lines.push(Line::from(Span::styled(
-                format!("-- {} ", section.name),
+                &section.name,
                 Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
             )));
 
             // Calculate max key width for aligned columns within this section
@@ -186,16 +183,16 @@ impl DetailView {
             for field in &section.fields {
                 match field {
                     DetailField::KeyValue { key, value, style } => {
-                        let val_color = style
+                        let val_style = style
                             .as_ref()
-                            .map(|s| s.color())
-                            .unwrap_or(Color::White);
+                            .map(|s| s.style())
+                            .unwrap_or_else(|| Style::default().fg(Color::White));
                         lines.push(Line::from(vec![
                             Span::styled(
                                 format!("  {:>width$}: ", key, width = key_width),
-                                Style::default().fg(Color::LightBlue),
+                                Theme::focus_border(),
                             ),
-                            Span::styled(value, Style::default().fg(val_color)),
+                            Span::styled(value, val_style),
                         ]));
                     }
                     DetailField::NestedTable {
@@ -216,7 +213,7 @@ impl DetailView {
 
                         lines.push(Line::from(Span::styled(
                             format!("  {:>width$}:", label, width = key_width),
-                            Style::default().fg(Color::Gray),
+                            Theme::waiting(),
                         )));
                         let col_padding = " ".repeat(key_width + 4);
 
@@ -249,13 +246,11 @@ impl DetailView {
                         lines.push(Line::from(vec![
                             Span::styled(
                                 format!("  {:>width$}: ", key, width = key_width),
-                                Style::default().fg(Color::LightBlue),
+                                Theme::focus_border(),
                             ),
                             Span::styled(
                                 format!("[{display}]"),
-                                Style::default()
-                                    .fg(Color::Cyan)
-                                    .add_modifier(Modifier::UNDERLINED),
+                                Theme::link(),
                             ),
                         ]));
                     }

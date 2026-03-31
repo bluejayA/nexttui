@@ -7,6 +7,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
+use super::theme::Theme;
+
 const MAX_INPUT_LEN: usize = 256;
 const POPUP_VISIBLE_ITEMS: usize = 10;
 
@@ -844,7 +846,7 @@ impl FormWidget {
         let block = Block::default()
             .title(format!(" {} ", self.title))
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan));
+            .border_style(Theme::focus_border());
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
@@ -868,11 +870,10 @@ impl FormWidget {
 
             let is_focused = i == self.focused;
             let label_style = if is_focused {
-                Style::default()
-                    .fg(Color::Cyan)
+                Theme::focus_border()
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::Gray)
+                Theme::waiting()
             };
 
             let is_required = def.validations().contains(&Validation::Required);
@@ -905,7 +906,7 @@ impl FormWidget {
                     Span::raw(padding),
                     Span::styled(
                         format!("! {err_msg}"),
-                        Style::default().fg(Color::Red),
+                        Theme::error(),
                     ),
                 ]);
                 let err_area = Rect::new(inner.x, y, inner.width, 1);
@@ -925,7 +926,7 @@ impl FormWidget {
             };
             let hint = Line::from(Span::styled(
                 hint_text,
-                Style::default().fg(Color::DarkGray),
+                Theme::disabled(),
             ));
             let hint_area = Rect::new(inner.x, hint_y, inner.width, 1);
             frame.render_widget(Paragraph::new(hint), hint_area);
@@ -972,7 +973,7 @@ impl FormWidget {
                         Span::styled(after, Style::default().fg(Color::White)),
                     ]
                 } else if truncated.is_empty() {
-                    vec![Span::styled("(empty)", Style::default().fg(Color::DarkGray))]
+                    vec![Span::styled("(empty)", Theme::waiting())]
                 } else {
                     vec![Span::styled(truncated, Style::default().fg(Color::White))]
                 }
@@ -984,13 +985,13 @@ impl FormWidget {
                     .unwrap_or_else(|| "(select)".to_string());
                 let arrow = if *open { " ▲" } else { " ▼" };
                 let style = if is_focused {
-                    Style::default().fg(Color::Cyan)
+                    Theme::focus_border()
                 } else {
                     Style::default().fg(Color::White)
                 };
                 vec![
                     Span::styled(display, style),
-                    Span::styled(arrow, Style::default().fg(Color::DarkGray)),
+                    Span::styled(arrow, Theme::waiting()),
                 ]
             }
             (
@@ -1010,19 +1011,19 @@ impl FormWidget {
                 };
                 let arrow = if *open { " ▲" } else { " ▼" };
                 let style = if is_focused {
-                    Style::default().fg(Color::Cyan)
+                    Theme::focus_border()
                 } else {
                     Style::default().fg(Color::White)
                 };
                 vec![
                     Span::styled(display, style),
-                    Span::styled(arrow, Style::default().fg(Color::DarkGray)),
+                    Span::styled(arrow, Theme::waiting()),
                 ]
             }
             (FieldDef::Checkbox { .. }, FieldState::Checkbox { checked }) => {
                 let icon = if *checked { "[x]" } else { "[ ]" };
                 let style = if is_focused {
-                    Style::default().fg(Color::Cyan)
+                    Theme::focus_border()
                 } else {
                     Style::default().fg(Color::White)
                 };
@@ -1095,8 +1096,7 @@ impl FormWidget {
                         let is_sel = *selected == Some(i);
                         let prefix = if is_sel { "▸ " } else { "  " };
                         let style = if is_sel {
-                            Style::default()
-                                .fg(Color::Cyan)
+                            Theme::focus_border()
                                 .add_modifier(Modifier::BOLD)
                         } else {
                             Style::default().fg(Color::White)
@@ -1107,7 +1107,7 @@ impl FormWidget {
 
                 let block = Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Cyan));
+                    .border_style(Theme::focus_border());
                 let widget = Paragraph::new(lines).block(block);
                 frame.render_widget(widget, popup_area);
             }
@@ -1152,8 +1152,7 @@ impl FormWidget {
                         let check = if checked { "[x]" } else { "[ ]" };
                         let prefix = if is_cursor { "▸" } else { " " };
                         let style = if is_cursor {
-                            Style::default()
-                                .fg(Color::Cyan)
+                            Theme::focus_border()
                                 .add_modifier(Modifier::BOLD)
                         } else {
                             Style::default().fg(Color::White)
@@ -1167,7 +1166,7 @@ impl FormWidget {
 
                 let block = Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Cyan));
+                    .border_style(Theme::focus_border());
                 let widget = Paragraph::new(lines).block(block);
                 frame.render_widget(widget, popup_area);
             }
@@ -1179,7 +1178,7 @@ impl FormWidget {
         let block = Block::default()
             .title(format!(" Confirm {} ", self.title))
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Yellow));
+            .border_style(Theme::warning());
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
@@ -1198,7 +1197,7 @@ impl FormWidget {
             let label_text = format!("{:>width$}: ", def.label(), width = label_width);
             let value_text = self.confirm_value_text(def, state);
             let line = Line::from(vec![
-                Span::styled(label_text, Style::default().fg(Color::Cyan)),
+                Span::styled(label_text, Theme::focus_border()),
                 Span::styled(value_text, Style::default().fg(Color::White)),
             ]);
             let line_area = Rect::new(inner.x, y, inner.width, 1);
@@ -1211,7 +1210,7 @@ impl FormWidget {
         if hint_y > y {
             let hint = Line::from(Span::styled(
                 " Enter Confirm  Esc Back ",
-                Style::default().fg(Color::DarkGray),
+                Theme::disabled(),
             ));
             let hint_area = Rect::new(inner.x, hint_y, inner.width, 1);
             frame.render_widget(Paragraph::new(hint), hint_area);
