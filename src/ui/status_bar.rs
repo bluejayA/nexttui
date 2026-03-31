@@ -4,8 +4,6 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-use super::toast::ToastMessage;
-
 pub struct StatusInfo {
     pub message: String,
     pub help_hint: String,
@@ -25,14 +23,7 @@ impl StatusBar {
         frame: &mut Frame,
         area: Rect,
         info: &StatusInfo,
-        active_toasts: &[ToastMessage],
     ) {
-        // Toast takes priority
-        if let Some(toast) = active_toasts.first() {
-            toast.render(frame, area);
-            return;
-        }
-
         let left = if let (Some(count), Some(idx)) = (info.item_count, info.selected_index) {
             format!("{} | {}/{}", info.message, idx + 1, count)
         } else {
