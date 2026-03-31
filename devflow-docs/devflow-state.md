@@ -1,19 +1,13 @@
 # DevFlow State
 
 ## Current Phase
-finished
+CONSTRUCTION
 
 ## Current Stage
-PR 생성 중
-
-## Finishing Choice
-B (PR pending)
-
-## PR URL
-https://github.com/bluejayA/nexttui/pull/51
+code-generation (Unit 3 code-plan 작성 → B 승인 대기)
 
 ## Completed Units
-- Unit 1+2: Theme 시스템 + LayoutManager toast_bar + Toast (694→717 tests, 5-agent review PASS)
+- Unit 1+2: Theme 시스템 + LayoutManager toast_bar + Toast (694→717 tests, PR #51 merged)
 
 ## Complexity
 Standard

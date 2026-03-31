@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
-use ratatui::widgets::{Block, Borders};
+use ratatui::widgets::{Block, BorderType, Borders};
 use tokio::sync::mpsc;
 
 use crate::action::Action;
@@ -19,7 +19,7 @@ use crate::ui::header::{Header, HeaderContext};
 use crate::ui::layout::LayoutManager;
 use crate::ui::sidebar::Sidebar;
 use crate::ui::status_bar::{StatusBar, StatusInfo};
-use crate::ui::theme::Theme;
+use crate::ui::theme::{self, Theme};
 use crate::ui::toast::{ToastMessage, ToastSeverity};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -430,11 +430,13 @@ impl App {
 
         // Header
         let route_label = self.route_label(&self.router.current());
+        let cloud_config = self.config.active_cloud_config();
+        let user_name = cloud_config.auth.username.clone().unwrap_or_default();
         let cloud_name = self.config.active_cloud_name().to_string();
-        let region = self.config.active_cloud_config()
+        let region = cloud_config
             .region_name.as_deref().unwrap_or("default").to_string();
         self.header.render(frame, areas.header, &HeaderContext {
-            resource_type: route_label.to_string(),
+            user_name,
             cloud_name,
             region,
             all_tenants: self.all_tenants.load(Ordering::Relaxed),
@@ -454,29 +456,41 @@ impl App {
             } else {
                 Theme::unfocus_border()
             };
+            let title = theme::panel_title(&route_label, content_focused);
             let content_block = Block::default()
+                .title(title)
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .border_style(content_border_style);
             let content_inner = content_block.inner(areas.content);
             frame.render_widget(content_block, areas.content);
             component.render(frame, content_inner);
         }
 
-        // Status bar
+        // Status bar — context_hints from component help_hint or defaults
         let component_hint = self.components
             .get(&self.router.current())
             .map(|c| c.help_hint())
             .unwrap_or("");
-        let help_hint = if component_hint.is_empty() {
-            "←→:Navigate q:Quit /:Search".to_string()
+        let context_hints: Vec<(String, String)> = if component_hint.is_empty() {
+            vec![
+                ("j/k".into(), "이동".into()),
+                ("Enter".into(), "선택".into()),
+                ("q".into(), "종료".into()),
+            ]
         } else {
-            component_hint.to_string()
+            component_hint
+                .split(' ')
+                .filter_map(|part| {
+                    part.split_once(':').map(|(k, v)| (k.to_string(), v.to_string()))
+                })
+                .collect()
         };
         let info = StatusInfo {
-            message: format!("{} | {:?}", route_label, self.input_mode),
-            help_hint,
+            panel_name: route_label.to_string(),
             item_count: None,
             selected_index: None,
+            context_hints,
         };
         // Toast — render in dedicated toast_bar area
         let active_toasts = self.background_tracker.active_toasts();
