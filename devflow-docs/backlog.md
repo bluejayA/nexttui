@@ -189,6 +189,18 @@
 **Motivation**: FR-05.4, FR-05.5. 멀티 백엔드 환경에서 인증 체계 중립적 설계 필요
 **Ref**: `detail-design-port-adapter.md` Phase 2 HMAC/API Key 주석
 
+#### BL-P2-033: TestBackend 스냅샷 테스트 확장
+**Priority**: Low
+**Category**: Testing / UX Verification
+**Description**:
+- 현재 FormWidget에만 있는 `TestBackend` 렌더 테스트를 핵심 UI 전체로 확장
+- `insta` 크레이트 도입으로 스냅샷 기반 렌더링 회귀 테스트 구축
+- 대상: 서버 리스트 테이블, 디테일 패널, 네비게이션 바, 상태 바 등
+- 다양한 터미널 크기(40x10, 80x24, 120x40 등)에서 레이아웃 깨짐 검증
+- 키 입력 후 상태 변화 → 재렌더 → 스냅샷 비교 시나리오
+**Motivation**: 현재 580+ 테스트가 로직/상태 전이를 검증하지만, 실제 렌더링 출력(프레젠테이션 레이어)은 FormWidget 5개 테스트만 커버. UI 변경 시 레이아웃 깨짐이나 스타일 변경을 자동 감지할 수 없음
+**Ref**: `src/ui/form.rs:2160` 기존 `render_to_buffer` 헬퍼
+
 #### BL-P2-018: 커스텀 키 바인딩
 **Priority**: Low
 **Category**: UX
@@ -216,6 +228,154 @@
 - `replace_*()` 메서드 활용한 런타임 Adapter 스왑
 **Motivation**: TR-09. Phase 1의 Thick Client에서 Phase 2의 Service Layer 중심으로 점진 전환
 **Ref**: `detail-design-port-adapter.md` Phase 2 Adapter Swap 섹션
+
+### Stage 2.5: UI/UX Redesign
+
+> devflow-tui + btop 참조 UI 개선. 3단계 구현.
+> 분석 문서: `devflow-docs/inception/ui-redesign-analysis.md`
+
+#### Stage 2.5-A: Theme & Polish (High Priority)
+
+##### BL-P2-034: Theme 시스템 도입
+**Priority**: High
+**Category**: UX
+**Description**:
+- `src/ui/theme.rs` 신규: `Theme` 구조체로 모든 색상/스타일 중앙화
+- devflow-tui 패턴 참조: `active()`, `done()`, `error()`, `waiting()`, `focus_border()`, `unfocus_border()`, `highlight()`, `disabled()`
+- `key_hint()`, `panel_title()`, `status_span()` 유틸 함수
+- `Icons` 구조체: `●✓○✗⟳◐` 상태 아이콘 정의
+- 기존 하드코딩된 색상을 Theme 호출로 교체
+**Motivation**: 색상이 각 파일에 하드코딩되어 있어 일관성 유지 어려움. 중앙화로 테마 변경 용이
+**Ref**: `devflow-tui/src/ui/theme.rs`, `ui-redesign-analysis.md` Section 6
+
+##### BL-P2-035: Rounded 보더 + 포커스 피드백
+**Priority**: High
+**Category**: UX
+**Depends on**: BL-P2-034
+**Description**:
+- Sidebar + Content 영역 모두 `BorderType::Rounded` 적용
+- 포커스 상태: `Theme::focus_border()` (Cyan), 비포커스: `Theme::unfocus_border()` (DarkGray)
+- 기존 Sidebar RIGHT-only border → 전체 Block border로 변경
+- Content 영역에 Block 컨테이너 추가
+**Motivation**: 현재 Content 영역에 보더 없어 텍스트가 떠다니는 느낌. 포커스 상태 불명확
+
+##### BL-P2-036: 패널 타이틀 포맷
+**Priority**: High
+**Category**: UX
+**Depends on**: BL-P2-034
+**Description**:
+- 포커스 패널: `[ Panel Name ]` (bracket 포함)
+- 비포커스 패널: `  Panel Name  ` (space padding)
+- `theme::panel_title(name, focused)` 함수 활용
+**Motivation**: devflow-tui에서 검증된 패턴. 포커스 상태를 타이틀에서도 즉시 식별 가능
+
+##### BL-P2-037: 상태바 리디자인
+**Priority**: High
+**Category**: UX
+**Depends on**: BL-P2-034
+**Description**:
+- 배경: `on_dark_gray().white()` (현재는 투명)
+- 좌측: `[패널명] context` (예: `[Servers] 1/5`)
+- 우측: key hints — key=Cyan Bold + description=Dim
+- `theme::key_hint(key, desc)` 활용
+- Toast 표시 시 상태바 오버라이드 유지
+**Motivation**: 현재 상태바 Gray 힌트 가독성 낮음. devflow-tui 패턴이 더 명확
+
+##### BL-P2-038: 리스트 하이라이트 개선
+**Priority**: High
+**Category**: UX
+**Depends on**: BL-P2-034
+**Description**:
+- 선택 행: Black on White → White Bold (시맨틱 컬러 유지)
+- ACTIVE 행 선택 시에도 Green 유지, ERROR는 Red 유지
+- 선택 표시: `>` prefix 또는 White Bold modifier
+**Motivation**: 현재 선택 시 시맨틱 컬러(Active=Green, Error=Red) 정보 손실
+
+#### Stage 2.5-B: Visual Enhancement (Medium Priority)
+
+##### BL-P2-039: 헤더 리디자인
+**Priority**: Medium
+**Category**: UX
+**Depends on**: BL-P2-034
+**Description**:
+- 기본 스타일: Dim (전체)
+- 앱명: White Bold (`nexttui`)
+- 채움선: `─` 문자로 좌→우 연결
+- 우측: `user@cloud | Region` (context 정보)
+- devflow-tui 헤더 패턴 참조
+**Motivation**: 현재 Blue 뱃지 배경이 과도. Dim 기반이 더 세련됨
+
+##### BL-P2-040: 상태 아이콘 도입
+**Priority**: Medium
+**Category**: UX
+**Depends on**: BL-P2-034
+**Description**:
+- Server 상태: `●` ACTIVE, `○` SHUTOFF, `✗` ERROR, `⟳` BUILD/RESIZE, `◐` VERIFY_RESIZE, `↔` MIGRATING
+- Sidebar 모듈: 선택 마커 `>` → `▶` 또는 유지
+- 리스트/디테일 뷰에서 상태 텍스트 앞에 아이콘 표시
+- `Theme::Icons` 구조체 활용
+**Motivation**: 색상만으로는 접근성 부족. 아이콘으로 추가 시각 채널 제공
+
+##### BL-P2-041: 스크롤바 추가
+**Priority**: Medium
+**Category**: UX
+**Description**:
+- 리스트 뷰: 우측 수직 스크롤바 (block characters: `█▐│`)
+- 디테일 뷰: 스크롤 가능 시 스크롤바 표시
+- 현재 위치/전체 비율 시각화
+**Motivation**: 사용자가 더 많은 데이터 존재 여부를 알 수 없음
+
+##### BL-P2-042: Content 보더 컨테이너
+**Priority**: Medium
+**Category**: UX
+**Depends on**: BL-P2-035
+**Description**:
+- List/Detail/Form 뷰를 Block 컨테이너로 감싸기
+- 뷰 상태에 따라 타이틀 변경: `[ Servers ]`, `[ Server: web-01 ]`, `[ Create Server ]`
+**Motivation**: Content 영역이 시각적 컨테이너 없이 플로팅
+
+##### BL-P2-043: Detail 섹션 구분 개선
+**Priority**: Medium
+**Category**: UX
+**Depends on**: BL-P2-035
+**Description**:
+- `-- Section --` 대시 구분 → Block title 또는 bold underline 섹션 헤더
+- 섹션 간 1줄 공백 유지
+- ResourceLink 포커스 시 시각적 피드백 (reverse 또는 bold)
+**Motivation**: ASCII 대시 구분자가 올드 스타일
+
+#### Stage 2.5-C: Advanced Layout (Low Priority)
+
+##### BL-P2-044: 반응형 레이아웃 모드
+**Priority**: Low
+**Category**: UX
+**Description**:
+- `LayoutMode` enum: TooSmall / Compact / Standard / Wide
+- Compact (< 120x30): Sidebar 숨김, 단일 패널
+- Standard (120x30+): 현재 Sidebar + Content
+- Wide (200x50+): Sidebar + List + Detail 동시 표시 (3-column)
+- devflow-tui `LayoutManager` 패턴 참조
+**Motivation**: 터미널 크기에 따라 최적 레이아웃 제공
+
+##### BL-P2-045: 다크 테마 옵션
+**Priority**: Low
+**Category**: UX
+**Depends on**: BL-P2-034
+**Description**:
+- Config에서 `theme: dark | light` 선택
+- 다크 테마: btop 스타일 어두운 배경 + 밝은 텍스트
+- Theme 구조체에 variant 추가
+**Motivation**: btop처럼 다크 테마가 장시간 모니터링에 적합
+
+##### BL-P2-046: NO_COLOR 접근성 지원
+**Priority**: Low
+**Category**: UX
+**Depends on**: BL-P2-034
+**Description**:
+- `NO_COLOR` 환경변수 감지 시 색상 대신 Bold/Dim/Underline만 사용
+- devflow-tui `no_color()` 패턴 참조
+- 모든 Theme 메서드에 NO_COLOR 분기 추가
+**Motivation**: 터미널 접근성 표준 (https://no-color.org)
 
 ### Stage 3: 신규 백엔드
 
