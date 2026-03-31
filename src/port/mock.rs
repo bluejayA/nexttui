@@ -60,6 +60,9 @@ impl super::nova::NovaPort for MockNovaAdapter {
     async fn list_server_events(&self, _server_id: &str) -> ApiResult<Vec<ServerEvent>> {
         Ok(vec![])
     }
+    async fn resize_server(&self, _server_id: &str, _flavor_id: &str) -> ApiResult<()> {
+        Ok(())
+    }
     async fn live_migrate_server(
         &self,
         _server_id: &str,

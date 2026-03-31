@@ -311,6 +311,22 @@ impl NovaPort for NovaHttpAdapter {
         Ok(resp.instance_actions)
     }
 
+    // -- Resize --
+
+    async fn resize_server(&self, server_id: &str, flavor_id: &str) -> ApiResult<()> {
+        let body = serde_json::json!({
+            "resize": {
+                "flavorRef": flavor_id
+            }
+        });
+        let req = self
+            .base
+            .post(&format!("/servers/{}/action", encode_param(server_id)))
+            .await?
+            .json(&body);
+        self.base.send_no_content(req).await
+    }
+
     // -- Migration --
 
     async fn live_migrate_server(

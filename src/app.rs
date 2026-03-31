@@ -300,6 +300,9 @@ impl App {
             | AppEvent::MigrationConfirmed { .. }
             | AppEvent::MigrationReverted { .. }
             | AppEvent::ServerEvacuated { .. }
+            | AppEvent::ServerResized { .. }
+            | AppEvent::ResizeConfirmed { .. }
+            | AppEvent::ResizeReverted { .. }
         );
         self.generate_toast(&event);
         for component in self.components.values_mut() {
@@ -343,6 +346,9 @@ impl App {
             Action::ConfirmMigration { .. } => Some("Confirming migration...".into()),
             Action::RevertMigration { .. } => Some("Reverting migration...".into()),
             Action::EvacuateServer { .. } => Some("Evacuating server...".into()),
+            Action::ResizeServer { .. } => Some("Resizing server...".into()),
+            Action::ConfirmResize { .. } => Some("Confirming resize...".into()),
+            Action::RevertResize { .. } => Some("Reverting resize...".into()),
             _ => None,
         }
     }
@@ -396,6 +402,10 @@ impl App {
             AppEvent::MigrationConfirmed { id } => (format!("Migration confirmed for {id}"), ToastLevel::Success),
             AppEvent::MigrationReverted { id } => (format!("Migration reverted for {id}"), ToastLevel::Success),
             AppEvent::ServerEvacuated { id } => (format!("Server {id} evacuated"), ToastLevel::Success),
+            // Resize
+            AppEvent::ServerResized { id } => (format!("Server {id} resized — confirm(Y) or revert(N)"), ToastLevel::Success),
+            AppEvent::ResizeConfirmed { id } => (format!("Resize confirmed for {id}"), ToastLevel::Success),
+            AppEvent::ResizeReverted { id } => (format!("Resize reverted for {id}"), ToastLevel::Success),
             // Errors
             AppEvent::ApiError { operation, message } => (format!("{operation} failed: {message}"), ToastLevel::Error),
             AppEvent::AuthFailed(msg) => (format!("Auth failed: {msg}"), ToastLevel::Error),

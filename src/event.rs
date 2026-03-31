@@ -55,6 +55,11 @@ pub enum AppEvent {
     UserCreated(User),
     UserDeleted { id: String },
 
+    // Resize results
+    ServerResized { id: String },
+    ResizeConfirmed { id: String },
+    ResizeReverted { id: String },
+
     // Migration results
     ServerLiveMigrated { id: String },
     ServerColdMigrated { id: String },
@@ -152,6 +157,16 @@ mod tests {
             },
         ];
         assert_eq!(events.len(), 6);
+    }
+
+    #[test]
+    fn test_resize_event_variants_exist() {
+        let events: Vec<AppEvent> = vec![
+            AppEvent::ServerResized { id: "s1".into() },
+            AppEvent::ResizeConfirmed { id: "s1".into() },
+            AppEvent::ResizeReverted { id: "s1".into() },
+        ];
+        assert_eq!(events.len(), 3);
     }
 
     #[test]
