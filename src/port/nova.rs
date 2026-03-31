@@ -25,6 +25,9 @@ pub trait NovaPort: Send + Sync {
     async fn create_server_snapshot(&self, server_id: &str, image_name: &str) -> ApiResult<String>;
     async fn list_server_events(&self, server_id: &str) -> ApiResult<Vec<ServerEvent>>;
 
+    // Resize
+    async fn resize_server(&self, server_id: &str, flavor_id: &str) -> ApiResult<()>;
+
     // Migration
     async fn live_migrate_server(
         &self,

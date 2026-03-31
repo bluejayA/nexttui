@@ -101,6 +101,11 @@ fn action_to_kind(action: &Action) -> Option<ActionKind> {
         Action::DeleteVolume { force: true, .. } => Some(ActionKind::ForceDelete),
         Action::DeleteVolume { force: false, .. } => Some(ActionKind::Delete),
 
+        // Resize (member-level)
+        Action::ResizeServer { .. }
+        | Action::ConfirmResize { .. }
+        | Action::RevertResize { .. } => Some(ActionKind::Resize),
+
         // Migration / Evacuate (admin-only)
         Action::LiveMigrateServer { .. }
         | Action::ColdMigrateServer { .. }
@@ -151,6 +156,9 @@ fn action_name(action: &Action) -> &str {
         Action::DeleteProject { .. } => "DeleteProject",
         Action::CreateUser(_) => "CreateUser",
         Action::DeleteUser { .. } => "DeleteUser",
+        Action::ResizeServer { .. } => "ResizeServer",
+        Action::ConfirmResize { .. } => "ConfirmResize",
+        Action::RevertResize { .. } => "RevertResize",
         Action::LiveMigrateServer { .. } => "LiveMigrateServer",
         Action::ColdMigrateServer { .. } => "ColdMigrateServer",
         Action::ConfirmMigration { .. } => "ConfirmMigration",
@@ -225,6 +233,26 @@ async fn handle_action(registry: &AdapterRegistry, all_tenants: &AtomicBool, act
                     image_id,
                 }),
                 Err(e) => Some(api_error("CreateServerSnapshot", e)),
+            }
+        }
+
+        // -- Nova: Resize --------------------------------------------------
+        Action::ResizeServer { id, flavor_id } => {
+            match registry.nova.resize_server(&id, &flavor_id).await {
+                Ok(()) => Some(AppEvent::ServerResized { id }),
+                Err(e) => Some(api_error("ResizeServer", e)),
+            }
+        }
+        Action::ConfirmResize { id } => {
+            match registry.nova.confirm_migration(&id).await {
+                Ok(()) => Some(AppEvent::ResizeConfirmed { id }),
+                Err(e) => Some(api_error("ConfirmResize", e)),
+            }
+        }
+        Action::RevertResize { id } => {
+            match registry.nova.revert_migration(&id).await {
+                Ok(()) => Some(AppEvent::ResizeReverted { id }),
+                Err(e) => Some(api_error("RevertResize", e)),
             }
         }
 
@@ -679,6 +707,23 @@ mod tests {
         assert_eq!(
             action_to_kind(&Action::FetchMigrationProgress { server_id: "s1".into() }),
             None,
+        );
+    }
+
+    #[test]
+    fn test_action_to_kind_resize_actions() {
+        // Resize actions should map to ActionKind::Resize (member-level)
+        assert_eq!(
+            action_to_kind(&Action::ResizeServer { id: "s1".into(), flavor_id: "f2".into() }),
+            Some(ActionKind::Resize),
+        );
+        assert_eq!(
+            action_to_kind(&Action::ConfirmResize { id: "s1".into() }),
+            Some(ActionKind::Resize),
+        );
+        assert_eq!(
+            action_to_kind(&Action::RevertResize { id: "s1".into() }),
+            Some(ActionKind::Resize),
         );
     }
 

@@ -47,6 +47,9 @@ pub enum PendingAction {
     // Keystone
     DeleteProject { id: String, name: String },
     DeleteUser { id: String, name: String },
+    // Nova: Resize
+    ConfirmResize { id: String },
+    RevertResize { id: String },
     // Nova: Migration / Evacuate
     LiveMigrate { id: String },
     ColdMigrate { id: String },
@@ -179,6 +182,15 @@ mod tests {
             PendingAction::Evacuate { id: "s1".into() },
         ];
         assert_eq!(actions.len(), 5);
+    }
+
+    #[test]
+    fn test_resize_pending_action_variants() {
+        let actions: Vec<PendingAction> = vec![
+            PendingAction::ConfirmResize { id: "s1".into() },
+            PendingAction::RevertResize { id: "s1".into() },
+        ];
+        assert_eq!(actions.len(), 2);
     }
 
     #[test]

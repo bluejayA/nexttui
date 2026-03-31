@@ -11,6 +11,7 @@ pub enum ActionKind {
     Create,
     Delete,
     ForceDelete,
+    Resize,
     Migrate,
     Evacuate,
     EnableDisable,
@@ -476,6 +477,29 @@ mod tests {
         let guard2 = RbacGuard::new();
         guard2.update_roles(vec![role("member")], None);
         assert!(!guard2.has_capability("server", "anything"));
+    }
+
+    // --- Resize RBAC (member-level) ---
+
+    #[test]
+    fn test_resize_admin_allowed() {
+        let guard = RbacGuard::new();
+        guard.update_roles(vec![role("admin")], None);
+        assert!(guard.can_perform(ActionKind::Resize));
+    }
+
+    #[test]
+    fn test_resize_member_allowed() {
+        let guard = RbacGuard::new();
+        guard.update_roles(vec![role("member")], None);
+        assert!(guard.can_perform(ActionKind::Resize));
+    }
+
+    #[test]
+    fn test_resize_reader_denied() {
+        let guard = RbacGuard::new();
+        guard.update_roles(vec![role("reader")], None);
+        assert!(!guard.can_perform(ActionKind::Resize));
     }
 
     #[test]

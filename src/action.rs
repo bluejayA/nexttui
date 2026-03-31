@@ -64,6 +64,11 @@ pub enum Action {
     SelectResource { id: String },
     NavigateToResource { route: Route, id: String },
 
+    // Resize
+    ResizeServer { id: String, flavor_id: String },
+    ConfirmResize { id: String },
+    RevertResize { id: String },
+
     // Migration / Evacuate
     LiveMigrateServer { id: String, host: Option<String> },
     ColdMigrateServer { id: String },
@@ -134,6 +139,16 @@ mod tests {
             Action::Quit,
         ];
         assert!(actions.len() >= 18);
+    }
+
+    #[test]
+    fn test_resize_action_variants_exist() {
+        let actions: Vec<Action> = vec![
+            Action::ResizeServer { id: "s1".into(), flavor_id: "f2".into() },
+            Action::ConfirmResize { id: "s1".into() },
+            Action::RevertResize { id: "s1".into() },
+        ];
+        assert_eq!(actions.len(), 3);
     }
 
     #[test]
