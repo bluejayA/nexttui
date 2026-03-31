@@ -22,8 +22,7 @@ use self::view_model::{
 
 #[derive(Debug, Clone)]
 pub struct ResizePendingInfo {
-    pub old_flavor_id: String,
-    pub new_flavor_id: String,
+    pub server_id: String,
 }
 
 pub struct ServerModule {
@@ -324,7 +323,10 @@ impl ServerModule {
                     let server = self.servers.iter().find(|s| s.id == *id);
                     if server.is_some_and(|s| s.status == "VERIFY_RESIZE") {
                         let id = id.clone();
-                        if self.resize_pending.is_some() {
+                        let is_resize = self.resize_pending
+                            .as_ref()
+                            .is_some_and(|rp| rp.server_id == id);
+                        if is_resize {
                             self.confirm.open(
                                 ConfirmDialog::yes_no("Confirm resize?"),
                                 PendingAction::ConfirmResize { id },
@@ -344,7 +346,10 @@ impl ServerModule {
                     let server = self.servers.iter().find(|s| s.id == *id);
                     if server.is_some_and(|s| s.status == "VERIFY_RESIZE") {
                         let id = id.clone();
-                        if self.resize_pending.is_some() {
+                        let is_resize = self.resize_pending
+                            .as_ref()
+                            .is_some_and(|rp| rp.server_id == id);
+                        if is_resize {
                             self.confirm.open(
                                 ConfirmDialog::yes_no("Revert resize?"),
                                 PendingAction::RevertResize { id },
@@ -494,6 +499,15 @@ impl Component for ServerModule {
                 self.error_message = None;
                 let rows = self.rows();
                 self.resource_list.set_rows(rows);
+                // Clear stale resize_pending if server is no longer VERIFY_RESIZE
+                if let Some(ref rp) = self.resize_pending {
+                    let still_verify = servers.iter()
+                        .find(|s| s.id == rp.server_id)
+                        .is_some_and(|s| s.status == "VERIFY_RESIZE");
+                    if !still_verify {
+                        self.resize_pending = None;
+                    }
+                }
             }
             AppEvent::ServerDeleted { .. }
             | AppEvent::ServerRebooted { .. }
@@ -502,13 +516,9 @@ impl Component for ServerModule {
             | AppEvent::ServerCreated(_) => {
                 let _ = self.action_tx.send(Action::FetchServers);
             }
-            AppEvent::ServerResized { .. } => {
-                // Server is now in VERIFY_RESIZE — mark as resize pending
-                // We don't have old/new flavor info from the event, but we can derive
-                // from the ResizeServer action that was dispatched. For now, set a marker.
-                self.resize_pending = Some(super::server::ResizePendingInfo {
-                    old_flavor_id: String::new(),
-                    new_flavor_id: String::new(),
+            AppEvent::ServerResized { id } => {
+                self.resize_pending = Some(ResizePendingInfo {
+                    server_id: id.clone(),
                 });
             }
             AppEvent::ResizeConfirmed { .. } | AppEvent::ResizeReverted { .. } => {
@@ -1381,8 +1391,7 @@ mod tests {
     fn test_resize_pending_cleared_on_confirm() {
         let (mut module, _rx) = setup();
         module.resize_pending = Some(ResizePendingInfo {
-            old_flavor_id: "flv-1".into(),
-            new_flavor_id: "flv-2".into(),
+            server_id: "s1".into(),
         });
         module.handle_event(&AppEvent::ResizeConfirmed { id: "s1".into() });
         assert!(module.resize_pending.is_none());
@@ -1392,8 +1401,7 @@ mod tests {
     fn test_resize_pending_cleared_on_revert() {
         let (mut module, _rx) = setup();
         module.resize_pending = Some(ResizePendingInfo {
-            old_flavor_id: "flv-1".into(),
-            new_flavor_id: "flv-2".into(),
+            server_id: "s1".into(),
         });
         module.handle_event(&AppEvent::ResizeReverted { id: "s1".into() });
         assert!(module.resize_pending.is_none());
@@ -1406,14 +1414,54 @@ mod tests {
         let servers = vec![make_test_server("s1", "web-01", "VERIFY_RESIZE")];
         module.handle_event(&AppEvent::ServersLoaded(servers));
         module.resize_pending = Some(ResizePendingInfo {
-            old_flavor_id: "flv-1".into(),
-            new_flavor_id: "flv-2".into(),
+            server_id: "s1".into(),
         });
         module.handle_key(key(KeyCode::Enter)); // detail
         module.handle_key(key(KeyCode::Char('Y'))); // confirm
         assert!(module.confirm.is_active());
         let action = module.handle_key(key(KeyCode::Char('y')));
         assert!(matches!(action, Some(Action::ConfirmResize { .. })));
+    }
+
+    #[test]
+    fn test_y_confirm_migration_for_different_server_resize_pending() {
+        // C-1 fix: resize_pending for s1, but viewing s2 in VERIFY_RESIZE → migration
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut module = ServerModule::new(tx);
+        module.is_admin = true;
+        let servers = vec![
+            make_test_server("s1", "web-01", "ACTIVE"),
+            make_test_server("s2", "web-02", "VERIFY_RESIZE"),
+        ];
+        module.handle_event(&AppEvent::ServersLoaded(servers));
+        module.resize_pending = Some(ResizePendingInfo { server_id: "s1".into() });
+        // Navigate to s2 detail
+        module.handle_key(key(KeyCode::Char('j'))); // select s2
+        module.handle_key(key(KeyCode::Enter)); // detail s2
+        module.handle_key(key(KeyCode::Char('Y')));
+        assert!(module.confirm.is_active());
+        let action = module.handle_key(key(KeyCode::Char('y')));
+        // Should be migration confirm, not resize confirm
+        assert!(matches!(action, Some(Action::ConfirmMigration { .. })));
+    }
+
+    #[test]
+    fn test_stale_resize_pending_cleared_on_servers_loaded() {
+        let (mut module, _rx) = setup();
+        module.resize_pending = Some(ResizePendingInfo { server_id: "s1".into() });
+        // Server s1 is now ACTIVE (not VERIFY_RESIZE) → resize_pending should be cleared
+        let servers = vec![make_test_server("s1", "web-01", "ACTIVE")];
+        module.handle_event(&AppEvent::ServersLoaded(servers));
+        assert!(module.resize_pending.is_none());
+    }
+
+    #[test]
+    fn test_resize_pending_kept_while_verify_resize() {
+        let (mut module, _rx) = setup();
+        module.resize_pending = Some(ResizePendingInfo { server_id: "s1".into() });
+        let servers = vec![make_test_server("s1", "web-01", "VERIFY_RESIZE")];
+        module.handle_event(&AppEvent::ServersLoaded(servers));
+        assert!(module.resize_pending.is_some());
     }
 
     #[test]
@@ -1433,8 +1481,7 @@ mod tests {
         let servers = vec![make_test_server("s1", "web-01", "VERIFY_RESIZE")];
         module.handle_event(&AppEvent::ServersLoaded(servers));
         module.resize_pending = Some(ResizePendingInfo {
-            old_flavor_id: "flv-1".into(),
-            new_flavor_id: "flv-2".into(),
+            server_id: "s1".into(),
         });
         module.handle_key(key(KeyCode::Enter));
         module.handle_key(key(KeyCode::Char('N')));
