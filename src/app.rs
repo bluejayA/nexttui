@@ -4,7 +4,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
-use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, Borders};
 use tokio::sync::mpsc;
 
@@ -20,6 +19,8 @@ use crate::ui::header::{Header, HeaderContext};
 use crate::ui::layout::LayoutManager;
 use crate::ui::sidebar::Sidebar;
 use crate::ui::status_bar::{StatusBar, StatusInfo};
+use crate::ui::theme::Theme;
+use crate::ui::toast::{ToastMessage, ToastSeverity};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusPane {
@@ -293,6 +294,7 @@ impl App {
         let refresh_servers = matches!(
             event,
             AppEvent::MigrationPollingStopped { .. }
+            | AppEvent::ServerStatusPolled { .. }
         ) || matches!(
             event,
             AppEvent::ServerLiveMigrated { .. }
@@ -448,9 +450,9 @@ impl App {
         if let Some(component) = self.components.get(&self.router.current()) {
             let content_focused = self.focus == FocusPane::Content;
             let content_border_style = if content_focused {
-                Style::default().fg(Color::Cyan)
+                Theme::focus_border()
             } else {
-                Style::default().fg(Color::DarkGray)
+                Theme::unfocus_border()
             };
             let content_block = Block::default()
                 .borders(Borders::ALL)
@@ -476,23 +478,18 @@ impl App {
             item_count: None,
             selected_index: None,
         };
-        let toast_messages: Vec<crate::ui::toast::ToastMessage> = self
-            .background_tracker
-            .active_toasts()
-            .iter()
-            .map(|t| {
-                let severity = match t.level {
-                    crate::background::ToastLevel::Success => crate::ui::toast::ToastSeverity::Success,
-                    crate::background::ToastLevel::Error => crate::ui::toast::ToastSeverity::Error,
-                    crate::background::ToastLevel::Info => crate::ui::toast::ToastSeverity::Info,
-                };
-                crate::ui::toast::ToastMessage {
-                    text: t.message.clone(),
-                    severity,
-                }
-            })
-            .collect();
-        self.status_bar.render(frame, areas.status_bar, &info, &toast_messages);
+        // Toast — render in dedicated toast_bar area
+        let active_toasts = self.background_tracker.active_toasts();
+        if let Some(t) = active_toasts.first() {
+            let toast_msg = ToastMessage {
+                text: t.message.clone(),
+                severity: ToastSeverity::from(t.level),
+                resource_id: None,
+            };
+            toast_msg.render(frame, areas.toast_bar);
+        }
+
+        self.status_bar.render(frame, areas.status_bar, &info);
     }
 
     pub fn router(&self) -> &Router {

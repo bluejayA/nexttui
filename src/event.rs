@@ -69,6 +69,9 @@ pub enum AppEvent {
     MigrationProgressLoaded { server_id: String, migration: ServerMigration },
     MigrationPollingStopped { server_id: String },
 
+    // Server status polling (resize / cold-migrate state transitions)
+    ServerStatusPolled { server: Server },
+
     // Error
     ApiError { operation: String, message: String },
 
@@ -167,6 +170,39 @@ mod tests {
             AppEvent::ResizeReverted { id: "s1".into() },
         ];
         assert_eq!(events.len(), 3);
+    }
+
+    #[test]
+    fn test_server_status_polled_event() {
+        use crate::models::nova::Server;
+        let server = Server {
+            id: "s1".into(),
+            name: "test".into(),
+            status: "VERIFY_RESIZE".into(),
+            addresses: Default::default(),
+            flavor: crate::models::nova::FlavorRef {
+                id: "f1".into(),
+                original_name: None,
+                vcpus: None,
+                ram: None,
+                disk: None,
+            },
+            image: None,
+            key_name: None,
+            availability_zone: None,
+            created: "2026-01-01".into(),
+            updated: None,
+            tenant_id: None,
+            host_id: None,
+            host: None,
+        };
+        let event = AppEvent::ServerStatusPolled { server };
+        match event {
+            AppEvent::ServerStatusPolled { server } => {
+                assert_eq!(server.status, "VERIFY_RESIZE");
+            }
+            _ => panic!("expected ServerStatusPolled"),
+        }
     }
 
     #[test]

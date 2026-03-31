@@ -700,3 +700,121 @@ Should 항목: US-027 서버 스냅샷, US-030 QoS, US-031 Storage Pool, US-032 
 **Acceptance Criteria**:
 - Given a CUD action is denied by RBAC, When the worker returns PermissionDenied, Then a toast notification shows "권한 없음: [operation]"
 **Priority**: Should
+
+---
+
+### UI/UX Redesign — Stage 2.5-A (Theme & Polish)
+
+#### US-049: 일관된 시각 테마로 리소스 상태를 직관적으로 식별한다
+**Actor**: Operator
+**Story**: As an operator monitoring many resources, I want consistent color and icon conventions across all views so that I can instantly identify resource states without reading text labels.
+**Acceptance Criteria**:
+- Given a server has status ACTIVE, When the list renders, Then I see a green `●` icon before the status text
+- Given a server has status ERROR, When the list renders, Then I see a red `✗` icon before the status text
+- Given a server has status SHUTOFF, When the list renders, Then I see a dark gray `○` icon before the status text
+- Given a server is in a transitional state (RESIZE, BUILD, MIGRATING), When the list renders, Then I see a yellow `⟳` icon before the status text
+- Given Theme colors change in `theme.rs`, When I rebuild, Then all views reflect the new colors without per-file edits
+**Priority**: Must
+**FR**: FR-UI-1
+
+#### US-050: 포커스된 패널을 시각적으로 명확히 구분한다
+**Actor**: Developer
+**Story**: As a developer navigating between sidebar and content, I want clear visual feedback on which panel is focused so that I always know where my keyboard input will go.
+**Acceptance Criteria**:
+- Given the sidebar is focused, When the UI renders, Then the sidebar has a Cyan rounded border and the title shows `[ Modules ]`
+- Given the content area is focused, When the UI renders, Then the content area has a Cyan rounded border and the sidebar border is DarkGray
+- Given I press Tab, When focus switches, Then the border colors swap immediately (within the same render frame)
+- Given both panels are visible, When I look at the screen, Then each panel has a rounded border (never a flat/missing border)
+**Priority**: Must
+**FR**: FR-UI-2, FR-UI-3
+
+#### US-051: 상태바에서 현재 컨텍스트와 사용 가능한 키를 즉시 파악한다
+**Actor**: Operator
+**Story**: As an operator, I want the status bar to show my current context and available keyboard shortcuts so that I can work efficiently without memorizing all key bindings.
+**Acceptance Criteria**:
+- Given I am in the Servers list view, When the status bar renders, Then the left side shows `[Servers] 1/5` (fixed format) and the right side shows context-appropriate hints like `j/k 이동  Enter 상세  c 생성  d 삭제`
+- Given I am in a detail view, When the status bar renders, Then hints change to `Esc 목록  Tab 링크  r Resize  d 삭제`
+- Given I am in a create form, When the status bar renders, Then hints change to `↑↓ 필드  Enter 제출  Esc 취소`
+- Given a toast is active, When the UI renders, Then the toast appears in a dedicated row above the status bar (status bar key hints remain visible)
+- Given the status bar renders, When I look at it, Then the background is dark gray and key labels are cyan bold
+**Priority**: Must
+**FR**: FR-UI-4
+
+#### US-052: 선택된 리소스의 상태 정보를 잃지 않는다
+**Actor**: Operator
+**Story**: As an operator scanning a resource list, I want to see the status color of a selected row so that highlighting doesn't hide whether a resource is active, error, or shutoff.
+**Acceptance Criteria**:
+- Given a row with status ACTIVE is selected, When the row renders, Then the text is bold and retains its green color (not overridden to black-on-white)
+- Given a row with status ERROR is selected, When the row renders, Then the text is bold and retains its red color
+- Given a row is not selected, When the row renders, Then it displays in its normal semantic color without bold
+**Priority**: Must
+**FR**: FR-UI-5
+
+#### US-053: 화면 크기 변경 시 레이아웃이 깨지지 않는다
+**Actor**: Developer
+**Story**: As a developer using a small terminal, I want the UI to render correctly at 80x24 minimum size so that border and content never overlap or truncate.
+**Acceptance Criteria**:
+- Given the terminal is 80x24, When the UI renders, Then header, sidebar, content, input bar, and status bar all fit without overlap
+- Given the terminal is resized during use, When ratatui detects the resize event, Then the layout recalculates and re-renders without artifacts
+- Given rounded borders are applied, When the terminal is at minimum size, Then borders don't consume more than the allocated space
+**Priority**: Should
+**NFR**: NFR-UI-4
+
+#### US-054: 비동기 액션의 진행 상태를 실시간으로 파악한다
+**Actor**: Operator
+**Story**: As an operator performing actions like create, resize, or migrate, I want to see real-time progress and status transitions so that I know the action is proceeding and can estimate completion.
+**Acceptance Criteria**:
+- Given I trigger a Resize action, When the server status changes to RESIZE, Then the list immediately reflects `⟳ RESIZE` (yellow) without manual refresh
+- Given a Resize is in progress, When it transitions to VERIFY_RESIZE, Then the status updates to `◐ VERIFY_RESIZE` automatically via polling
+- Given a Live Migration is in progress, When memory/disk progress data is available, Then a progress bar shows the migration completion percentage
+- Given a Create Server action is in progress, When the server status is BUILD, Then the list shows `⟳ BUILD` with the transitional icon
+- Given any async action completes successfully, When the final status is reached (ACTIVE, SHUTOFF), Then the icon and color update to the terminal state (`● ACTIVE` green, `○ SHUTOFF` gray)
+**Priority**: Must
+**FR**: FR-UI-1, FR-UI-5
+
+#### US-055: 액션 실패 시 즉각적이고 눈에 띄는 알림을 받는다
+**Actor**: Operator
+**Story**: As an operator, I want failed actions to produce prominent, persistent notifications so that I never miss an error even if I'm looking at a different part of the screen.
+**Acceptance Criteria**:
+- Given an API call fails (e.g., Resize returns 409 Conflict), When the error event is received, Then a red toast `[ERR] Resize failed: Conflict` appears in the status bar area
+- Given a server transitions to ERROR status during an async action, When the polled status is ERROR, Then the list shows `✗ ERROR` (red) and a toast notification is generated
+- Given a toast notification is active, When it displays, Then it appears in a dedicated row above the status bar with a high-contrast background (red for errors, green for success, yellow for info) and the status bar remains fully visible
+- Given multiple errors occur in sequence, When toasts queue, Then each toast is shown for at least 3 seconds before the next replaces it
+- Given I am in a detail view when an error occurs on the list, When the error event fires, Then the toast is still visible (not silently swallowed)
+**Priority**: Must
+**FR**: FR-UI-4
+
+#### US-056: 호스트와 호스트 내 리소스를 한눈에 파악한다
+**Actor**: Admin
+**Story**: As an admin managing compute infrastructure, I want to see host (hypervisor) information alongside the resources running on each host so that I can assess capacity, plan migrations, and identify overloaded nodes at a glance.
+**Acceptance Criteria**:
+- Given I navigate to the Hypervisors view, When the list renders, Then each hypervisor row shows hostname, status (`● UP` / `✗ DOWN`), vCPU usage (used/total), RAM usage (used/total), and running VM count
+- Given I select a hypervisor and press Enter, When the detail view opens, Then I see the hypervisor's full info and a nested table listing all servers running on that host with their name, status, flavor, and IP
+- Given a hypervisor is DOWN, When the list renders, Then it is highlighted with `✗` red icon and sorted to the top for visibility
+- Given I am viewing a server's detail, When the host field is displayed, Then the host name is a clickable link (Cyan, underline) that navigates to the corresponding hypervisor detail
+- Given I perform an Evacuate or Migrate action from the hypervisor detail view, When I select a server, Then the action targets that specific server with the source host pre-filled
+**Priority**: Should
+**FR**: FR-UI-1, BL-P2-012
+
+#### US-057: 여러 VM을 선택하여 동일 액션을 일괄 수행한다
+**Actor**: Operator
+**Story**: As an operator managing many servers, I want to select multiple VMs and apply a single action to all of them so that I can perform bulk operations efficiently instead of repeating the same action one by one.
+**Acceptance Criteria**:
+- Given I am in the server list, When I press Space on a row, Then that row is marked with a `[x]` checkbox indicator and the selection count appears in the status bar (e.g., `[Servers] 3 selected`)
+- Given I have selected multiple servers, When I press Space again on a selected row, Then it is deselected and the count decreases
+- Given I have 3 servers selected, When I press `d` (delete), Then a confirmation dialog shows "Delete 3 servers?" listing all selected server names
+- Given I have multiple servers selected, When I trigger an action (stop, start, reboot, delete, migrate), Then the action is dispatched for each selected server and individual progress/status is shown per server
+- Given a bulk action is in progress, When some servers succeed and some fail, Then successes show green toast and failures show red toast with the specific server name and error
+- Given I want to select all visible servers, When I press `Ctrl+A`, Then all currently visible (filtered) servers are selected
+- Given I want to clear selection, When I press `Esc` while selections exist, Then all selections are cleared before exiting the view
+- Given I have selections and navigate to detail view, When I press Esc back to list, Then my previous selections are preserved
+**Priority**: Should
+
+## Change Log
+
+- 2026-03-18 INITIAL: 48개 사용자 스토리 생성 (US-001~048)
+- 2026-03-26 UPDATE: RBAC 3단계 사용자 스토리 추가 (US-R01~R06)
+- 2026-03-31 UPDATE: UI/UX Redesign Stage 2.5-A 사용자 스토리 추가 (US-049~053). Theme 시스템, 포커스 피드백, 상태바, 리스트 하이라이트, 최소 크기 대응
+- 2026-03-31 UPDATE: 액션 진행 상태 및 에러 알림 스토리 추가 (US-054~055). 비동기 액션 실시간 상태 전이, 실패 시 눈에 띄는 toast 알림
+- 2026-03-31 UPDATE: 호스트-리소스 연관 뷰 스토리 추가 (US-056). Hypervisor 상세에서 호스트 내 서버 목록 조회, 서버↔호스트 간 양방향 링크
+- 2026-03-31 UPDATE: 멀티 셀렉트 일괄 액션 스토리 추가 (US-057). Space 체크박스, Ctrl+A 전체 선택, 벌크 액션 디스패치, 개별 결과 피드백

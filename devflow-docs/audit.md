@@ -1,5 +1,24 @@
 # DevFlow Audit Log
 
+## 2026-03-31
+- **New aidlc session started** — UI/UX Redesign Stage 2.5-A (Theme & Polish), UPDATE mode (preserving existing artifacts)
+- **User request**: devflow-tui + btop 참조 UI 리디자인, BL-P2-034~038 구현
+- **workspace-detection**: reused existing (Brownfield, Rust TUI, ratatui 0.30)
+- **Complexity**: Standard (user adjusted from Minimal — 사용자 flow/기존 로직 정합성 고려)
+- **requirements-analysis**: UPDATE — FR-UI-1~5, NFR-UI-1~4, 제약 4개 추가
+- **Agent Council**: Codex+Gemini+Claude 합의 — 가정 1번 구체화 (16색, 상태 분리, 시맨틱 컬러, 상태바 좌고정/우동적)
+- **user-stories**: UPDATE — US-049~057 추가 (Theme, 포커스, 상태바, 하이라이트, 최소크기, 진행상태, 에러알림, 호스트뷰, 멀티셀렉트)
+- **nfr-requirements**: UPDATE — NFR-6-1~6-8 추가 (시각일관성, 렌더링, 최소크기, 테스트회귀, 적응형폴링, 벌크동시성, 알림정책, 알림위치)
+- **pre-planning**: A — user-stories + nfr 모두 실행
+- **workflow-planning**: A안 설계 포함 선택 (app-design Standard + units/code/build)
+- **worktree**: feature/ui-theme-polish (.worktrees/ui-theme-polish), 691 tests baseline passed
+- **application-design LIST**: 15개 컴포넌트 (신규 3 + 변경 12)
+- **application-design DETAIL**: 상세 설계 완료 + 3-agent 리뷰 (Layout/UX Flow/Ops Scenario) P0/P1 반영 + 2-agent 추가 리뷰 (Screen Layout/Visual Consistency) 6개 규칙 반영
+- **Phase transition**: INCEPTION → CONSTRUCTION
+- **units-generation**: 5 units 승인 (Theme → Layout+Toast → Sidebar+Header+StatusBar || ResourceList+Detail+팝업 → App 통합)
+- **Unit 1 code-generation**: Theme 시스템 TDD 완료 (14 tests). Council review (Codex+Gemini) CONDITIONAL→PASS. 테스트 6개 추가, status_icon 확장 상태 매핑 추가. BL-P2-047(ServerStatus enum) 백로그 유지 결정
+- **Session paused**: Unit 1 완료, Unit 2 (LayoutManager+Toast) 대기
+
 ## 2026-03-26
 - **Previous session archived** — background-worker/main-wiring already completed in code, state was stale
 - **New aidlc session started** — #33 토큰 캐시 파일 영속화 (BL-P2-028), Phase 2 통합 실행순서 5번
@@ -113,3 +132,18 @@
 - **finishing-branch** — option B (PR #43 created), worktree maintained
 - **Manual testing** — DevStack VM, Neutron API fix, Glance visibility fix, RBAC init fix, header badge UX
 - **Flow finished** — PR #43 merged, worktree cleaned up
+- **BL-P2-014 complete** — PR #44 merged, 4 units, 649 tests. Review fixes: server_id tracking, block_migration removal
+- **PR #45 merged** — panic hook (non-devflow)
+
+## 2026-03-30
+- **Previous session archived** — BL-P2-014 Migration complete
+- **PR #46 merged** — multi-node testing UX, migration API, auth fixes
+- **New aidlc session started** — Server Resize (#10 실행순서), 빈도 2회/일
+- **Complexity approved** — Standard
+- **requirements-analysis v2** — 9 FRs, 3-agent review (spec/security/quality), Critical 3건 반영
+- **workflow-planning** — B안 설계 포함 선택
+- **application-design** — SelectPopup 위젯 설계, Y/N 분기 로직, 5 units
+- **INCEPTION complete** — Phase transition: INCEPTION → CONSTRUCTION
+- **git worktree created** — feature/server-resize, 654 tests baseline
+- **Unit 1 complete** — SelectPopup 위젯 (654→663 tests)
+- **Session paused** — Unit 2 대기

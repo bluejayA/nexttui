@@ -39,10 +39,11 @@ pub async fn run_worker(
         let event_tx = event_tx.clone();
         let all_tenants = all_tenants.clone();
 
-        let poll_server_id = match &action {
+        let poll_migration_id = match &action {
             Action::LiveMigrateServer { id, .. } => Some(id.clone()),
             _ => None,
         };
+        let poll_status_id = poll_server_id_for_status(&action);
 
         let span = tracing::info_span!("worker_task", action = action_name(&action));
         tokio::spawn(
@@ -52,10 +53,12 @@ pub async fn run_worker(
                 if let Some(ev) = event {
                     let _ = event_tx.send(ev);
                 }
-                // Start polling after successful live migration
                 if success {
-                    if let Some(server_id) = poll_server_id {
+                    if let Some(server_id) = poll_migration_id {
                         poll_migration_progress(&registry, &event_tx, &server_id).await;
+                    }
+                    if let Some(server_id) = poll_status_id {
+                        poll_server_status(&registry, &event_tx, &server_id).await;
                     }
                 }
             }
@@ -603,6 +606,50 @@ async fn handle_action(registry: &AdapterRegistry, all_tenants: &AtomicBool, act
     }
 }
 
+/// Determine if an action should trigger server-status polling after success.
+fn poll_server_id_for_status(action: &Action) -> Option<String> {
+    match action {
+        Action::ResizeServer { id, .. }
+        | Action::ConfirmResize { id }
+        | Action::RevertResize { id } => Some(id.clone()),
+        _ => None,
+    }
+}
+
+/// Whether a server status represents a terminal (stable) state.
+fn is_terminal_server_status(status: &str) -> bool {
+    matches!(
+        status,
+        "ACTIVE" | "ERROR" | "VERIFY_RESIZE" | "SHUTOFF" | "SHELVED_OFFLOADED"
+    )
+}
+
+/// Poll server status every 2 seconds until it reaches a terminal state.
+async fn poll_server_status(
+    registry: &AdapterRegistry,
+    event_tx: &mpsc::UnboundedSender<AppEvent>,
+    server_id: &str,
+) {
+    const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+    const MAX_POLLS: usize = 60; // 2 minutes max
+
+    for _ in 0..MAX_POLLS {
+        tokio::time::sleep(POLL_INTERVAL).await;
+        match registry.nova.get_server(server_id).await {
+            Ok(server) => {
+                let done = is_terminal_server_status(&server.status);
+                let _ = event_tx.send(AppEvent::ServerStatusPolled {
+                    server: server.clone(),
+                });
+                if done {
+                    return;
+                }
+            }
+            Err(_) => return,
+        }
+    }
+}
+
 /// Poll migration progress every 2 seconds until completed or error.
 async fn poll_migration_progress(
     registry: &AdapterRegistry,
@@ -735,6 +782,34 @@ mod tests {
             AppEvent::PermissionDenied { operation } => assert_eq!(operation, "CreateServer"),
             _ => panic!("expected PermissionDenied"),
         }
+    }
+
+    #[test]
+    fn test_resize_actions_trigger_status_polling() {
+        // ResizeServer, ConfirmResize, RevertResize should all be identified
+        // as actions requiring server status polling
+        let resize = Action::ResizeServer { id: "s1".into(), flavor_id: "f2".into() };
+        let confirm = Action::ConfirmResize { id: "s1".into() };
+        let revert = Action::RevertResize { id: "s1".into() };
+
+        assert_eq!(poll_server_id_for_status(&resize), Some("s1".to_string()));
+        assert_eq!(poll_server_id_for_status(&confirm), Some("s1".to_string()));
+        assert_eq!(poll_server_id_for_status(&revert), Some("s1".to_string()));
+
+        // Non-resize actions should not trigger status polling
+        assert_eq!(poll_server_id_for_status(&Action::FetchServers), None);
+    }
+
+    #[test]
+    fn test_is_terminal_server_status() {
+        assert!(is_terminal_server_status("ACTIVE"));
+        assert!(is_terminal_server_status("ERROR"));
+        assert!(is_terminal_server_status("VERIFY_RESIZE"));
+        assert!(is_terminal_server_status("SHUTOFF"));
+
+        assert!(!is_terminal_server_status("RESIZE"));
+        assert!(!is_terminal_server_status("REVERT_RESIZE"));
+        assert!(!is_terminal_server_status("MIGRATING"));
     }
 
     #[test]
