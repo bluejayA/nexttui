@@ -1,14 +1,15 @@
 # DevFlow State
 
 ## Current Phase
-CONSTRUCTION
+complete
 
 ## Current Stage
-code-generation GENERATE (Unit 3: FetchDedup + API Backoff)
+finishing
 
 ## Completed Units
 - Unit 1: 폴링 확장 + 공유 유틸 (737→745 tests)
 - Unit 2: RefreshScheduler + Component trait (745→759 tests)
+- Unit 3: FetchDedup + API Backoff (759→765 tests)
 
 ## Complexity
 Standard
