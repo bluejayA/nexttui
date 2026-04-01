@@ -4,7 +4,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use super::{Link, build_pagination_query, encode_param, append_pagination_parts, extract_next_marker, paginated_list};
+use super::{Link, encode_param, append_pagination_parts, extract_next_marker, paginated_list};
 use crate::adapter::http::base::BaseHttpClient;
 use crate::models::cinder::{Volume, VolumeSnapshot};
 use crate::port::auth::AuthProvider;

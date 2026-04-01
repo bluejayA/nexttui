@@ -97,31 +97,52 @@ impl Sidebar {
         focused: bool,
     ) {
         let visible = self.visible_items(is_admin);
-        let items: Vec<ListItem> = visible
-            .iter()
-            .enumerate()
-            .map(|(i, item)| {
-                let marker = if &item.route == current_route {
-                    ">"
+        let has_admin_items = visible.iter().any(|item| item.admin_only);
+        let first_admin_idx = visible.iter().position(|item| item.admin_only);
+
+        let mut items: Vec<ListItem> = Vec::new();
+        let mut select_idx = self.selected_index;
+
+        for (i, item) in visible.iter().enumerate() {
+            // Insert separator before first admin item
+            if has_admin_items && Some(i) == first_admin_idx {
+                items.push(ListItem::new(Line::from("")));
+                let sep_width = area.width.saturating_sub(4) as usize; // inside border
+                let pad = sep_width.saturating_sub(7) / 2; // 7 = " Admin " len
+                let sep = format!("{} Admin {}", "─".repeat(pad), "─".repeat(sep_width.saturating_sub(pad + 7)));
+                let sep_style = if focused {
+                    Theme::focus_border()
                 } else {
-                    " "
+                    Theme::unfocus_border()
                 };
-                let style = if i == self.selected_index && focused {
-                    Theme::focus_border().add_modifier(Modifier::BOLD)
-                } else if i == self.selected_index {
-                    Theme::unfocus_border().add_modifier(Modifier::BOLD)
-                } else if item.admin_only {
-                    Theme::disabled()
-                } else {
-                    Style::default().fg(ratatui::style::Color::White)
-                };
-                let line = Line::from(Span::styled(
-                    format!("{marker} {}", item.label),
-                    style,
-                ));
-                ListItem::new(line)
-            })
-            .collect();
+                items.push(ListItem::new(Line::from(Span::styled(sep, sep_style))));
+                // Shift selection index past separator lines
+                if self.selected_index >= i {
+                    select_idx = self.selected_index + 2;
+                }
+            }
+
+            let marker = if &item.route == current_route {
+                ">"
+            } else {
+                " "
+            };
+            let admin_prefix = if item.admin_only { "⚙ " } else { " " };
+            let style = if i == self.selected_index && focused {
+                Theme::focus_border().add_modifier(Modifier::BOLD)
+            } else if i == self.selected_index {
+                Theme::unfocus_border().add_modifier(Modifier::BOLD)
+            } else if item.admin_only {
+                Theme::warning()
+            } else {
+                Style::default().fg(ratatui::style::Color::White)
+            };
+            let line = Line::from(Span::styled(
+                format!("{marker}{admin_prefix}{}", item.label),
+                style,
+            ));
+            items.push(ListItem::new(line));
+        }
 
         let border_style = if focused {
             Theme::focus_border()
@@ -135,7 +156,7 @@ impl Sidebar {
             .border_style(border_style);
         let list = List::new(items).block(block);
         let mut state = ListState::default();
-        state.select(Some(self.selected_index));
+        state.select(Some(select_idx));
         frame.render_stateful_widget(list, area, &mut state);
     }
 }
