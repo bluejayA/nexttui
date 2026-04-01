@@ -1,6 +1,11 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use ratatui::Frame;
+
+use super::theme::{self, Theme};
 
 /// Hint for visual styling of a select item.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,13 +106,10 @@ impl SelectPopup {
             return;
         }
 
-        use ratatui::style::{Color, Modifier, Style};
-        use ratatui::text::{Line, Span};
-        use ratatui::widgets::{Block, Borders, Clear, Paragraph};
-
         // Modal dimensions
-        let width = (area.width * 60 / 100).max(40).min(area.width);
-        let max_visible = ((area.height * 70 / 100) as usize).saturating_sub(4); // border + title + hint
+        let width = ((area.width as u32) * 60 / 100).min(area.width as u32) as u16;
+        let width = width.max(40).min(area.width);
+        let max_visible = ((area.height as u32 * 70 / 100) as usize).saturating_sub(4); // border + title + hint
         let visible_count = self.items.len().min(max_visible).max(1);
         let height = (visible_count as u16 + 4).min(area.height);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
@@ -132,7 +134,7 @@ impl SelectPopup {
 
             // Prefix
             if is_selected {
-                spans.push(Span::styled(prefix, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+                spans.push(Span::styled(prefix, Theme::focus_border().add_modifier(Modifier::BOLD)));
             } else {
                 spans.push(Span::raw(prefix));
             }
@@ -140,21 +142,21 @@ impl SelectPopup {
             // Label
             match &item.hint {
                 ItemHint::Current => {
-                    spans.push(Span::styled(&item.label, Style::default().fg(Color::DarkGray)));
-                    spans.push(Span::styled(" (current)", Style::default().fg(Color::DarkGray)));
+                    spans.push(Span::styled(&item.label, Theme::disabled()));
+                    spans.push(Span::styled(" (current)", Theme::disabled()));
                 }
                 ItemHint::Warning(reason) => {
                     let style = if is_selected {
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                        Theme::warning().add_modifier(Modifier::BOLD)
                     } else {
-                        Style::default().fg(Color::Yellow)
+                        Theme::warning()
                     };
                     spans.push(Span::styled(&item.label, style));
-                    spans.push(Span::styled(format!(" ⚠ {reason}"), Style::default().fg(Color::Yellow)));
+                    spans.push(Span::styled(format!(" ⚠ {reason}"), Theme::warning()));
                 }
                 ItemHint::Normal => {
                     let style = if is_selected {
-                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                        Theme::focus_border().add_modifier(Modifier::BOLD)
                     } else {
                         Style::default().fg(Color::White)
                     };
@@ -165,21 +167,19 @@ impl SelectPopup {
             lines.push(Line::from(spans));
         }
 
-        // Bottom hint
+        // Bottom hint using theme::key_hint()
         lines.push(Line::from(""));
-        lines.push(Line::from(vec![
-            Span::styled("j/k", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            Span::styled(":Move  ", Style::default().fg(Color::Gray)),
-            Span::styled("Enter", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            Span::styled(":Select  ", Style::default().fg(Color::Gray)),
-            Span::styled("Esc", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            Span::styled(":Cancel", Style::default().fg(Color::Gray)),
-        ]));
+        let mut hint_spans = Vec::new();
+        for (key, desc) in [("j/k", ":Move  "), ("Enter", ":Select  "), ("Esc", ":Cancel")] {
+            hint_spans.extend(theme::key_hint(key, desc));
+        }
+        lines.push(Line::from(hint_spans));
 
         let block = Block::default()
             .title(format!(" {} ", self.title))
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+            .border_type(BorderType::Rounded)
+            .border_style(Theme::warning().add_modifier(Modifier::BOLD))
             .style(Style::default().bg(Color::Rgb(30, 30, 40)));
         let widget = Paragraph::new(lines)
             .block(block)

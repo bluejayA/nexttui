@@ -2,7 +2,9 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
+
+use super::theme::Theme;
 use ratatui::Frame;
 
 const MAX_BUFFER_LEN: usize = 256;
@@ -131,15 +133,13 @@ impl ConfirmDialog {
                     Line::from(""),
                     Line::from(Span::styled(
                         message.as_str(),
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD),
+                        Theme::warning().add_modifier(Modifier::BOLD),
                     )),
                     Line::from(""),
                     Line::from(vec![
-                        Span::styled("[Y]", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                        Span::styled("[Y]", Theme::focus_border().add_modifier(Modifier::BOLD)),
                         Span::styled("es  ", Style::default().fg(Color::White)),
-                        Span::styled("[N]", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                        Span::styled("[N]", Theme::focus_border().add_modifier(Modifier::BOLD)),
                         Span::styled("o", Style::default().fg(Color::White)),
                     ]),
                 ]
@@ -153,9 +153,7 @@ impl ConfirmDialog {
                 vec![
                     Line::from(Span::styled(
                         message.as_str(),
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD),
+                        Theme::warning().add_modifier(Modifier::BOLD),
                     )),
                     Line::from(format!("Type '{expected}' to confirm:")),
                     Line::from(""),
@@ -165,7 +163,7 @@ impl ConfirmDialog {
                             buffer.as_str(),
                             Style::default().fg(Color::White),
                         ),
-                        Span::styled("_", Style::default().fg(Color::Gray)),
+                        Span::styled("_", Theme::waiting()),
                     ]),
                 ]
             }
@@ -174,7 +172,8 @@ impl ConfirmDialog {
         let block = Block::default()
             .title(" Confirm ")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+            .border_type(BorderType::Rounded)
+            .border_style(Theme::warning().add_modifier(Modifier::BOLD))
             .style(Style::default().bg(Color::Rgb(30, 30, 40)));
         let widget = Paragraph::new(lines)
             .block(block)
