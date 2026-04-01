@@ -1,7 +1,8 @@
 //! Background worker: consumes Actions from the UI, calls OpenStack APIs,
 //! and sends AppEvents back to the event loop for UI updates.
 
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use tokio::sync::mpsc;
@@ -24,6 +25,8 @@ pub async fn run_worker(
     mut action_rx: mpsc::UnboundedReceiver<Action>,
     event_tx: mpsc::UnboundedSender<AppEvent>,
 ) {
+    let polling_servers: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+
     while let Some(action) = action_rx.recv().await {
         // RBAC guard: check CUD permissions before API call
         if let Some(kind) = action_to_kind(&action)
@@ -38,11 +41,9 @@ pub async fn run_worker(
         let registry = registry.clone();
         let event_tx = event_tx.clone();
         let all_tenants = all_tenants.clone();
+        let polling_servers = polling_servers.clone();
 
-        let poll_migration_id = match &action {
-            Action::LiveMigrateServer { id, .. } => Some(id.clone()),
-            _ => None,
-        };
+        let poll_migration_id = poll_migration_server_id(&action);
         let poll_status_id = poll_server_id_for_status(&action);
 
         let span = tracing::info_span!("worker_task", action = action_name(&action));
@@ -54,11 +55,17 @@ pub async fn run_worker(
                     let _ = event_tx.send(ev);
                 }
                 if success {
-                    if let Some(server_id) = poll_migration_id {
-                        poll_migration_progress(&registry, &event_tx, &server_id).await;
+                    if let Some(ref server_id) = poll_migration_id
+                        && polling_servers.lock().is_ok_and(|mut g| g.insert(server_id.clone()))
+                    {
+                        poll_migration_progress(&registry, &event_tx, server_id).await;
+                        if let Ok(mut g) = polling_servers.lock() { g.remove(server_id); }
                     }
-                    if let Some(server_id) = poll_status_id {
-                        poll_server_status(&registry, &event_tx, &server_id).await;
+                    if let Some(ref server_id) = poll_status_id
+                        && polling_servers.lock().is_ok_and(|mut g| g.insert(server_id.clone()))
+                    {
+                        poll_server_status(&registry, &event_tx, server_id).await;
+                        if let Ok(mut g) = polling_servers.lock() { g.remove(server_id); }
                     }
                 }
             }
@@ -606,23 +613,29 @@ async fn handle_action(registry: &AdapterRegistry, all_tenants: &AtomicBool, act
     }
 }
 
+/// Determine if an action should trigger migration-progress polling after success.
+fn poll_migration_server_id(action: &Action) -> Option<String> {
+    match action {
+        Action::LiveMigrateServer { id, .. }
+        | Action::ColdMigrateServer { id, .. } => Some(id.clone()),
+        _ => None,
+    }
+}
+
 /// Determine if an action should trigger server-status polling after success.
 fn poll_server_id_for_status(action: &Action) -> Option<String> {
     match action {
         Action::ResizeServer { id, .. }
         | Action::ConfirmResize { id }
-        | Action::RevertResize { id } => Some(id.clone()),
+        | Action::RevertResize { id }
+        | Action::RebootServer { id, .. }
+        | Action::StartServer { id }
+        | Action::StopServer { id } => Some(id.clone()),
         _ => None,
     }
 }
 
-/// Whether a server status represents a terminal (stable) state.
-fn is_terminal_server_status(status: &str) -> bool {
-    matches!(
-        status,
-        "ACTIVE" | "ERROR" | "VERIFY_RESIZE" | "SHUTOFF" | "SHELVED_OFFLOADED"
-    )
-}
+use crate::models::common::is_terminal_server_status;
 
 /// Poll server status every 2 seconds until it reaches a terminal state.
 async fn poll_server_status(
@@ -798,6 +811,51 @@ mod tests {
 
         // Non-resize actions should not trigger status polling
         assert_eq!(poll_server_id_for_status(&Action::FetchServers), None);
+    }
+
+    #[test]
+    fn test_polling_dedup_guard() {
+        use std::sync::{Arc, Mutex};
+        use std::collections::HashSet;
+
+        let guard: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+
+        // First insert succeeds
+        assert!(guard.lock().unwrap().insert("s1".to_string()));
+        // Duplicate insert fails (already polling)
+        assert!(!guard.lock().unwrap().insert("s1".to_string()));
+        // Different server succeeds
+        assert!(guard.lock().unwrap().insert("s2".to_string()));
+        // Remove and re-insert succeeds
+        guard.lock().unwrap().remove("s1");
+        assert!(guard.lock().unwrap().insert("s1".to_string()));
+    }
+
+    #[test]
+    fn test_cold_migrate_triggers_migration_polling() {
+        // ColdMigrateServer should trigger migration polling
+        assert_eq!(
+            poll_migration_server_id(&Action::ColdMigrateServer { id: "s1".into() }),
+            Some("s1".to_string()),
+        );
+        // LiveMigrate should still work
+        assert_eq!(
+            poll_migration_server_id(&Action::LiveMigrateServer { id: "s2".into(), host: None }),
+            Some("s2".to_string()),
+        );
+        // FetchServers should not trigger
+        assert_eq!(poll_migration_server_id(&Action::FetchServers), None);
+    }
+
+    #[test]
+    fn test_reboot_start_stop_trigger_status_polling() {
+        let reboot = Action::RebootServer { id: "s1".into(), hard: false };
+        let start = Action::StartServer { id: "s1".into() };
+        let stop = Action::StopServer { id: "s1".into() };
+
+        assert_eq!(poll_server_id_for_status(&reboot), Some("s1".to_string()));
+        assert_eq!(poll_server_id_for_status(&start), Some("s1".to_string()));
+        assert_eq!(poll_server_id_for_status(&stop), Some("s1".to_string()));
     }
 
     #[test]

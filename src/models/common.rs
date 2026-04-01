@@ -54,6 +54,14 @@ pub enum Route {
     Usage,
 }
 
+/// Whether a server status represents a terminal (stable) state.
+pub fn is_terminal_server_status(status: &str) -> bool {
+    matches!(
+        status,
+        "ACTIVE" | "ERROR" | "VERIFY_RESIZE" | "SHUTOFF" | "SHELVED_OFFLOADED"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -81,6 +89,21 @@ mod tests {
         // Check uniqueness via HashSet
         let set: std::collections::HashSet<_> = types.iter().collect();
         assert_eq!(set.len(), 14);
+    }
+
+    #[test]
+    fn test_is_terminal_server_status() {
+        assert!(is_terminal_server_status("ACTIVE"));
+        assert!(is_terminal_server_status("ERROR"));
+        assert!(is_terminal_server_status("VERIFY_RESIZE"));
+        assert!(is_terminal_server_status("SHUTOFF"));
+        assert!(is_terminal_server_status("SHELVED_OFFLOADED"));
+
+        assert!(!is_terminal_server_status("RESIZE"));
+        assert!(!is_terminal_server_status("REVERT_RESIZE"));
+        assert!(!is_terminal_server_status("MIGRATING"));
+        assert!(!is_terminal_server_status("BUILD"));
+        assert!(!is_terminal_server_status("REBOOT"));
     }
 
     #[test]
