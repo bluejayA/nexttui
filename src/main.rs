@@ -41,6 +41,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let args: Vec<String> = std::env::args().collect();
     let demo_mode = args.iter().any(|a| a == "--demo");
+    let cloud_arg = args.windows(2)
+        .find(|w| w[0] == "--cloud")
+        .map(|w| w[1].clone());
 
     // Keep _event_tx alive so event_rx doesn't immediately return None in demo mode
     let (mut app, event_rx, _keep_alive_tx) = if demo_mode {
@@ -48,7 +51,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (event_tx, event_rx) = mpsc::unbounded_channel::<AppEvent>();
         (app, event_rx, Some(event_tx))
     } else {
-        let config = match Config::load() {
+        let mut config = match Config::load() {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("Error: {e}");
@@ -56,6 +59,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
         };
+
+        // --cloud CLI arg overrides OS_CLOUD and config.toml default_cloud
+        if let Some(ref name) = cloud_arg {
+            if let Err(e) = config.switch_cloud(name) {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        }
 
         for w in config.warnings() {
             eprintln!("Warning: {w}");
