@@ -179,6 +179,9 @@ impl NetworkModule {
 }
 
 impl Component for NetworkModule {
+    fn refresh_action(&self) -> Option<Action> { Some(Action::FetchNetworks) }
+    fn is_modal(&self) -> bool { self.form.is_some() }
+
     fn set_all_tenants(&mut self, v: bool) {
         self.all_tenants = v;
         self.resource_list = ResourceList::new(network_columns(v));

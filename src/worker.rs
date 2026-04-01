@@ -26,6 +26,7 @@ pub async fn run_worker(
     event_tx: mpsc::UnboundedSender<AppEvent>,
 ) {
     let polling_servers: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+    let in_flight_fetches: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
 
     while let Some(action) = action_rx.recv().await {
         // RBAC guard: check CUD permissions before API call
@@ -38,10 +39,19 @@ pub async fn run_worker(
             continue;
         }
 
+        // FetchDedup: skip if same fetch is already in-flight
+        let dedup_key = fetch_dedup_key(&action);
+        if let Some(key) = dedup_key
+            && !in_flight_fetches.lock().unwrap_or_else(|e| e.into_inner()).insert(key.to_string())
+        {
+            continue;
+        }
+
         let registry = registry.clone();
         let event_tx = event_tx.clone();
         let all_tenants = all_tenants.clone();
         let polling_servers = polling_servers.clone();
+        let in_flight_fetches = in_flight_fetches.clone();
 
         let poll_migration_id = poll_migration_server_id(&action);
         let poll_status_id = poll_server_id_for_status(&action);
@@ -54,18 +64,22 @@ pub async fn run_worker(
                 if let Some(ev) = event {
                     let _ = event_tx.send(ev);
                 }
+                // Release fetch dedup guard
+                if let Some(key) = dedup_key {
+                    in_flight_fetches.lock().unwrap_or_else(|e| e.into_inner()).remove(key);
+                }
                 if success {
                     if let Some(ref server_id) = poll_migration_id
-                        && polling_servers.lock().is_ok_and(|mut g| g.insert(server_id.clone()))
+                        && polling_servers.lock().unwrap_or_else(|e| e.into_inner()).insert(server_id.clone())
                     {
                         poll_migration_progress(&registry, &event_tx, server_id).await;
-                        if let Ok(mut g) = polling_servers.lock() { g.remove(server_id); }
+                        polling_servers.lock().unwrap_or_else(|e| e.into_inner()).remove(server_id);
                     }
                     if let Some(ref server_id) = poll_status_id
-                        && polling_servers.lock().is_ok_and(|mut g| g.insert(server_id.clone()))
+                        && polling_servers.lock().unwrap_or_else(|e| e.into_inner()).insert(server_id.clone())
                     {
                         poll_server_status(&registry, &event_tx, server_id).await;
-                        if let Ok(mut g) = polling_servers.lock() { g.remove(server_id); }
+                        polling_servers.lock().unwrap_or_else(|e| e.into_inner()).remove(server_id);
                     }
                 }
             }
@@ -635,6 +649,28 @@ fn poll_server_id_for_status(action: &Action) -> Option<String> {
     }
 }
 
+/// Return a dedup key for Fetch-type actions (parameterless list fetches).
+/// Returns None for mutations, parameterized fetches, and non-fetch actions.
+fn fetch_dedup_key(action: &Action) -> Option<&'static str> {
+    match action {
+        Action::FetchServers => Some("FetchServers"),
+        Action::FetchVolumes => Some("FetchVolumes"),
+        Action::FetchNetworks => Some("FetchNetworks"),
+        Action::FetchImages => Some("FetchImages"),
+        Action::FetchFlavors => Some("FetchFlavors"),
+        Action::FetchSnapshots => Some("FetchSnapshots"),
+        Action::FetchFloatingIps => Some("FetchFloatingIps"),
+        Action::FetchSecurityGroups => Some("FetchSecurityGroups"),
+        Action::FetchProjects => Some("FetchProjects"),
+        Action::FetchUsers => Some("FetchUsers"),
+        Action::FetchAggregates => Some("FetchAggregates"),
+        Action::FetchComputeServices => Some("FetchComputeServices"),
+        Action::FetchHypervisors => Some("FetchHypervisors"),
+        Action::FetchAgents => Some("FetchAgents"),
+        _ => None,
+    }
+}
+
 use crate::models::common::is_terminal_server_status;
 
 /// Poll server status every 2 seconds until it reaches a terminal state.
@@ -868,6 +904,44 @@ mod tests {
         assert!(!is_terminal_server_status("RESIZE"));
         assert!(!is_terminal_server_status("REVERT_RESIZE"));
         assert!(!is_terminal_server_status("MIGRATING"));
+    }
+
+    #[test]
+    fn test_fetch_dedup_key_returns_key_for_fetch_actions() {
+        assert_eq!(fetch_dedup_key(&Action::FetchServers), Some("FetchServers"));
+        assert_eq!(fetch_dedup_key(&Action::FetchVolumes), Some("FetchVolumes"));
+        assert_eq!(fetch_dedup_key(&Action::FetchNetworks), Some("FetchNetworks"));
+        assert_eq!(fetch_dedup_key(&Action::FetchImages), Some("FetchImages"));
+        assert_eq!(fetch_dedup_key(&Action::FetchFlavors), Some("FetchFlavors"));
+        assert_eq!(fetch_dedup_key(&Action::FetchSnapshots), Some("FetchSnapshots"));
+        assert_eq!(fetch_dedup_key(&Action::FetchFloatingIps), Some("FetchFloatingIps"));
+        assert_eq!(fetch_dedup_key(&Action::FetchSecurityGroups), Some("FetchSecurityGroups"));
+        assert_eq!(fetch_dedup_key(&Action::FetchProjects), Some("FetchProjects"));
+        assert_eq!(fetch_dedup_key(&Action::FetchUsers), Some("FetchUsers"));
+        assert_eq!(fetch_dedup_key(&Action::FetchAggregates), Some("FetchAggregates"));
+        assert_eq!(fetch_dedup_key(&Action::FetchComputeServices), Some("FetchComputeServices"));
+        assert_eq!(fetch_dedup_key(&Action::FetchHypervisors), Some("FetchHypervisors"));
+        assert_eq!(fetch_dedup_key(&Action::FetchAgents), Some("FetchAgents"));
+    }
+
+    #[test]
+    fn test_fetch_dedup_key_returns_none_for_mutations() {
+        assert_eq!(fetch_dedup_key(&Action::DeleteServer { id: "s1".into(), name: "w1".into() }), None);
+        assert_eq!(fetch_dedup_key(&Action::RebootServer { id: "s1".into(), hard: false }), None);
+    }
+
+    #[test]
+    fn test_fetch_dedup_guard_skips_duplicate() {
+        let guard: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+        let key = "FetchServers";
+
+        // First insert succeeds — action should proceed
+        assert!(guard.lock().unwrap().insert(key.to_string()));
+        // Duplicate — should be skipped
+        assert!(!guard.lock().unwrap().insert(key.to_string()));
+        // After removal — should succeed again
+        guard.lock().unwrap().remove(key);
+        assert!(guard.lock().unwrap().insert(key.to_string()));
     }
 
     #[test]

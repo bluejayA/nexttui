@@ -32,6 +32,8 @@ impl ComputeServiceModule {
 }
 
 impl Component for ComputeServiceModule {
+    fn refresh_action(&self) -> Option<Action> { Some(Action::FetchComputeServices) }
+
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
         if self.resource_list.handle_nav_key(key) { return None; }
         match key.code {

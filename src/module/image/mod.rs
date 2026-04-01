@@ -205,6 +205,9 @@ impl ImageModule {
 }
 
 impl Component for ImageModule {
+    fn refresh_action(&self) -> Option<Action> { Some(Action::FetchImages) }
+    fn is_modal(&self) -> bool { self.confirm.is_active() || self.form.is_some() }
+
     fn set_all_tenants(&mut self, v: bool) {
         self.all_tenants = v;
         self.resource_list = ResourceList::new(image_columns(v));

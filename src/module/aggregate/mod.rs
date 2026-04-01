@@ -32,6 +32,8 @@ impl AggregateModule {
 }
 
 impl Component for AggregateModule {
+    fn refresh_action(&self) -> Option<Action> { Some(Action::FetchAggregates) }
+
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
         if self.resource_list.handle_nav_key(key) { return None; }
         match key.code {

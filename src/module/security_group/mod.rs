@@ -323,6 +323,9 @@ impl SecurityGroupModule {
 }
 
 impl Component for SecurityGroupModule {
+    fn refresh_action(&self) -> Option<Action> { Some(Action::FetchSecurityGroups) }
+    fn is_modal(&self) -> bool { self.confirm.is_active() || self.form.is_some() }
+
     fn set_all_tenants(&mut self, v: bool) {
         self.all_tenants = v;
         self.resource_list = ResourceList::new(sg_columns(v));

@@ -168,6 +168,9 @@ impl ProjectModule {
 }
 
 impl Component for ProjectModule {
+    fn refresh_action(&self) -> Option<Action> { Some(Action::FetchProjects) }
+    fn is_modal(&self) -> bool { self.confirm.is_active() || self.form.is_some() }
+
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
         if let Some(result) = self.confirm.handle_key(key, Self::resolve_action) { return result; }
         match &self.view_state {

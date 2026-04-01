@@ -151,6 +151,9 @@ impl FloatingIpModule {
 }
 
 impl Component for FloatingIpModule {
+    fn refresh_action(&self) -> Option<Action> { Some(Action::FetchFloatingIps) }
+    fn is_modal(&self) -> bool { self.confirm.is_active() || self.form.is_some() }
+
     fn set_all_tenants(&mut self, v: bool) {
         self.all_tenants = v;
         self.resource_list = ResourceList::new(fip_columns(v));
