@@ -110,10 +110,12 @@ impl Sidebar {
                 let sep_width = area.width.saturating_sub(4) as usize; // inside border
                 let pad = sep_width.saturating_sub(7) / 2; // 7 = " Admin " len
                 let sep = format!("{} Admin {}", "─".repeat(pad), "─".repeat(sep_width.saturating_sub(pad + 7)));
-                items.push(ListItem::new(Line::from(Span::styled(
-                    sep,
-                    Theme::disabled(),
-                ))));
+                let sep_style = if focused {
+                    Theme::focus_border()
+                } else {
+                    Theme::unfocus_border()
+                };
+                items.push(ListItem::new(Line::from(Span::styled(sep, sep_style))));
                 // Shift selection index past separator lines
                 if self.selected_index >= i {
                     select_idx = self.selected_index + 2;
