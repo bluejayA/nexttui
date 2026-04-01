@@ -1,5 +1,5 @@
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Span;
+use ratatui::text::{Line, Span};
 
 pub struct Theme;
 
@@ -101,6 +101,21 @@ pub fn panel_title(name: &str, focused: bool) -> String {
     }
 }
 
+pub fn panel_title_line(name: &str, focused: bool, all_tenants: bool) -> Line<'static> {
+    if !focused {
+        return Line::from(format!("  {name}  "));
+    }
+    if all_tenants {
+        Line::from(vec![
+            Span::raw(format!("[ {name} | ")),
+            Span::styled("ALL", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::raw(" ]"),
+        ])
+    } else {
+        Line::from(format!("[ {name} ]"))
+    }
+}
+
 pub fn key_hint<'a>(key: &'a str, desc: &'a str) -> Vec<Span<'a>> {
     vec![
         Span::styled(
@@ -190,6 +205,31 @@ mod tests {
     #[test]
     fn test_panel_title_unfocused() {
         assert_eq!(panel_title("Servers", false), "  Servers  ");
+    }
+
+    #[test]
+    fn test_panel_title_line_focused_no_all() {
+        let line = panel_title_line("Servers", true, false);
+        assert_eq!(line.spans.len(), 1);
+        assert_eq!(line.spans[0].content.as_ref(), "[ Servers ]");
+    }
+
+    #[test]
+    fn test_panel_title_line_focused_all_tenants() {
+        let line = panel_title_line("Servers", true, true);
+        assert_eq!(line.spans.len(), 3);
+        assert_eq!(line.spans[0].content.as_ref(), "[ Servers | ");
+        assert_eq!(line.spans[1].content.as_ref(), "ALL");
+        assert_eq!(line.spans[1].style.fg, Some(Color::Yellow));
+        assert!(line.spans[1].style.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(line.spans[2].content.as_ref(), " ]");
+    }
+
+    #[test]
+    fn test_panel_title_line_unfocused_ignores_all() {
+        let line = panel_title_line("Servers", false, true);
+        assert_eq!(line.spans.len(), 1);
+        assert_eq!(line.spans[0].content.as_ref(), "  Servers  ");
     }
 
     // === Step 4: key_hint ===

@@ -106,17 +106,18 @@ impl Sidebar {
                 } else {
                     " "
                 };
+                let admin_prefix = if item.admin_only { "🔒" } else { " " };
                 let style = if i == self.selected_index && focused {
                     Theme::focus_border().add_modifier(Modifier::BOLD)
                 } else if i == self.selected_index {
                     Theme::unfocus_border().add_modifier(Modifier::BOLD)
                 } else if item.admin_only {
-                    Theme::disabled()
+                    Theme::warning()
                 } else {
                     Style::default().fg(ratatui::style::Color::White)
                 };
                 let line = Line::from(Span::styled(
-                    format!("{marker} {}", item.label),
+                    format!("{marker}{admin_prefix}{}", item.label),
                     style,
                 ));
                 ListItem::new(line)

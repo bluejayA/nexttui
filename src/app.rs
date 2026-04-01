@@ -456,7 +456,8 @@ impl App {
             } else {
                 Theme::unfocus_border()
             };
-            let title = theme::panel_title(&route_label, content_focused);
+            let all_tenants = self.all_tenants.load(Ordering::Relaxed);
+            let title = theme::panel_title_line(&route_label, content_focused, all_tenants);
             let content_block = Block::default()
                 .title(title)
                 .borders(Borders::ALL)
