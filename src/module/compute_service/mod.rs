@@ -54,6 +54,8 @@ impl Component for ComputeServiceModule {
     fn render(&self, frame: &mut Frame, area: Rect) {
         self.resource_list.render(frame, area);
     }
+
+    fn help_hint(&self) -> &str { "r:Refresh" }
 }
 
 #[cfg(test)]
@@ -72,5 +74,11 @@ mod tests {
             ComputeService { id: "s1".into(), binary: "nova-compute".into(), host: "node1".into(), state: "up".into(), status: "enabled".into(), updated_at: None, disabled_reason: None },
         ]));
         assert_eq!(m.services().len(), 1);
+    }
+
+    #[test]
+    fn test_help_hint() {
+        let m = ComputeServiceModule::new();
+        assert_eq!(m.help_hint(), "r:Refresh");
     }
 }

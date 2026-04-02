@@ -54,6 +54,8 @@ impl Component for AggregateModule {
     fn render(&self, frame: &mut Frame, area: Rect) {
         self.resource_list.render(frame, area);
     }
+
+    fn help_hint(&self) -> &str { "r:Refresh" }
 }
 
 #[cfg(test)]
@@ -72,5 +74,11 @@ mod tests {
             Aggregate { id: 1, name: "agg1".into(), availability_zone: Some("az1".into()), hosts: vec!["h1".into()], metadata: Default::default() },
         ]));
         assert_eq!(m.aggregates().len(), 1);
+    }
+
+    #[test]
+    fn test_help_hint() {
+        let m = AggregateModule::new();
+        assert_eq!(m.help_hint(), "r:Refresh");
     }
 }

@@ -277,6 +277,14 @@ impl Component for VolumeModule {
 
         self.confirm.render(frame, area);
     }
+
+    fn help_hint(&self) -> &str {
+        match &self.view_state {
+            ViewState::List => "Enter:Detail c:Create d:Delete r:Refresh",
+            ViewState::Detail(_) => "Esc:Back",
+            ViewState::Create => "Esc:Cancel Tab:Next Enter:Submit",
+        }
+    }
 }
 
 #[cfg(test)]
@@ -479,5 +487,25 @@ mod tests {
         let (mut module, _rx) = setup();
         module.handle_key(key(KeyCode::Char('c')));
         assert!(module.is_modal());
+    }
+
+    #[test]
+    fn test_help_hint_list() {
+        let (module, _rx) = setup();
+        assert_eq!(module.help_hint(), "Enter:Detail c:Create d:Delete r:Refresh");
+    }
+
+    #[test]
+    fn test_help_hint_detail() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Enter));
+        assert_eq!(module.help_hint(), "Esc:Back");
+    }
+
+    #[test]
+    fn test_help_hint_create() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Char('c')));
+        assert_eq!(module.help_hint(), "Esc:Cancel Tab:Next Enter:Submit");
     }
 }

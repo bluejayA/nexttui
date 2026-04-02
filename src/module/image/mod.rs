@@ -279,6 +279,15 @@ impl Component for ImageModule {
 
         self.confirm.render(frame, area);
     }
+
+    fn help_hint(&self) -> &str {
+        match &self.view_state {
+            ViewState::List if self.is_admin => "Enter:Detail c:Create d:Delete r:Refresh",
+            ViewState::List => "Enter:Detail r:Refresh",
+            ViewState::Detail(_) => "Esc:Back",
+            ViewState::Create => "Esc:Cancel Tab:Next Enter:Submit",
+        }
+    }
 }
 
 #[cfg(test)]
@@ -449,5 +458,31 @@ mod tests {
         let form = module.form.as_ref().unwrap();
         assert_eq!(form.field_count(), 6);
         assert_eq!(form.focused_field_name(), "Name");
+    }
+
+    #[test]
+    fn test_help_hint_list_admin() {
+        let (module, _rx) = setup(true);
+        assert_eq!(module.help_hint(), "Enter:Detail c:Create d:Delete r:Refresh");
+    }
+
+    #[test]
+    fn test_help_hint_list_non_admin() {
+        let (module, _rx) = setup(false);
+        assert_eq!(module.help_hint(), "Enter:Detail r:Refresh");
+    }
+
+    #[test]
+    fn test_help_hint_detail() {
+        let (mut module, _rx) = setup(false);
+        module.handle_key(key(KeyCode::Enter));
+        assert_eq!(module.help_hint(), "Esc:Back");
+    }
+
+    #[test]
+    fn test_help_hint_create() {
+        let (mut module, _rx) = setup(true);
+        module.handle_key(key(KeyCode::Char('c')));
+        assert_eq!(module.help_hint(), "Esc:Cancel Tab:Next Enter:Submit");
     }
 }

@@ -73,6 +73,8 @@ impl Component for HypervisorModule {
     fn render(&self, frame: &mut Frame, area: Rect) {
         self.resource_list.render(frame, area);
     }
+
+    fn help_hint(&self) -> &str { "r:Refresh" }
 }
 
 #[cfg(test)]
@@ -100,5 +102,11 @@ mod tests {
     #[test] fn test_refresh() {
         let mut m = HypervisorModule::new();
         assert!(matches!(m.handle_key(key(KeyCode::Char('r'))), Some(Action::FetchHypervisors)));
+    }
+
+    #[test]
+    fn test_help_hint() {
+        let m = HypervisorModule::new();
+        assert_eq!(m.help_hint(), "r:Refresh");
     }
 }

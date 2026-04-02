@@ -247,6 +247,14 @@ impl Component for NetworkModule {
             }
         }
     }
+
+    fn help_hint(&self) -> &str {
+        match &self.view_state {
+            ViewState::List => "Enter:Detail c:Create r:Refresh",
+            ViewState::Detail(_) => "Esc:Back",
+            ViewState::Create => "Esc:Cancel Tab:Next Enter:Submit",
+        }
+    }
 }
 
 #[cfg(test)]
@@ -421,5 +429,25 @@ mod tests {
         let form = module.form.as_ref().unwrap();
         assert_eq!(form.field_count(), 5);
         assert_eq!(form.focused_field_name(), "Name");
+    }
+
+    #[test]
+    fn test_help_hint_list() {
+        let (module, _rx) = setup();
+        assert_eq!(module.help_hint(), "Enter:Detail c:Create r:Refresh");
+    }
+
+    #[test]
+    fn test_help_hint_detail() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Enter));
+        assert_eq!(module.help_hint(), "Esc:Back");
+    }
+
+    #[test]
+    fn test_help_hint_create() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Char('c')));
+        assert_eq!(module.help_hint(), "Esc:Cancel Tab:Next Enter:Submit");
     }
 }

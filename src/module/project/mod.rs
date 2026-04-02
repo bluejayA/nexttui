@@ -225,6 +225,14 @@ impl Component for ProjectModule {
         }
         self.confirm.render(frame, area);
     }
+
+    fn help_hint(&self) -> &str {
+        match &self.view_state {
+            ViewState::List => "Enter:Detail c:Create d:Delete r:Refresh",
+            ViewState::Detail(_) => "Esc:Back",
+            ViewState::Create => "Esc:Cancel Tab:Next Enter:Submit",
+        }
+    }
 }
 
 #[cfg(test)]
@@ -315,5 +323,25 @@ mod tests {
         assert!(action.is_none());
         // Still in create mode
         assert_eq!(*m.view_state(), ViewState::Create);
+    }
+
+    #[test]
+    fn test_help_hint_list() {
+        let (m, _) = setup();
+        assert_eq!(m.help_hint(), "Enter:Detail c:Create d:Delete r:Refresh");
+    }
+
+    #[test]
+    fn test_help_hint_detail() {
+        let (mut m, _) = setup();
+        m.handle_key(key(KeyCode::Enter));
+        assert_eq!(m.help_hint(), "Esc:Back");
+    }
+
+    #[test]
+    fn test_help_hint_create() {
+        let (mut m, _) = setup();
+        m.handle_key(key(KeyCode::Char('c')));
+        assert_eq!(m.help_hint(), "Esc:Cancel Tab:Next Enter:Submit");
     }
 }
