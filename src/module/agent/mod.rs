@@ -33,6 +33,8 @@ impl AgentModule {
 }
 
 impl Component for AgentModule {
+    fn refresh_action(&self) -> Option<Action> { Some(Action::FetchAgents) }
+
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
         if self.resource_list.handle_nav_key(key) { return None; }
         match key.code {

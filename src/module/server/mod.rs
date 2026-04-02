@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 use crate::action::Action;
 use crate::component::Component;
 use crate::event::AppEvent;
+use crate::models::common::is_terminal_server_status;
 use crate::models::nova::{Flavor, Server, ServerMigration};
 use crate::module::{ConfirmHandler, PendingAction, ViewState};
 use crate::port::types::{NetworkAttachment, ServerCreateParams};
@@ -468,6 +469,12 @@ impl ServerModule {
 }
 
 impl Component for ServerModule {
+    fn refresh_action(&self) -> Option<Action> { Some(Action::FetchServers) }
+    fn has_transitional_resources(&self) -> bool {
+        self.servers.iter().any(|s| !is_terminal_server_status(&s.status))
+    }
+    fn is_modal(&self) -> bool { self.confirm.is_active() || self.form.is_some() || self.select_popup.is_some() }
+
     fn set_all_tenants(&mut self, v: bool) {
         self.all_tenants = v;
         self.resource_list = ResourceList::new(server_columns_full(v, self.is_admin));
@@ -1519,5 +1526,50 @@ mod tests {
         module.handle_key(key(KeyCode::Enter));
         let hint = module.help_hint();
         assert!(hint.contains("F:Resize"));
+    }
+
+    #[test]
+    fn test_refresh_action_returns_fetch_servers() {
+        let (module, _rx) = setup();
+        assert!(matches!(module.refresh_action(), Some(Action::FetchServers)));
+    }
+
+    #[test]
+    fn test_is_modal_false_by_default() {
+        let (module, _rx) = setup();
+        assert!(!module.is_modal());
+    }
+
+    #[test]
+    fn test_is_modal_true_when_confirm_active() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Char('d')));
+        assert!(module.is_modal());
+    }
+
+    #[test]
+    fn test_is_modal_true_when_form_open() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Char('c')));
+        assert!(module.is_modal());
+    }
+
+    #[test]
+    fn test_has_transitional_all_terminal() {
+        // setup() creates ACTIVE, SHUTOFF, ERROR — all terminal
+        let (module, _rx) = setup();
+        assert!(!module.has_transitional_resources());
+    }
+
+    #[test]
+    fn test_has_transitional_with_migrating() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut module = ServerModule::new(tx);
+        let servers = vec![
+            make_test_server("s1", "web-01", "ACTIVE"),
+            make_test_server("s2", "web-02", "MIGRATING"),
+        ];
+        module.handle_event(&AppEvent::ServersLoaded(servers));
+        assert!(module.has_transitional_resources());
     }
 }

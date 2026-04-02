@@ -41,6 +41,8 @@ impl HypervisorModule {
 }
 
 impl Component for HypervisorModule {
+    fn refresh_action(&self) -> Option<Action> { Some(Action::FetchHypervisors) }
+
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
         if self.resource_list.handle_nav_key(key) { return None; }
         match key.code {

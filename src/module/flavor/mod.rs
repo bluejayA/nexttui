@@ -178,6 +178,9 @@ impl FlavorModule {
 }
 
 impl Component for FlavorModule {
+    fn refresh_action(&self) -> Option<Action> { Some(Action::FetchFlavors) }
+    fn is_modal(&self) -> bool { self.confirm.is_active() || self.form.is_some() }
+
     fn set_admin(&mut self, is_admin: bool) {
         self.is_admin = is_admin;
     }

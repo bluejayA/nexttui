@@ -20,6 +20,7 @@ use crate::ui::layout::LayoutManager;
 use crate::ui::sidebar::Sidebar;
 use crate::ui::status_bar::{StatusBar, StatusInfo};
 use crate::ui::theme::{self, Theme};
+use crate::ui::refresh::RefreshScheduler;
 use crate::ui::toast::{ToastMessage, ToastSeverity};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,10 +48,12 @@ pub struct App {
     header: Header,
     status_bar: StatusBar,
     route_labels: HashMap<Route, &'static str>,
+    refresh_scheduler: RefreshScheduler,
 }
 
 impl App {
     pub fn new(config: Config, action_tx: mpsc::UnboundedSender<Action>) -> Self {
+        let tick_rate = std::time::Duration::from_millis(config.app_config().tick_rate_ms);
         Self {
             should_quit: false,
             input_mode: InputMode::Normal,
@@ -68,6 +71,7 @@ impl App {
             header: Header::new(),
             status_bar: StatusBar::new(),
             route_labels: HashMap::new(),
+            refresh_scheduler: RefreshScheduler::new(tick_rate),
         }
     }
 
@@ -78,6 +82,7 @@ impl App {
         rbac: Arc<RbacGuard>,
     ) -> (Self, Vec<Action>) {
         let parts = registry.into_parts();
+        let tick_rate = std::time::Duration::from_millis(config.app_config().tick_rate_ms);
         let mut app = Self {
             should_quit: false,
             input_mode: InputMode::Normal,
@@ -95,6 +100,7 @@ impl App {
             header: Header::new(),
             status_bar: StatusBar::new(),
             route_labels: parts.route_labels,
+            refresh_scheduler: RefreshScheduler::new(tick_rate),
         };
         // Store sidebar items for number-key navigation
         app.sidebar.sync_active(&Route::Servers, false);
@@ -234,9 +240,11 @@ impl App {
                 self.router.navigate(route);
                 self.sidebar.sync_active(&self.router.current(), self.rbac.is_admin());
                 self.focus = FocusPane::Content;
+                self.refresh_scheduler.reset();
             }
             Action::Back => {
                 self.router.back();
+                self.refresh_scheduler.reset();
             }
             Action::FocusSidebar => {
                 if self.sidebar_visible {
@@ -306,6 +314,21 @@ impl App {
             | AppEvent::ResizeConfirmed { .. }
             | AppEvent::ResizeReverted { .. }
         );
+        // API backoff: slow down refresh on rate-limit/unavailable errors.
+        // NOTE: matches ApiError::RateLimited / ServiceUnavailable Display strings.
+        // If those Display impls change, update these patterns (or add a typed field to AppEvent).
+        match &event {
+            AppEvent::ApiError { message, .. }
+                if message.contains("Rate limited") || message.contains("unavailable") =>
+            {
+                self.refresh_scheduler.backoff();
+            }
+            AppEvent::ApiError { .. } => {}
+            _ => {
+                self.refresh_scheduler.reset_backoff();
+            }
+        }
+
         self.generate_toast(&event);
         for component in self.components.values_mut() {
             component.handle_event(&event);
@@ -418,10 +441,26 @@ impl App {
         self.background_tracker.add_toast(msg, level);
     }
 
-    /// Tick handler: toast expiry, background tracker GC.
+    /// Tick handler: toast expiry, background tracker GC, auto-refresh.
     pub fn on_tick(&mut self) {
         self.background_tracker.expire_toasts();
         self.background_tracker.gc_old_entries();
+
+        // Auto-refresh: skip when user is interacting
+        if self.input_mode != InputMode::Normal {
+            return;
+        }
+        let route = self.router.current();
+        if let Some(component) = self.components.get(&route) {
+            if component.is_modal() {
+                return;
+            }
+            let has_transitional = component.has_transitional_resources();
+            self.refresh_scheduler.set_fast(has_transitional);
+            if self.refresh_scheduler.tick() && let Some(action) = component.refresh_action() {
+                let _ = self.action_tx.send(action);
+            }
+        }
     }
 
     /// Render the UI.
@@ -782,5 +821,191 @@ mod tests {
         assert_eq!(toasts.len(), 1);
         assert_eq!(toasts[0].level, crate::background::ToastLevel::Error);
         assert!(toasts[0].message.contains("Permission denied"));
+    }
+
+    // --- Step 5: on_tick refresh dispatch ---
+
+    struct RefreshMock {
+        action: Option<Action>,
+        modal: bool,
+        transitional: bool,
+    }
+
+    impl RefreshMock {
+        fn new(action: Action) -> Self {
+            Self { action: Some(action), modal: false, transitional: false }
+        }
+    }
+
+    impl Component for RefreshMock {
+        fn handle_key(&mut self, _key: KeyEvent) -> Option<Action> { None }
+        fn handle_event(&mut self, _event: &AppEvent) {}
+        fn render(&self, _frame: &mut Frame, _area: Rect) {}
+        fn refresh_action(&self) -> Option<Action> { self.action.clone() }
+        fn is_modal(&self) -> bool { self.modal }
+        fn has_transitional_resources(&self) -> bool { self.transitional }
+    }
+
+    #[test]
+    fn test_on_tick_dispatches_refresh_action() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let config = test_config();
+        let mut app = App::new(config, tx);
+        app.register_component(Route::Servers, Box::new(RefreshMock::new(Action::FetchServers)));
+        app.router = Router::new(Route::Servers);
+
+        // Advance scheduler to trigger
+        for _ in 0..150 {
+            app.on_tick();
+        }
+        // Should have dispatched FetchServers
+        let mut found = false;
+        while let Ok(action) = rx.try_recv() {
+            if matches!(action, Action::FetchServers) { found = true; }
+        }
+        assert!(found, "expected FetchServers to be dispatched");
+    }
+
+    #[test]
+    fn test_on_tick_suppressed_when_form_mode() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let config = test_config();
+        let mut app = App::new(config, tx);
+        app.register_component(Route::Servers, Box::new(RefreshMock::new(Action::FetchServers)));
+        app.router = Router::new(Route::Servers);
+        app.input_mode = InputMode::Form;
+
+        for _ in 0..150 {
+            app.on_tick();
+        }
+        let mut found = false;
+        while let Ok(action) = rx.try_recv() {
+            if matches!(action, Action::FetchServers) { found = true; }
+        }
+        assert!(!found, "should not dispatch when in form mode");
+    }
+
+    #[test]
+    fn test_on_tick_suppressed_when_modal() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let config = test_config();
+        let mut app = App::new(config, tx);
+        let mut mock = RefreshMock::new(Action::FetchServers);
+        mock.modal = true;
+        app.register_component(Route::Servers, Box::new(mock));
+        app.router = Router::new(Route::Servers);
+
+        for _ in 0..150 {
+            app.on_tick();
+        }
+        let mut found = false;
+        while let Ok(action) = rx.try_recv() {
+            if matches!(action, Action::FetchServers) { found = true; }
+        }
+        assert!(!found, "should not dispatch when modal is active");
+    }
+
+    // --- API Backoff ---
+
+    #[test]
+    fn test_api_error_rate_limited_triggers_backoff() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let config = test_config();
+        let mut app = App::new(config, tx);
+        app.register_component(Route::Servers, Box::new(RefreshMock::new(Action::FetchServers)));
+        app.router = Router::new(Route::Servers);
+
+        app.handle_event(AppEvent::ApiError {
+            operation: "FetchServers".into(),
+            message: "Rate limited: retry after 30s".into(),
+        });
+
+        // After backoff, 150 ticks should NOT trigger (needs 300 at 2x)
+        for _ in 0..150 {
+            app.on_tick();
+        }
+        let mut found = false;
+        while let Ok(action) = rx.try_recv() {
+            if matches!(action, Action::FetchServers) { found = true; }
+        }
+        assert!(!found, "should not trigger at 150 ticks after backoff (2x = 300 needed)");
+    }
+
+    #[test]
+    fn test_api_error_service_unavailable_triggers_backoff() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let config = test_config();
+        let mut app = App::new(config, tx);
+        app.register_component(Route::Servers, Box::new(RefreshMock::new(Action::FetchServers)));
+        app.router = Router::new(Route::Servers);
+
+        app.handle_event(AppEvent::ApiError {
+            operation: "FetchServers".into(),
+            message: "Service unavailable: nova".into(),
+        });
+
+        for _ in 0..150 {
+            app.on_tick();
+        }
+        let mut found = false;
+        while let Ok(action) = rx.try_recv() {
+            if matches!(action, Action::FetchServers) { found = true; }
+        }
+        assert!(!found, "should not trigger at 150 ticks after backoff (2x = 300 needed)");
+    }
+
+    #[test]
+    fn test_success_event_resets_backoff() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let config = test_config();
+        let mut app = App::new(config, tx);
+        app.register_component(Route::Servers, Box::new(RefreshMock::new(Action::FetchServers)));
+        app.router = Router::new(Route::Servers);
+
+        // Trigger backoff
+        app.handle_event(AppEvent::ApiError {
+            operation: "FetchServers".into(),
+            message: "Rate limited: retry after 30s".into(),
+        });
+        // Then success event resets backoff
+        app.handle_event(AppEvent::ServersLoaded(vec![]));
+
+        // After reset, 150 ticks should trigger (back to 1x)
+        for _ in 0..150 {
+            app.on_tick();
+        }
+        let mut found = false;
+        while let Ok(action) = rx.try_recv() {
+            if matches!(action, Action::FetchServers) { found = true; }
+        }
+        assert!(found, "should trigger at 150 ticks after backoff reset");
+    }
+
+    // --- Step 6: Navigate/Back reset ---
+
+    #[test]
+    fn test_navigate_resets_refresh_scheduler() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let config = test_config();
+        let mut app = App::new(config, tx);
+        app.register_component(Route::Servers, Box::new(RefreshMock::new(Action::FetchServers)));
+        app.register_component(Route::Volumes, Box::new(RefreshMock::new(Action::FetchVolumes)));
+        app.router = Router::new(Route::Servers);
+
+        // Advance 100 ticks (not enough to trigger)
+        for _ in 0..100 {
+            app.on_tick();
+        }
+        // Navigate — should reset counter
+        app.dispatch_action(Action::Navigate(Route::Volumes));
+        // 150 more ticks from reset → should trigger at tick 150
+        for _ in 0..150 {
+            app.on_tick();
+        }
+        let mut found = false;
+        while let Ok(action) = rx.try_recv() {
+            if matches!(action, Action::FetchVolumes) { found = true; }
+        }
+        assert!(found, "expected FetchVolumes after navigate + 150 ticks");
     }
 }

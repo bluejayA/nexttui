@@ -9,4 +9,5 @@ pub mod resource_list;
 pub mod sidebar;
 pub mod status_bar;
 pub mod theme;
+pub mod refresh;
 pub mod toast;

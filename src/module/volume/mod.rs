@@ -207,6 +207,9 @@ impl VolumeModule {
 }
 
 impl Component for VolumeModule {
+    fn refresh_action(&self) -> Option<Action> { Some(Action::FetchVolumes) }
+    fn is_modal(&self) -> bool { self.confirm.is_active() || self.form.is_some() }
+
     fn set_all_tenants(&mut self, v: bool) {
         self.all_tenants = v;
         self.resource_list = ResourceList::new(volume_columns(v));
@@ -450,5 +453,31 @@ mod tests {
         let form = module.form.as_ref().unwrap();
         assert_eq!(form.field_count(), 5);
         assert_eq!(form.focused_field_name(), "Name");
+    }
+
+    #[test]
+    fn test_refresh_action_returns_fetch_volumes() {
+        let (module, _rx) = setup();
+        assert!(matches!(module.refresh_action(), Some(Action::FetchVolumes)));
+    }
+
+    #[test]
+    fn test_is_modal_false_by_default() {
+        let (module, _rx) = setup();
+        assert!(!module.is_modal());
+    }
+
+    #[test]
+    fn test_is_modal_true_when_confirm_active() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Char('d')));
+        assert!(module.is_modal());
+    }
+
+    #[test]
+    fn test_is_modal_true_when_form_open() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Char('c')));
+        assert!(module.is_modal());
     }
 }

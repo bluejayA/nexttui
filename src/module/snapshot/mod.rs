@@ -118,6 +118,9 @@ impl SnapshotModule {
 }
 
 impl Component for SnapshotModule {
+    fn refresh_action(&self) -> Option<Action> { Some(Action::FetchSnapshots) }
+    fn is_modal(&self) -> bool { self.confirm.is_active() }
+
     fn set_all_tenants(&mut self, v: bool) {
         self.all_tenants = v;
         self.resource_list = ResourceList::new(snapshot_columns(v));
