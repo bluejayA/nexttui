@@ -47,6 +47,28 @@ impl ActivityLog {
             entry.read = true;
         }
     }
+
+    /// Export all entries to a tab-separated text file.
+    pub fn export_to_file(&self, path: &std::path::Path) -> std::io::Result<()> {
+        use std::io::Write;
+        let mut buf = Vec::new();
+        if self.entries.is_empty() {
+            writeln!(buf, "(no entries)")?;
+        } else {
+            let now = Instant::now();
+            for entry in &self.entries {
+                let elapsed = now.duration_since(entry.timestamp);
+                let time_str = format_relative_time(elapsed);
+                let icon = if entry.success { "\u{2713}" } else { "\u{2717}" };
+                if entry.success || entry.message.is_empty() {
+                    writeln!(buf, "{time_str}\t{icon}\t{}\t{}", entry.operation, entry.resource_name)?;
+                } else {
+                    writeln!(buf, "{time_str}\t{icon}\t{}\t{}\t{}", entry.operation, entry.resource_name, entry.message)?;
+                }
+            }
+        }
+        std::fs::write(path, buf)
+    }
 }
 
 impl Default for ActivityLog {
@@ -111,8 +133,8 @@ impl ActivityLogPopup {
         use ratatui::text::{Line, Span};
         use ratatui::widgets::{Block, Borders, BorderType, Clear, Paragraph};
 
-        // Centered popup: 60% width, 50% height
-        let popup_width = area.width * 60 / 100;
+        // Centered popup: 80% width, 50% height
+        let popup_width = area.width * 80 / 100;
         let popup_height = area.height * 50 / 100;
         let popup_x = area.x + (area.width.saturating_sub(popup_width)) / 2;
         let popup_y = area.y + (area.height.saturating_sub(popup_height)) / 2;
@@ -121,7 +143,7 @@ impl ActivityLogPopup {
         frame.render_widget(Clear, popup_area);
 
         let block = Block::default()
-            .title(" Activity Log ")
+            .title(" Activity Log  (w:write to file) ")
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(Color::Yellow));
@@ -327,6 +349,35 @@ mod tests {
         let mut popup = ActivityLogPopup::new();
         popup.scroll_down(0);
         assert_eq!(popup.scroll_offset(), 0);
+    }
+
+    #[test]
+    fn test_export_to_file_writes_entries() {
+        let dir = std::env::temp_dir().join("nexttui-test-export");
+        let _ = std::fs::remove_file(&dir);
+        let mut log = ActivityLog::new();
+        log.push(make_entry("Delete", false, false));
+        log.push(make_entry("Create", true, false));
+        let result = log.export_to_file(&dir);
+        assert!(result.is_ok());
+        let content = std::fs::read_to_string(&dir).expect("file should exist");
+        assert!(content.contains("Create"));
+        assert!(content.contains("Delete"));
+        assert!(content.contains("\u{2713}")); // ✓
+        assert!(content.contains("\u{2717}")); // ✗
+        let _ = std::fs::remove_file(&dir);
+    }
+
+    #[test]
+    fn test_export_empty_log() {
+        let dir = std::env::temp_dir().join("nexttui-test-export-empty");
+        let _ = std::fs::remove_file(&dir);
+        let log = ActivityLog::new();
+        let result = log.export_to_file(&dir);
+        assert!(result.is_ok());
+        let content = std::fs::read_to_string(&dir).expect("file should exist");
+        assert!(content.contains("(no entries)"));
+        let _ = std::fs::remove_file(&dir);
     }
 
     #[test]

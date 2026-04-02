@@ -158,6 +158,20 @@ impl App {
                     self.show_activity_log = false;
                     self.activity_popup.reset_scroll();
                 }
+                KeyCode::Char('w') => {
+                    let path = std::path::PathBuf::from("/tmp/nexttui-activity.log");
+                    if let Err(e) = self.activity_log.export_to_file(&path) {
+                        self.background_tracker.add_toast(
+                            format!("Export failed: {e}"),
+                            crate::background::ToastLevel::Error,
+                        );
+                    } else {
+                        self.background_tracker.add_toast(
+                            format!("Activity log exported to {}", path.display()),
+                            crate::background::ToastLevel::Info,
+                        );
+                    }
+                }
                 _ => {}
             }
             return true;
