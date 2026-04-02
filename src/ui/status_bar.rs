@@ -11,6 +11,7 @@ pub struct StatusInfo {
     pub item_count: Option<usize>,
     pub selected_index: Option<usize>,
     pub context_hints: Vec<(String, String)>,
+    pub error_badge_count: usize,
 }
 
 impl StatusInfo {
@@ -41,6 +42,15 @@ impl StatusBar {
         let bg = Style::default().bg(Color::DarkGray).fg(Color::White);
         let left = info.left_text();
 
+        // Error badge: " ⚠N" in red after left text
+        let badge = if info.error_badge_count > 0 {
+            format!(" \u{26A0}{}", info.error_badge_count)
+        } else {
+            String::new()
+        };
+        // Use char count for display width (⚠ is 1 column in most terminals)
+        let badge_len = badge.chars().count();
+
         // Right: key hints using theme::key_hint()
         let mut hint_spans: Vec<Span> = Vec::new();
         for (i, (key, desc)) in info.context_hints.iter().enumerate() {
@@ -53,13 +63,20 @@ impl StatusBar {
 
         let padding_len = (area.width as usize)
             .saturating_sub(left.len())
+            .saturating_sub(badge_len)
             .saturating_sub(hint_plain_len);
         let padding = " ".repeat(padding_len);
 
         let mut spans = vec![
             Span::styled(&left, bg),
-            Span::styled(padding, bg),
         ];
+        if info.error_badge_count > 0 {
+            spans.push(Span::styled(
+                badge,
+                Style::default().bg(Color::DarkGray).fg(Color::Red),
+            ));
+        }
+        spans.push(Span::styled(padding, bg));
         spans.extend(hint_spans);
 
         let line = Line::from(spans);
@@ -87,6 +104,7 @@ mod tests {
                 ("j/k".into(), "이동".into()),
                 ("Enter".into(), "상세".into()),
             ],
+            error_badge_count: 0,
         }
     }
 
@@ -113,8 +131,47 @@ mod tests {
             item_count: None,
             selected_index: None,
             context_hints: vec![],
+            error_badge_count: 0,
         };
         assert_eq!(info.left_text(), "[Flavors]");
+    }
+
+    #[test]
+    fn test_error_badge_count_zero_no_badge_text() {
+        let info = sample_info();
+        let left = info.left_text();
+        // With error_badge_count=0, no badge should appear in left text
+        assert!(!left.contains('⚠'));
+    }
+
+    #[test]
+    fn test_error_badge_count_positive_shows_badge() {
+        let mut info = sample_info();
+        info.error_badge_count = 3;
+        // The badge is rendered in StatusBar::render, not in left_text.
+        // We test the render output by checking the spans.
+        // Use a buffer to capture render output.
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let backend = TestBackend::new(80, 1);
+        let mut terminal = Terminal::new(backend).ok();
+        if let Some(ref mut term) = terminal {
+            let _ = term.draw(|frame| {
+                let area = frame.area();
+                let bar = StatusBar::new();
+                StatusBar::render(&bar, frame, area, &info);
+            });
+            let buf = term.backend().buffer().clone();
+            let content: String = (0..buf.area.width)
+                .filter_map(|x| {
+                    let cell = &buf[(x, 0)];
+                    Some(cell.symbol().to_string())
+                })
+                .collect();
+            assert!(content.contains('⚠'), "badge should appear in rendered output: {content}");
+            assert!(content.contains('3'), "badge count should appear: {content}");
+        }
     }
 
     #[test]

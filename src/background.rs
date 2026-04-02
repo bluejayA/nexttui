@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 const TOAST_TTL_SUCCESS: Duration = Duration::from_secs(5);
-const TOAST_TTL_ERROR: Duration = Duration::from_secs(30);
+const TOAST_TTL_ERROR: Duration = Duration::from_secs(60);
 const TOAST_TTL_INFO: Duration = Duration::from_secs(5);
 const GC_AGE: Duration = Duration::from_secs(60);
 
@@ -86,12 +86,8 @@ impl BackgroundTracker {
                 if let Some(op) = self.operations.get_mut(&operation_id) {
                     op.status = OperationStatus::Completed;
                     op.finished_at = Some(Instant::now());
-                    self.toasts.push(Toast {
-                        message: format!("{} completed", op.description),
-                        level: ToastLevel::Success,
-                        created_at: Instant::now(),
-                        ttl: TOAST_TTL_SUCCESS,
-                    });
+                    let msg = format!("{} completed", op.description);
+                    self.add_toast(msg, ToastLevel::Success);
                 }
             }
             TrackingEvent::Failed {
@@ -101,19 +97,19 @@ impl BackgroundTracker {
                 if let Some(op) = self.operations.get_mut(&operation_id) {
                     op.status = OperationStatus::Failed(error.clone());
                     op.finished_at = Some(Instant::now());
-                    self.toasts.push(Toast {
-                        message: format!("{} failed: {}", op.description, error),
-                        level: ToastLevel::Error,
-                        created_at: Instant::now(),
-                        ttl: TOAST_TTL_ERROR,
-                    });
+                    let msg = format!("{} failed: {}", op.description, error);
+                    self.add_toast(msg, ToastLevel::Error);
                 }
             }
         }
     }
 
     /// Add a toast directly (not from tracking).
+    /// When adding a Success toast, all existing Error toasts are removed first.
     pub fn add_toast(&mut self, message: String, level: ToastLevel) {
+        if level == ToastLevel::Success {
+            self.toasts.retain(|t| t.level != ToastLevel::Error);
+        }
         let ttl = match level {
             ToastLevel::Success => TOAST_TTL_SUCCESS,
             ToastLevel::Error => TOAST_TTL_ERROR,
@@ -264,6 +260,43 @@ mod tests {
         tracker.gc_old_entries();
         assert_eq!(tracker.operations.len(), 1);
         assert!(tracker.operations.contains_key("active_op"));
+    }
+
+    #[test]
+    fn test_toast_ttl_error_is_60s() {
+        assert_eq!(TOAST_TTL_ERROR, Duration::from_secs(60));
+    }
+
+    #[test]
+    fn test_add_toast_success_removes_error_toasts() {
+        let mut tracker = BackgroundTracker::new();
+        tracker.add_toast("err1".into(), ToastLevel::Error);
+        tracker.add_toast("err2".into(), ToastLevel::Error);
+        assert_eq!(tracker.active_toasts().len(), 2);
+
+        tracker.add_toast("success!".into(), ToastLevel::Success);
+        // Error toasts should be removed, only success remains
+        assert_eq!(tracker.active_toasts().len(), 1);
+        assert_eq!(tracker.active_toasts()[0].level, ToastLevel::Success);
+        assert_eq!(tracker.active_toasts()[0].message, "success!");
+    }
+
+    #[test]
+    fn test_handle_tracking_completed_uses_add_toast() {
+        // After completing, success toast should remove prior error toasts
+        let mut tracker = BackgroundTracker::new();
+        tracker.add_toast("previous error".into(), ToastLevel::Error);
+
+        tracker.handle_tracking_event(TrackingEvent::Started {
+            operation_id: "op1".into(),
+            description: "Deleting server".into(),
+        });
+        tracker.handle_tracking_event(TrackingEvent::Completed {
+            operation_id: "op1".into(),
+        });
+        // The success toast from Completed should have removed the error toast
+        assert_eq!(tracker.active_toasts().len(), 1);
+        assert_eq!(tracker.active_toasts()[0].level, ToastLevel::Success);
     }
 
     #[test]
