@@ -21,6 +21,7 @@ use crate::ui::sidebar::Sidebar;
 use crate::ui::status_bar::{StatusBar, StatusInfo};
 use crate::ui::theme::{self, Theme};
 use crate::ui::refresh::RefreshScheduler;
+use crate::ui::activity_log::{ActivityLog, ActivityLogPopup};
 use crate::ui::toast::{ToastMessage, ToastSeverity};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +50,9 @@ pub struct App {
     status_bar: StatusBar,
     route_labels: HashMap<Route, &'static str>,
     refresh_scheduler: RefreshScheduler,
+    activity_log: ActivityLog,
+    activity_popup: ActivityLogPopup,
+    show_activity_log: bool,
 }
 
 impl App {
@@ -72,6 +76,9 @@ impl App {
             status_bar: StatusBar::new(),
             route_labels: HashMap::new(),
             refresh_scheduler: RefreshScheduler::new(tick_rate),
+            activity_log: ActivityLog::new(),
+            activity_popup: ActivityLogPopup::new(),
+            show_activity_log: false,
         }
     }
 
@@ -101,6 +108,9 @@ impl App {
             status_bar: StatusBar::new(),
             route_labels: parts.route_labels,
             refresh_scheduler: RefreshScheduler::new(tick_rate),
+            activity_log: ActivityLog::new(),
+            activity_popup: ActivityLogPopup::new(),
+            show_activity_log: false,
         };
         // Store sidebar items for number-key navigation
         app.sidebar.sync_active(&Route::Servers, false);
@@ -130,6 +140,43 @@ impl App {
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
         let no_modifiers = key.modifiers.is_empty();
 
+        // Activity log popup pseudo-modal: intercept j/k/Esc/! only
+        if self.show_activity_log {
+            match key.code {
+                KeyCode::Char('j') => {
+                    self.activity_popup
+                        .scroll_down(self.activity_log.entries().len());
+                }
+                KeyCode::Char('k') => {
+                    self.activity_popup.scroll_up();
+                }
+                KeyCode::Esc => {
+                    self.show_activity_log = false;
+                    self.activity_popup.reset_scroll();
+                }
+                KeyCode::Char('!') => {
+                    self.show_activity_log = false;
+                    self.activity_popup.reset_scroll();
+                }
+                KeyCode::Char('w') => {
+                    let path = std::path::PathBuf::from("/tmp/nexttui-activity.log");
+                    if let Err(e) = self.activity_log.export_to_file(&path) {
+                        self.background_tracker.add_toast(
+                            format!("Export failed: {e}"),
+                            crate::background::ToastLevel::Error,
+                        );
+                    } else {
+                        self.background_tracker.add_toast(
+                            format!("Activity log exported to {}", path.display()),
+                            crate::background::ToastLevel::Info,
+                        );
+                    }
+                }
+                _ => {}
+            }
+            return true;
+        }
+
         // Ctrl+c always quits
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.should_quit = true;
@@ -140,6 +187,15 @@ impl App {
         if key.code == KeyCode::Char('a') && key.modifiers.contains(KeyModifiers::CONTROL) {
             if self.rbac.can_perform(ActionKind::ViewAllTenants) {
                 self.dispatch_action(Action::ToggleAllTenants);
+            }
+            return true;
+        }
+
+        // '!' toggle activity log (Shift+1 sends '!' with SHIFT modifier)
+        if self.input_mode == InputMode::Normal && key.code == KeyCode::Char('!') {
+            self.show_activity_log = !self.show_activity_log;
+            if self.show_activity_log {
+                self.activity_log.mark_all_read();
             }
             return true;
         }
@@ -393,51 +449,61 @@ impl App {
     fn generate_toast(&mut self, event: &AppEvent) {
         use crate::background::ToastLevel;
         const MAX_NAME: usize = 64;
-        let (msg, level) = match event {
+        // Single match: (toast_message, level, operation, resource_name)
+        let (msg, level, operation, resource_name) = match event {
             // CUD success
-            AppEvent::ServerCreated(s) => (format!("Server '{}' created", Self::truncate_name(&s.name, MAX_NAME)), ToastLevel::Success),
-            AppEvent::ServerDeleted { name, .. } => (format!("Server '{}' deleted", Self::truncate_name(name, MAX_NAME)), ToastLevel::Success),
-            AppEvent::ServerRebooted { id } => (format!("Server {id} rebooted"), ToastLevel::Success),
-            AppEvent::ServerStarted { id } => (format!("Server {id} started"), ToastLevel::Success),
-            AppEvent::ServerStopped { id } => (format!("Server {id} stopped"), ToastLevel::Success),
-            AppEvent::ServerSnapshotCreated { server_id, .. } => (format!("Snapshot created for {server_id}"), ToastLevel::Success),
-            AppEvent::FlavorCreated(f) => (format!("Flavor '{}' created", Self::truncate_name(&f.name, MAX_NAME)), ToastLevel::Success),
-            AppEvent::FlavorDeleted { id } => (format!("Flavor {id} deleted"), ToastLevel::Success),
-            AppEvent::NetworkCreated(n) => (format!("Network '{}' created", Self::truncate_name(&n.name, MAX_NAME)), ToastLevel::Success),
-            AppEvent::SecurityGroupCreated(sg) => (format!("Security group '{}' created", Self::truncate_name(&sg.name, MAX_NAME)), ToastLevel::Success),
-            AppEvent::SecurityGroupDeleted { id } => (format!("Security group {id} deleted"), ToastLevel::Success),
-            AppEvent::SecurityGroupRuleCreated(_) => ("Security group rule created".into(), ToastLevel::Success),
-            AppEvent::SecurityGroupRuleDeleted { .. } => ("Security group rule deleted".into(), ToastLevel::Success),
-            AppEvent::VolumeCreated(v) => (format!("Volume '{}' created", Self::truncate_name(v.name.as_deref().unwrap_or(&v.id), MAX_NAME)), ToastLevel::Success),
-            AppEvent::VolumeDeleted { id } => (format!("Volume {id} deleted"), ToastLevel::Success),
-            AppEvent::VolumeExtended { id } => (format!("Volume {id} extended"), ToastLevel::Success),
-            AppEvent::SnapshotCreated(s) => (format!("Snapshot '{}' created", Self::truncate_name(s.name.as_deref().unwrap_or(&s.id), MAX_NAME)), ToastLevel::Success),
-            AppEvent::SnapshotDeleted { id } => (format!("Snapshot {id} deleted"), ToastLevel::Success),
-            AppEvent::ImageCreated(i) => (format!("Image '{}' created", Self::truncate_name(&i.name, MAX_NAME)), ToastLevel::Success),
-            AppEvent::ImageDeleted { id } => (format!("Image {id} deleted"), ToastLevel::Success),
-            AppEvent::FloatingIpCreated(f) => (format!("Floating IP '{}' created", Self::truncate_name(&f.floating_ip_address, MAX_NAME)), ToastLevel::Success),
-            AppEvent::FloatingIpDeleted { id } => (format!("Floating IP {id} deleted"), ToastLevel::Success),
-            AppEvent::ProjectCreated(p) => (format!("Project '{}' created", Self::truncate_name(&p.name, MAX_NAME)), ToastLevel::Success),
-            AppEvent::ProjectDeleted { id } => (format!("Project {id} deleted"), ToastLevel::Success),
-            AppEvent::UserCreated(u) => (format!("User '{}' created", Self::truncate_name(&u.name, MAX_NAME)), ToastLevel::Success),
-            AppEvent::UserDeleted { id } => (format!("User {id} deleted"), ToastLevel::Success),
+            AppEvent::ServerCreated(s) => (format!("Server '{}' created", Self::truncate_name(&s.name, MAX_NAME)), ToastLevel::Success, "Create".into(), s.name.clone()),
+            AppEvent::ServerDeleted { name, .. } => (format!("Server '{}' deleted", Self::truncate_name(name, MAX_NAME)), ToastLevel::Success, "Delete".into(), name.clone()),
+            AppEvent::ServerRebooted { id } => (format!("Server {id} rebooted"), ToastLevel::Success, "Reboot".into(), id.clone()),
+            AppEvent::ServerStarted { id } => (format!("Server {id} started"), ToastLevel::Success, "Start".into(), id.clone()),
+            AppEvent::ServerStopped { id } => (format!("Server {id} stopped"), ToastLevel::Success, "Stop".into(), id.clone()),
+            AppEvent::ServerSnapshotCreated { server_id, .. } => (format!("Snapshot created for {server_id}"), ToastLevel::Success, "Snapshot".into(), server_id.clone()),
+            AppEvent::FlavorCreated(f) => (format!("Flavor '{}' created", Self::truncate_name(&f.name, MAX_NAME)), ToastLevel::Success, "Create".into(), f.name.clone()),
+            AppEvent::FlavorDeleted { id } => (format!("Flavor {id} deleted"), ToastLevel::Success, "Delete".into(), id.clone()),
+            AppEvent::NetworkCreated(n) => (format!("Network '{}' created", Self::truncate_name(&n.name, MAX_NAME)), ToastLevel::Success, "Create".into(), n.name.clone()),
+            AppEvent::SecurityGroupCreated(sg) => (format!("Security group '{}' created", Self::truncate_name(&sg.name, MAX_NAME)), ToastLevel::Success, "Create".into(), sg.name.clone()),
+            AppEvent::SecurityGroupDeleted { id } => (format!("Security group {id} deleted"), ToastLevel::Success, "Delete".into(), id.clone()),
+            AppEvent::SecurityGroupRuleCreated(_) => ("Security group rule created".into(), ToastLevel::Success, "Create".into(), "SG Rule".into()),
+            AppEvent::SecurityGroupRuleDeleted { .. } => ("Security group rule deleted".into(), ToastLevel::Success, "Delete".into(), "SG Rule".into()),
+            AppEvent::VolumeCreated(v) => (format!("Volume '{}' created", Self::truncate_name(v.name.as_deref().unwrap_or(&v.id), MAX_NAME)), ToastLevel::Success, "Create".into(), v.name.as_deref().unwrap_or(&v.id).to_string()),
+            AppEvent::VolumeDeleted { id } => (format!("Volume {id} deleted"), ToastLevel::Success, "Delete".into(), id.clone()),
+            AppEvent::VolumeExtended { id } => (format!("Volume {id} extended"), ToastLevel::Success, "Extend".into(), id.clone()),
+            AppEvent::SnapshotCreated(s) => (format!("Snapshot '{}' created", Self::truncate_name(s.name.as_deref().unwrap_or(&s.id), MAX_NAME)), ToastLevel::Success, "Create".into(), s.name.as_deref().unwrap_or(&s.id).to_string()),
+            AppEvent::SnapshotDeleted { id } => (format!("Snapshot {id} deleted"), ToastLevel::Success, "Delete".into(), id.clone()),
+            AppEvent::ImageCreated(i) => (format!("Image '{}' created", Self::truncate_name(&i.name, MAX_NAME)), ToastLevel::Success, "Create".into(), i.name.clone()),
+            AppEvent::ImageDeleted { id } => (format!("Image {id} deleted"), ToastLevel::Success, "Delete".into(), id.clone()),
+            AppEvent::FloatingIpCreated(f) => (format!("Floating IP '{}' created", Self::truncate_name(&f.floating_ip_address, MAX_NAME)), ToastLevel::Success, "Create".into(), f.floating_ip_address.clone()),
+            AppEvent::FloatingIpDeleted { id } => (format!("Floating IP {id} deleted"), ToastLevel::Success, "Delete".into(), id.clone()),
+            AppEvent::ProjectCreated(p) => (format!("Project '{}' created", Self::truncate_name(&p.name, MAX_NAME)), ToastLevel::Success, "Create".into(), p.name.clone()),
+            AppEvent::ProjectDeleted { id } => (format!("Project {id} deleted"), ToastLevel::Success, "Delete".into(), id.clone()),
+            AppEvent::UserCreated(u) => (format!("User '{}' created", Self::truncate_name(&u.name, MAX_NAME)), ToastLevel::Success, "Create".into(), u.name.clone()),
+            AppEvent::UserDeleted { id } => (format!("User {id} deleted"), ToastLevel::Success, "Delete".into(), id.clone()),
             // Migration
-            AppEvent::ServerLiveMigrated { id } => (format!("Server {id} live migrated"), ToastLevel::Success),
-            AppEvent::ServerColdMigrated { id } => (format!("Server {id} cold migrated — confirm(Y) or revert(N)"), ToastLevel::Success),
-            AppEvent::MigrationConfirmed { id } => (format!("Migration confirmed for {id}"), ToastLevel::Success),
-            AppEvent::MigrationReverted { id } => (format!("Migration reverted for {id}"), ToastLevel::Success),
-            AppEvent::ServerEvacuated { id } => (format!("Server {id} evacuated"), ToastLevel::Success),
+            AppEvent::ServerLiveMigrated { id } => (format!("Server {id} live migrated"), ToastLevel::Success, "LiveMigrate".into(), id.clone()),
+            AppEvent::ServerColdMigrated { id } => (format!("Server {id} cold migrated — confirm(Y) or revert(N)"), ToastLevel::Success, "ColdMigrate".into(), id.clone()),
+            AppEvent::MigrationConfirmed { id } => (format!("Migration confirmed for {id}"), ToastLevel::Success, "ConfirmMigration".into(), id.clone()),
+            AppEvent::MigrationReverted { id } => (format!("Migration reverted for {id}"), ToastLevel::Success, "RevertMigration".into(), id.clone()),
+            AppEvent::ServerEvacuated { id } => (format!("Server {id} evacuated"), ToastLevel::Success, "Evacuate".into(), id.clone()),
             // Resize
-            AppEvent::ServerResized { id } => (format!("Server {id} resized — confirm(Y) or revert(N)"), ToastLevel::Success),
-            AppEvent::ResizeConfirmed { id } => (format!("Resize confirmed for {id}"), ToastLevel::Success),
-            AppEvent::ResizeReverted { id } => (format!("Resize reverted for {id}"), ToastLevel::Success),
+            AppEvent::ServerResized { id } => (format!("Server {id} resized — confirm(Y) or revert(N)"), ToastLevel::Success, "Resize".into(), id.clone()),
+            AppEvent::ResizeConfirmed { id } => (format!("Resize confirmed for {id}"), ToastLevel::Success, "ConfirmResize".into(), id.clone()),
+            AppEvent::ResizeReverted { id } => (format!("Resize reverted for {id}"), ToastLevel::Success, "RevertResize".into(), id.clone()),
             // Errors
-            AppEvent::ApiError { operation, message } => (format!("{operation} failed: {message}"), ToastLevel::Error),
-            AppEvent::AuthFailed(msg) => (format!("Auth failed: {msg}"), ToastLevel::Error),
-            AppEvent::PermissionDenied { operation } => (format!("Permission denied: {operation}"), ToastLevel::Error),
-            // Data loaded / system events — no toast
+            AppEvent::ApiError { operation, message } => (format!("{operation} failed: {message}"), ToastLevel::Error, operation.clone(), String::new()),
+            AppEvent::AuthFailed(msg) => (format!("Auth failed: {msg}"), ToastLevel::Error, "Auth".into(), String::new()),
+            AppEvent::PermissionDenied { operation } => (format!("Permission denied: {operation}"), ToastLevel::Error, operation.clone(), String::new()),
+            // Data loaded / system events — no toast or activity log
             _ => return,
         };
+        let success = !matches!(level, ToastLevel::Error);
+        self.activity_log.push(crate::ui::activity_log::ActivityEntry {
+            timestamp: std::time::Instant::now(),
+            operation,
+            resource_name,
+            success,
+            message: if success { String::new() } else { msg.clone() },
+            read: false,
+        });
         self.background_tracker.add_toast(msg, level);
     }
 
@@ -507,6 +573,12 @@ impl App {
             component.render(frame, content_inner);
         }
 
+        // Activity log popup overlay
+        if self.show_activity_log {
+            self.activity_popup
+                .render(frame, areas.content, self.activity_log.entries());
+        }
+
         // Status bar — context_hints from component help_hint or defaults
         let component_hint = self.components
             .get(&self.router.current())
@@ -531,6 +603,7 @@ impl App {
             item_count: None,
             selected_index: None,
             context_hints,
+            error_badge_count: self.activity_log.unread_error_count(),
         };
         // Toast — render in dedicated toast_bar area
         let active_toasts = self.background_tracker.active_toasts();
@@ -576,6 +649,7 @@ mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
     use ratatui::layout::Rect;
+    use std::time::Instant;
 
     fn make_key(code: KeyCode) -> KeyEvent {
         KeyEvent {
@@ -982,6 +1056,174 @@ mod tests {
     }
 
     // --- Step 6: Navigate/Back reset ---
+
+    // --- Unit 2: Activity Log Popup integration ---
+
+    fn make_key_with_modifiers(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+        KeyEvent {
+            code,
+            modifiers,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }
+    }
+
+    #[test]
+    fn test_exclamation_toggles_show_activity_log() {
+        let mut app = make_app();
+        assert!(!app.show_activity_log);
+        // '!' is Shift+1 in crossterm
+        app.handle_key(make_key_with_modifiers(KeyCode::Char('!'), KeyModifiers::SHIFT));
+        assert!(app.show_activity_log);
+        app.handle_key(make_key_with_modifiers(KeyCode::Char('!'), KeyModifiers::SHIFT));
+        assert!(!app.show_activity_log);
+    }
+
+    #[test]
+    fn test_close_activity_popup_resets_scroll() {
+        let mut app = make_app();
+        // Open popup
+        app.handle_key(make_key_with_modifiers(KeyCode::Char('!'), KeyModifiers::SHIFT));
+        assert!(app.show_activity_log);
+        // Scroll down
+        app.handle_key(make_key(KeyCode::Char('j')));
+        // Close with Esc
+        app.handle_key(make_key(KeyCode::Esc));
+        assert!(!app.show_activity_log);
+        assert_eq!(app.activity_popup.scroll_offset(), 0);
+    }
+
+    #[test]
+    fn test_exclamation_calls_mark_all_read_on_open() {
+        let mut app = make_app();
+        // Push an unread error entry
+        app.activity_log.push(crate::ui::activity_log::ActivityEntry {
+            timestamp: Instant::now(),
+            operation: "Delete".into(),
+            resource_name: "srv-1".into(),
+            success: false,
+            message: "fail".into(),
+            read: false,
+        });
+        assert_eq!(app.activity_log.unread_error_count(), 1);
+        // Open popup
+        app.handle_key(make_key_with_modifiers(KeyCode::Char('!'), KeyModifiers::SHIFT));
+        assert!(app.show_activity_log);
+        assert_eq!(app.activity_log.unread_error_count(), 0);
+    }
+
+    #[test]
+    fn test_exclamation_blocked_in_form_mode() {
+        let mut app = make_app();
+        app.input_mode = InputMode::Form;
+        app.register_component(Route::Servers, Box::new(MockComponent::new()));
+        app.handle_key(make_key_with_modifiers(KeyCode::Char('!'), KeyModifiers::SHIFT));
+        assert!(!app.show_activity_log);
+    }
+
+    #[test]
+    fn test_exclamation_blocked_in_confirm_mode() {
+        let mut app = make_app();
+        app.input_mode = InputMode::Confirm;
+        app.register_component(Route::Servers, Box::new(MockComponent::new()));
+        app.handle_key(make_key_with_modifiers(KeyCode::Char('!'), KeyModifiers::SHIFT));
+        assert!(!app.show_activity_log);
+    }
+
+    #[test]
+    fn test_fetch_success_not_logged_to_activity() {
+        let mut app = make_app();
+        app.generate_toast(&AppEvent::ServersLoaded(vec![]));
+        assert!(app.activity_log.entries().is_empty());
+    }
+
+    #[test]
+    fn test_activity_popup_pseudo_modal_blocks_keys() {
+        let mut app = make_app();
+        app.register_component(Route::Servers, Box::new(MockComponent::new()));
+        app.show_activity_log = true;
+        // 'q' should NOT quit when popup is open
+        app.handle_key(make_key(KeyCode::Char('q')));
+        assert!(!app.should_quit);
+        // ':' should NOT switch to command mode
+        app.handle_key(make_key(KeyCode::Char(':')));
+        assert_eq!(app.input_mode, InputMode::Normal);
+    }
+
+    #[test]
+    fn test_activity_popup_esc_closes() {
+        let mut app = make_app();
+        app.show_activity_log = true;
+        app.handle_key(make_key(KeyCode::Esc));
+        assert!(!app.show_activity_log);
+    }
+
+    #[test]
+    fn test_activity_popup_j_k_scroll() {
+        let mut app = make_app();
+        app.show_activity_log = true;
+        // Push entries so scroll_down works
+        for i in 0..5 {
+            app.activity_log.push(crate::ui::activity_log::ActivityEntry {
+                timestamp: Instant::now(),
+                operation: format!("Op{i}"),
+                resource_name: "r".into(),
+                success: true,
+                message: String::new(),
+                read: false,
+            });
+        }
+        app.handle_key(make_key(KeyCode::Char('j')));
+        assert_eq!(app.activity_popup.scroll_offset(), 1);
+        app.handle_key(make_key(KeyCode::Char('k')));
+        assert_eq!(app.activity_popup.scroll_offset(), 0);
+    }
+
+    #[test]
+    fn test_generate_toast_pushes_to_activity_log() {
+        let mut app = make_app();
+        assert!(app.activity_log.entries().is_empty());
+        app.handle_event(AppEvent::ServerDeleted {
+            id: "s1".into(),
+            name: "web-01".into(),
+        });
+        assert_eq!(app.activity_log.entries().len(), 1);
+        let entry = &app.activity_log.entries()[0];
+        assert!(entry.success);
+        assert_eq!(entry.resource_name, "web-01");
+    }
+
+    #[test]
+    fn test_generate_toast_error_pushes_to_activity_log() {
+        let mut app = make_app();
+        app.handle_event(AppEvent::ApiError {
+            operation: "CreateServer".into(),
+            message: "quota exceeded".into(),
+        });
+        assert_eq!(app.activity_log.entries().len(), 1);
+        let entry = &app.activity_log.entries()[0];
+        assert!(!entry.success);
+        assert_eq!(entry.operation, "CreateServer");
+        assert!(entry.message.contains("quota exceeded"));
+    }
+
+    #[test]
+    fn test_error_badge_count_reflects_activity_log() {
+        let mut app = make_app();
+        // Two unread errors
+        app.handle_event(AppEvent::ApiError {
+            operation: "CreateServer".into(),
+            message: "fail1".into(),
+        });
+        app.handle_event(AppEvent::ApiError {
+            operation: "DeleteServer".into(),
+            message: "fail2".into(),
+        });
+        assert_eq!(app.activity_log.unread_error_count(), 2);
+        // Opening popup marks all read
+        app.handle_key(make_key_with_modifiers(KeyCode::Char('!'), KeyModifiers::SHIFT));
+        assert_eq!(app.activity_log.unread_error_count(), 0);
+    }
 
     #[test]
     fn test_navigate_resets_refresh_scheduler() {

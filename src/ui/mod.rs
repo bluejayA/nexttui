@@ -1,3 +1,4 @@
+pub mod activity_log;
 pub mod confirm;
 pub mod select_popup;
 pub mod detail_view;
