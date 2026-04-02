@@ -209,6 +209,14 @@ impl Component for UserModule {
         }
         self.confirm.render(frame, area);
     }
+
+    fn help_hint(&self) -> &str {
+        match &self.view_state {
+            ViewState::List => "c:Create d:Delete r:Refresh",
+            ViewState::Create => "Esc:Cancel Tab:Next Enter:Submit",
+            ViewState::Detail(_) => "",
+        }
+    }
 }
 
 #[cfg(test)]
@@ -271,5 +279,18 @@ mod tests {
         let form = m.form.as_ref().unwrap();
         assert_eq!(form.field_count(), 5);
         assert_eq!(form.focused_field_name(), "Username");
+    }
+
+    #[test]
+    fn test_help_hint_list() {
+        let (m, _) = setup();
+        assert_eq!(m.help_hint(), "c:Create d:Delete r:Refresh");
+    }
+
+    #[test]
+    fn test_help_hint_create() {
+        let (mut m, _) = setup();
+        m.handle_key(key(KeyCode::Char('c')));
+        assert_eq!(m.help_hint(), "Esc:Cancel Tab:Next Enter:Submit");
     }
 }

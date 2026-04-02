@@ -240,6 +240,15 @@ impl Component for FlavorModule {
 
         self.confirm.render(frame, area);
     }
+
+    fn help_hint(&self) -> &str {
+        match &self.view_state {
+            ViewState::List if self.is_admin => "c:Create d:Delete r:Refresh",
+            ViewState::List => "r:Refresh",
+            ViewState::Create => "Esc:Cancel Tab:Next Enter:Submit",
+            ViewState::Detail(_) => "",
+        }
+    }
 }
 
 #[cfg(test)]
@@ -383,5 +392,24 @@ mod tests {
         component.set_admin(true);
         // Verify the trait dispatch actually reached FlavorModule's override
         assert!(module.is_admin);
+    }
+
+    #[test]
+    fn test_help_hint_list_admin() {
+        let (module, _rx) = setup(true);
+        assert_eq!(module.help_hint(), "c:Create d:Delete r:Refresh");
+    }
+
+    #[test]
+    fn test_help_hint_list_non_admin() {
+        let (module, _rx) = setup(false);
+        assert_eq!(module.help_hint(), "r:Refresh");
+    }
+
+    #[test]
+    fn test_help_hint_create() {
+        let (mut module, _rx) = setup(true);
+        module.handle_key(key(KeyCode::Char('c')));
+        assert_eq!(module.help_hint(), "Esc:Cancel Tab:Next Enter:Submit");
     }
 }

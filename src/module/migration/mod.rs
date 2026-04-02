@@ -53,4 +53,10 @@ mod tests {
         let action = m.handle_key(KeyEvent::from(KeyCode::Esc));
         assert!(matches!(action, Some(Action::Back)));
     }
+
+    #[test]
+    fn test_help_hint() {
+        let m = MigrationModule::new();
+        assert_eq!(m.help_hint(), "");
+    }
 }

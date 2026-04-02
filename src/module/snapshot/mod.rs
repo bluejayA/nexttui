@@ -178,6 +178,14 @@ impl Component for SnapshotModule {
 
         self.confirm.render(frame, area);
     }
+
+    fn help_hint(&self) -> &str {
+        match &self.view_state {
+            ViewState::List => "Enter:Detail d:Delete r:Refresh",
+            ViewState::Detail(_) => "Esc:Back",
+            ViewState::Create => "",
+        }
+    }
 }
 
 #[cfg(test)]
@@ -296,5 +304,18 @@ mod tests {
             message: "in-use".into(),
         });
         assert_eq!(module.error_message(), Some("delete: in-use"));
+    }
+
+    #[test]
+    fn test_help_hint_list() {
+        let (module, _rx) = setup();
+        assert_eq!(module.help_hint(), "Enter:Detail d:Delete r:Refresh");
+    }
+
+    #[test]
+    fn test_help_hint_detail() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Enter));
+        assert_eq!(module.help_hint(), "Esc:Back");
     }
 }

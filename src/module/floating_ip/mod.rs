@@ -221,6 +221,14 @@ impl Component for FloatingIpModule {
 
         self.confirm.render(frame, area);
     }
+
+    fn help_hint(&self) -> &str {
+        match &self.view_state {
+            ViewState::List => "c:Create d:Delete r:Refresh",
+            ViewState::Create => "Esc:Cancel Tab:Next Enter:Submit",
+            ViewState::Detail(_) => "",
+        }
+    }
 }
 
 #[cfg(test)]
@@ -364,5 +372,18 @@ mod tests {
         let form = module.form.as_ref().unwrap();
         assert_eq!(form.field_count(), 1);
         assert_eq!(form.focused_field_name(), "External Network");
+    }
+
+    #[test]
+    fn test_help_hint_list() {
+        let (module, _rx) = setup();
+        assert_eq!(module.help_hint(), "c:Create d:Delete r:Refresh");
+    }
+
+    #[test]
+    fn test_help_hint_create() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Char('c')));
+        assert_eq!(module.help_hint(), "Esc:Cancel Tab:Next Enter:Submit");
     }
 }

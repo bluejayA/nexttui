@@ -55,6 +55,8 @@ impl Component for AgentModule {
     fn render(&self, frame: &mut Frame, area: Rect) {
         self.resource_list.render(frame, area);
     }
+
+    fn help_hint(&self) -> &str { "r:Refresh" }
 }
 
 #[cfg(test)]
@@ -84,5 +86,11 @@ mod tests {
         let mut m = AgentModule::new();
         m.handle_event(&AppEvent::AgentsLoaded(vec![make_agent("a1", "OVS")]));
         assert_eq!(m.agents().len(), 1);
+    }
+
+    #[test]
+    fn test_help_hint() {
+        let m = AgentModule::new();
+        assert_eq!(m.help_hint(), "r:Refresh");
     }
 }
