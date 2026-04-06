@@ -29,7 +29,7 @@ impl EvacTask {
             completed: Vec::new(),
             cancel_requested: false,
             params,
-            max_concurrent,
+            max_concurrent: max_concurrent.max(1),
         }
     }
 
@@ -77,7 +77,9 @@ impl EvacTask {
     }
 
     pub fn on_completed(&mut self, server_id: &str, result: Result<(), String>) {
-        self.in_flight.remove(server_id);
+        if !self.in_flight.remove(server_id) {
+            return; // ignore phantom completions
+        }
         self.completed.push((server_id.to_string(), result));
         if self.queue.is_empty() && self.in_flight.is_empty() {
             self.state = EvacState::Completed;
@@ -226,5 +228,35 @@ mod tests {
         let actions = task.poll_next();
         assert!(actions.is_empty());
         assert!(task.is_idle());
+    }
+
+    #[test]
+    fn test_evac_task_max_concurrent_zero_clamped_to_one() {
+        let mut task = EvacTask::new(
+            vec!["s1".into(), "s2".into()],
+            EvacuateParams::default(),
+            0, // should be clamped to 1
+        );
+        task.start();
+        let batch = task.poll_next();
+        assert_eq!(batch.len(), 1); // dispatches 1, not 0
+        assert_eq!(task.in_flight_count(), 1);
+    }
+
+    #[test]
+    fn test_evac_task_phantom_completion_ignored() {
+        let mut task = EvacTask::new(vec!["s1".into()], EvacuateParams::default(), 2);
+        task.start();
+        task.poll_next(); // s1 in flight
+
+        // Phantom completion for unknown server — should be ignored
+        task.on_completed("unknown-server", Ok(()));
+        assert_eq!(task.in_flight_count(), 1); // s1 still in flight
+        assert_eq!(task.succeeded_count(), 0); // not counted
+
+        // Real completion
+        task.on_completed("s1", Ok(()));
+        assert!(task.is_completed());
+        assert_eq!(task.succeeded_count(), 1);
     }
 }

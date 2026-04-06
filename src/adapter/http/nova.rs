@@ -76,6 +76,11 @@ struct NovaHypervisorsResponse {
 }
 
 #[derive(Deserialize)]
+struct NovaHypervisorWrapper {
+    hypervisor: Hypervisor,
+}
+
+#[derive(Deserialize)]
 struct NovaComputeServicesResponse {
     services: Vec<ComputeService>,
 }
@@ -574,9 +579,8 @@ impl NovaPort for NovaHttpAdapter {
 
     async fn get_hypervisor(&self, hypervisor_id: &str) -> ApiResult<Hypervisor> {
         let req = self.base.get(&format!("/os-hypervisors/{}", encode_param(hypervisor_id))).await?;
-        let resp: serde_json::Value = self.base.send_json(req).await?;
-        serde_json::from_value(resp["hypervisor"].clone())
-            .map_err(|e| ApiError::BadRequest(e.to_string()))
+        let resp: NovaHypervisorWrapper = self.base.send_json(req).await?;
+        Ok(resp.hypervisor)
     }
 
     // -- Usage (stub — Unit 14) --
