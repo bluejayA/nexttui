@@ -4,7 +4,10 @@ use ratatui::style::{Color, Modifier, Style};
 
 use super::theme::Theme;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row as TuiRow, Table, TableState};
+use ratatui::widgets::{
+    Block, Borders, Cell, Paragraph, Row as TuiRow, Scrollbar, ScrollbarOrientation,
+    ScrollbarState, Table, TableState,
+};
 use ratatui::Frame;
 
 use crate::action::Action;
@@ -237,6 +240,15 @@ impl ResourceList {
         let mut state = TableState::default();
         state.select(Some(self.selected));
         frame.render_stateful_widget(table, area, &mut state);
+
+        // Scrollbar — only show when content exceeds visible area
+        let total = self.filtered_indices.len();
+        let visible = area.height.saturating_sub(1) as usize; // minus header row
+        if total > visible {
+            let mut scrollbar_state = ScrollbarState::new(total).position(self.selected);
+            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight);
+            frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+        }
     }
 }
 

@@ -2,7 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
 use ratatui::Frame;
 
 use crate::action::Action;
@@ -259,8 +259,18 @@ impl DetailView {
             lines.push(Line::from(""));
         }
 
+        let total_lines = lines.len();
         let widget = Paragraph::new(lines).scroll((self.scroll_offset as u16, 0));
         frame.render_widget(widget, area);
+
+        // Scrollbar — only show when content exceeds visible area
+        let visible = area.height as usize;
+        if total_lines > visible {
+            let mut scrollbar_state =
+                ScrollbarState::new(total_lines).position(self.scroll_offset);
+            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight);
+            frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+        }
     }
 }
 
