@@ -7,7 +7,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
 use crate::models::nova::Server;
-use crate::ui::theme::Icons;
+use crate::ui::theme::{Icons, Theme};
 
 /// Status filter for the instance list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -247,9 +247,9 @@ impl InstanceList {
             // Inline evacuate status
             if let Some(evac) = self.evac_status.get(&server.id) {
                 let (label, style) = match evac {
-                    EvacInlineStatus::InFlight => ("⟳", Style::default().fg(Color::Yellow)),
-                    EvacInlineStatus::Success => ("✓", Style::default().fg(Color::Green)),
-                    EvacInlineStatus::Failed => ("✗", Style::default().fg(Color::Red)),
+                    EvacInlineStatus::InFlight => ("⟳", Theme::evacuating()),
+                    EvacInlineStatus::Success => ("✓", Theme::evac_success()),
+                    EvacInlineStatus::Failed => ("✗", Theme::error()),
                 };
                 spans.push(Span::raw(" "));
                 spans.push(Span::styled(label, style));

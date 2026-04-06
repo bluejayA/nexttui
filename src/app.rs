@@ -216,6 +216,10 @@ impl App {
                     let full_width = self.components.get(&self.router.current())
                         .map_or(false, |c| c.layout_hint() == LayoutHint::FullWidth);
                     if full_width {
+                        // Block exit while module is busy (e.g. evacuating)
+                        let busy = self.components.get(&self.router.current())
+                            .map_or(false, |c| c.is_busy());
+                        if busy { return true; }
                         self.sidebar_visible = true;
                         self.layout.set_sidebar_visible(true);
                         self.router.back();
@@ -329,6 +333,13 @@ impl App {
             }
             Action::Back => {
                 self.router.back();
+                // Restore sidebar if leaving a FullWidth module
+                let full_width = self.components.get(&self.router.current())
+                    .map_or(false, |c| c.layout_hint() == LayoutHint::FullWidth);
+                if !full_width && !self.sidebar_visible {
+                    self.sidebar_visible = true;
+                    self.layout.set_sidebar_visible(true);
+                }
                 self.refresh_scheduler.reset();
             }
             Action::FocusSidebar => {
@@ -395,6 +406,7 @@ impl App {
             | AppEvent::MigrationConfirmed { .. }
             | AppEvent::MigrationReverted { .. }
             | AppEvent::ServerEvacuated { .. }
+            | AppEvent::ServerEvacuateResult { .. }
             | AppEvent::ServerResized { .. }
             | AppEvent::ResizeConfirmed { .. }
             | AppEvent::ResizeReverted { .. }

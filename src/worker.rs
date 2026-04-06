@@ -313,8 +313,11 @@ async fn handle_action(registry: &AdapterRegistry, all_tenants: &AtomicBool, act
         }
         Action::EvacuateServer { id, params } => {
             match registry.nova.evacuate_server(&id, &params).await {
-                Ok(()) => Some(AppEvent::ServerEvacuated { id }),
-                Err(e) => Some(api_error("EvacuateServer", e)),
+                Ok(()) => Some(AppEvent::ServerEvacuateResult { id, result: Ok(()) }),
+                Err(e) => Some(AppEvent::ServerEvacuateResult {
+                    id,
+                    result: Err(e.to_string()),
+                }),
             }
         }
         Action::DisableComputeService { service_id, hostname } => {

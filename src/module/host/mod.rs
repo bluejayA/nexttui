@@ -34,6 +34,7 @@ pub struct HostModule {
     action_tx: mpsc::UnboundedSender<Action>,
     is_admin: bool,
     all_servers: Vec<Server>,
+    evac_confirm_pending: bool,
 }
 
 impl Default for HostModule {
@@ -54,6 +55,7 @@ impl HostModule {
             action_tx,
             is_admin: false,
             all_servers: Vec::new(),
+            evac_confirm_pending: false,
         }
     }
 
@@ -166,7 +168,17 @@ impl Component for HostModule {
                 }
                 _ => {}
             },
-            HostFocus::InstanceList => match key.code {
+            HostFocus::InstanceList => {
+                // Cancel pending confirm on any key other than 'e'
+                if self.evac_confirm_pending && key.code != KeyCode::Char('e') {
+                    self.evac_confirm_pending = false;
+                    self.log_panel.push(
+                        chrono::Local::now().format("%H:%M:%S").to_string(),
+                        LogLevel::Info,
+                        "Evacuate cancelled".into(),
+                    );
+                }
+                match key.code {
                 KeyCode::Up | KeyCode::Char('k') => self.instance_list.move_up(),
                 KeyCode::Down | KeyCode::Char('j') => self.instance_list.move_down(),
                 KeyCode::Char(' ') => self.instance_list.toggle_check(),
@@ -175,7 +187,26 @@ impl Component for HostModule {
                 KeyCode::Char('f') => self.instance_list.cycle_filter(),
                 KeyCode::Char('e') => {
                     if self.evac_task.is_none() {
-                        self.start_evacuate();
+                        if self.evac_confirm_pending {
+                            self.evac_confirm_pending = false;
+                            self.start_evacuate();
+                        } else {
+                            let count = self.instance_list.checked_count();
+                            if count > 0 {
+                                self.evac_confirm_pending = true;
+                                self.log_panel.push(
+                                    chrono::Local::now().format("%H:%M:%S").to_string(),
+                                    LogLevel::Warning,
+                                    format!("Evacuate {count} instances? Press 'e' again to confirm, any other key to cancel"),
+                                );
+                            } else {
+                                self.log_panel.push(
+                                    chrono::Local::now().format("%H:%M:%S").to_string(),
+                                    LogLevel::Warning,
+                                    "No instances selected for evacuation".into(),
+                                );
+                            }
+                        }
                     }
                 }
                 KeyCode::Char('c') => {
@@ -189,7 +220,7 @@ impl Component for HostModule {
                     }
                 }
                 _ => {}
-            },
+            }},
         }
         None
     }

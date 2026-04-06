@@ -5,6 +5,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
 use crate::models::nova::Hypervisor;
+use crate::ui::theme::Icons;
 
 pub struct HostList {
     hypervisors: Vec<Hypervisor>,
@@ -137,11 +138,11 @@ impl HostList {
 
 fn host_state_icon<'a>(state: &str, status: &str) -> &'a str {
     if status == "disabled" {
-        return "⊘";
+        return Icons::host_disabled();
     }
     match state {
-        "up" => "●",
-        "down" => "✗",
+        "up" => Icons::host_up(),
+        "down" => Icons::host_down(),
         _ => "?",
     }
 }
