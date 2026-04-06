@@ -223,6 +223,7 @@ impl App {
                         self.sidebar_visible = true;
                         self.layout.set_sidebar_visible(true);
                         self.router.back();
+                        self.sidebar.sync_active(&self.router.current(), self.rbac.is_admin());
                         self.focus = FocusPane::Sidebar;
                     } else if self.sidebar_visible {
                         self.focus = match self.focus {
@@ -340,6 +341,7 @@ impl App {
                     self.sidebar_visible = true;
                     self.layout.set_sidebar_visible(true);
                 }
+                self.sidebar.sync_active(&self.router.current(), self.rbac.is_admin());
                 self.refresh_scheduler.reset();
             }
             Action::FocusSidebar => {
