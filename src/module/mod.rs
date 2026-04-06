@@ -3,6 +3,7 @@ pub mod aggregate;
 pub mod compute_service;
 pub mod flavor;
 pub mod floating_ip;
+pub mod host;
 pub mod hypervisor;
 pub mod image;
 pub mod migration;
