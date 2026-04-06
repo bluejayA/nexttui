@@ -174,6 +174,7 @@ impl RbacGuard {
                 | Route::Aggregates
                 | Route::ComputeServices
                 | Route::Hypervisors
+                | Route::Hosts
                 | Route::Projects
                 | Route::Users
                 | Route::Agents

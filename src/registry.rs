@@ -90,6 +90,7 @@ pub fn register_all_modules(
         security_group::SecurityGroupModule, floating_ip::FloatingIpModule,
         volume::VolumeModule, snapshot::SnapshotModule, image::ImageModule,
         project::ProjectModule, user::UserModule,
+        host::HostModule,
     };
 
     let entries = vec![
@@ -162,6 +163,13 @@ pub fn register_all_modules(
             initial_action: Some(Action::FetchUsers),
             related_routes: &[],
             display_name: "Users",
+        },
+        ModuleEntry {
+            sidebar: SidebarItem { label: "Host Ops".into(), route: Route::Hosts, shortcut: "h".into(), admin_only: true },
+            component: Box::new(HostModule::new(action_tx.clone())),
+            initial_action: Some(Action::FetchHypervisors),
+            related_routes: &[],
+            display_name: "Host Ops",
         },
     ];
 
