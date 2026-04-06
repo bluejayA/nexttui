@@ -77,6 +77,10 @@ impl LayoutManager {
         self.sidebar_visible = !self.sidebar_visible;
     }
 
+    pub fn set_sidebar_visible(&mut self, visible: bool) {
+        self.sidebar_visible = visible;
+    }
+
     pub fn is_sidebar_visible(&self) -> bool {
         self.sidebar_visible
     }

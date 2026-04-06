@@ -288,9 +288,11 @@ pub struct LiveMigrateParams {
     pub host: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct EvacuateParams {
     pub host: Option<String>,
+    pub on_shared_storage: Option<bool>,
+    pub force: Option<bool>,
 }
 
 #[derive(Debug, Clone)]

@@ -133,6 +133,7 @@ mod tests {
             Route::Aggregates,
             Route::ComputeServices,
             Route::Hypervisors,
+            Route::Hosts,
             Route::SecurityGroups,
             Route::FloatingIps,
             Route::Agents,

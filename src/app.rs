@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 
 use crate::action::Action;
 use crate::background::BackgroundTracker;
-use crate::component::{Component, InputMode};
+use crate::component::{Component, InputMode, LayoutHint};
 use crate::config::Config;
 use crate::event::AppEvent;
 use crate::infra::rbac::{ActionKind, RbacGuard};
@@ -212,7 +212,20 @@ impl App {
                     return true;
                 }
                 KeyCode::Tab => {
-                    if self.sidebar_visible {
+                    // FullWidth module: Tab restores sidebar and returns to previous route
+                    let full_width = self.components.get(&self.router.current())
+                        .map_or(false, |c| c.layout_hint() == LayoutHint::FullWidth);
+                    if full_width {
+                        // Block exit while module is busy (e.g. evacuating)
+                        let busy = self.components.get(&self.router.current())
+                            .map_or(false, |c| c.is_busy());
+                        if busy { return true; }
+                        self.sidebar_visible = true;
+                        self.layout.set_sidebar_visible(true);
+                        self.router.back();
+                        self.sidebar.sync_active(&self.router.current(), self.rbac.is_admin());
+                        self.focus = FocusPane::Sidebar;
+                    } else if self.sidebar_visible {
                         self.focus = match self.focus {
                             FocusPane::Content => FocusPane::Sidebar,
                             FocusPane::Sidebar => FocusPane::Content,
@@ -224,10 +237,22 @@ impl App {
                     self.should_quit = true;
                     return true;
                 }
-                KeyCode::Char(c @ '1'..='9') | KeyCode::Char(c @ '0') => {
-                    let idx = if c == '0' { 9 } else { (c as usize) - ('1' as usize) };
-                    if let Some(route) = self.sidebar.route_at(idx, self.rbac.is_admin()) {
-                        self.dispatch_action(Action::Navigate(route));
+                KeyCode::Char(c @ '1'..='9') | KeyCode::Char(c @ '0') | KeyCode::Char(c @ 'h') => {
+                    // Block route switching while current module is busy (e.g. evacuating)
+                    let busy = self.components.get(&self.router.current())
+                        .map_or(false, |comp| comp.is_busy());
+                    if busy { return true; }
+
+                    if c == 'h' {
+                        // 'h' shortcut for Host Ops
+                        if self.rbac.is_admin() {
+                            self.dispatch_action(Action::Navigate(Route::Hosts));
+                        }
+                    } else {
+                        let idx = if c == '0' { 9 } else { (c as usize) - ('1' as usize) };
+                        if let Some(route) = self.sidebar.route_at(idx, self.rbac.is_admin()) {
+                            self.dispatch_action(Action::Navigate(route));
+                        }
                     }
                     return true;
                 }
@@ -296,10 +321,27 @@ impl App {
                 self.router.navigate(route);
                 self.sidebar.sync_active(&self.router.current(), self.rbac.is_admin());
                 self.focus = FocusPane::Content;
+                // LayoutHint::FullWidth modules hide the sidebar
+                let full_width = self.components.get(&self.router.current())
+                    .map_or(false, |c| c.layout_hint() == LayoutHint::FullWidth);
+                if full_width && self.sidebar_visible {
+                    self.sidebar_visible = false;
+                } else if !full_width && !self.sidebar_visible {
+                    self.sidebar_visible = true;
+                }
+                self.layout.set_sidebar_visible(self.sidebar_visible);
                 self.refresh_scheduler.reset();
             }
             Action::Back => {
                 self.router.back();
+                // Restore sidebar if leaving a FullWidth module
+                let full_width = self.components.get(&self.router.current())
+                    .map_or(false, |c| c.layout_hint() == LayoutHint::FullWidth);
+                if !full_width && !self.sidebar_visible {
+                    self.sidebar_visible = true;
+                    self.layout.set_sidebar_visible(true);
+                }
+                self.sidebar.sync_active(&self.router.current(), self.rbac.is_admin());
                 self.refresh_scheduler.reset();
             }
             Action::FocusSidebar => {
@@ -366,6 +408,7 @@ impl App {
             | AppEvent::MigrationConfirmed { .. }
             | AppEvent::MigrationReverted { .. }
             | AppEvent::ServerEvacuated { .. }
+            | AppEvent::ServerEvacuateResult { .. }
             | AppEvent::ServerResized { .. }
             | AppEvent::ResizeConfirmed { .. }
             | AppEvent::ResizeReverted { .. }
@@ -555,22 +598,27 @@ impl App {
 
         // Content
         if let Some(component) = self.components.get(&self.router.current()) {
-            let content_focused = self.focus == FocusPane::Content;
-            let content_border_style = if content_focused {
-                Theme::focus_border()
+            if component.layout_hint() == LayoutHint::FullWidth {
+                // FullWidth modules manage their own borders/layout
+                component.render(frame, areas.content);
             } else {
-                Theme::unfocus_border()
-            };
-            let all_tenants = self.all_tenants.load(Ordering::Relaxed);
-            let title = theme::panel_title_line(&route_label, content_focused, all_tenants);
-            let content_block = Block::default()
-                .title(title)
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(content_border_style);
-            let content_inner = content_block.inner(areas.content);
-            frame.render_widget(content_block, areas.content);
-            component.render(frame, content_inner);
+                let content_focused = self.focus == FocusPane::Content;
+                let content_border_style = if content_focused {
+                    Theme::focus_border()
+                } else {
+                    Theme::unfocus_border()
+                };
+                let all_tenants = self.all_tenants.load(Ordering::Relaxed);
+                let title = theme::panel_title_line(&route_label, content_focused, all_tenants);
+                let content_block = Block::default()
+                    .title(title)
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(content_border_style);
+                let content_inner = content_block.inner(areas.content);
+                frame.render_widget(content_block, areas.content);
+                component.render(frame, content_inner);
+            }
         }
 
         // Activity log popup overlay

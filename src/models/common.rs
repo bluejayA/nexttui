@@ -27,6 +27,7 @@ pub enum Route {
     Aggregates,
     ComputeServices,
     Hypervisors,
+    Hosts,
 
     // Neutron
     Networks,
@@ -117,6 +118,7 @@ mod tests {
             Route::Aggregates,
             Route::ComputeServices,
             Route::Hypervisors,
+            Route::Hosts,
             Route::Networks,
             Route::NetworkDetail,
             Route::SecurityGroups,
@@ -133,8 +135,8 @@ mod tests {
             Route::Users,
             Route::Usage,
         ];
-        assert_eq!(routes.len(), 23);
+        assert_eq!(routes.len(), 24);
         let set: std::collections::HashSet<_> = routes.iter().collect();
-        assert_eq!(set.len(), 23);
+        assert_eq!(set.len(), 24);
     }
 }

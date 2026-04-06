@@ -2,6 +2,18 @@
 
 ## Pending
 
+### BL-P2-050: LogPanel 텍스트 정제 (제어문자 필터링)
+**Priority**: Low
+**Category**: Security / UX
+**Description**: LogPanel의 push()가 임의 문자열을 받아 그대로 렌더링. API 에러 메시지에 ANSI 제어문자가 포함되면 TUI 표시 교란 가능. 현재는 내부 문자열만 사용하므로 낮은 위험이나, 로그 내보내기 기능 추가 시 sanitization 필요.
+**Ref**: Codex Batch 3 리뷰 #5
+
+### BL-P2-051: 기존 Nova adapter encode_param() 통일
+**Priority**: Low
+**Category**: Security / Consistency
+**Description**: get_server, delete_server, get_flavor, delete_flavor 등 기존 메서드에서 URL 파라미터를 raw interpolation으로 사용. UUID 특성상 공격 벡터 낮지만, 신규 메서드와의 일관성을 위해 encode_param() 통일 필요.
+**Ref**: Security Reviewer Batch 2 Important-1
+
 ### BL-002: Snapshots 서비스 타입 매핑 수정
 **Priority**: Low
 **Category**: Bug
@@ -91,16 +103,6 @@
 
 ### Stage 2: 기능 확장
 
-#### BL-P2-010: RBAC / Capability 기반 권한 제어
-**Priority**: High
-**Category**: Feature
-**Description**:
-- `RbacGuard`에 Capability 기반 확장 경로 구현: `can_perform(resource, action) -> bool`
-- Phase 1의 Keystone 역할 기반에서, 다른 백엔드 권한 체계(HMAC, API Key 등)도 수용
-- 사용자 역할에 따라 메뉴/액션 자동 필터링
-**Motivation**: Agent Council Review 액션 아이템 #3. 멀티 백엔드 환경에서 RequiredRole 열거형만으로는 부족
-**Ref**: Council review `agent-council-review.md` 항목 3, `detail-design.md` Phase 2 Capability 주석
-
 #### BL-P2-011: 감사 로그 (Audit Log)
 **Priority**: Medium
 **Category**: Feature
@@ -131,21 +133,6 @@
 **Motivation**: Phase 1에서 deferred. 운영자가 프로젝트별 리소스 현황을 빠르게 확인할 수 있어야 함
 **Ref**: session-summary Unit 14 (UsageModule deferred)
 
-#### BL-P2-014: Server Migration / Evacuate
-**Priority**: Medium
-**Category**: Feature
-**Description**:
-- **Live Migration** (US-024): 실행 중 서버를 다른 호스트로 이동, 선택적 대상 호스트 지정
-- **Block Migration** (US-024): 로컬 디스크 복사 포함 live migration
-- **Cold Migration** (US-024): 서버 중지 → 이동 → 수동 confirm/revert 플로우
-- **Evacuate** (US-025): 장애 호스트에서 서버 복구, 대상 호스트 선택
-- 모두 Nova Admin API (`POST /servers/{id}/action`)
-- 진행 상태 실시간 표시 (migration state in detail view)
-- Admin이 아니면 메뉴 숨김 (RBAC 연동, BL-P2-010 선행 권고)
-**Testing 제약**: DevStack 단일 노드에서는 `NoValidHost` 에러로 실행 불가. demo 모드에서 UI/확인 플로우만 검증, 실제 API 테스트는 멀티 노드 환경에서 수행
-**Motivation**: Phase 1에서 defer된 Admin 운영 핵심 액션
-**Ref**: user-stories US-024, US-025
-
 #### BL-P2-015: Attach / Detach / Associate 워크플로우
 **Priority**: Medium
 **Category**: Feature
@@ -158,16 +145,17 @@
 **Motivation**: Phase 1에서 defer된 CUD 확장. 빈번한 정기 운영 액션
 **Ref**: session-summary Next Steps, user-stories US-027, US-030~032
 
-#### BL-P2-032: 전체 프로젝트 리소스 조회 (all_tenants)
+#### BL-P2-031: 프로젝트 전환 + Keystone Rescoping (#39)
 **Priority**: High
 **Category**: Feature
-**Depends on**: BL-P2-010 (RBAC)
+**Depends on**: BL-P2-029 (다중 토큰 맵, 완료)
 **Description**:
-- 모든 프로젝트 리소스를 한눈에 조회 (admin 전용)
-- 모델에 tenant_id 추가, Neutron 리소스에 all_tenants 필터 추가
-- UI에 전체/내 프로젝트 토글, 프로젝트 컬럼 동적 표시
-**Motivation**: 운영자가 클라우드 전체 리소스 현황을 파악해야 함
-**Ref**: GitHub Issue #41
+- 런타임 프로젝트/클라우드 전환 (SwitchCloud / SwitchProject)
+- CommandParser→App 레벨에서 cloud 컨텍스트 전환
+- Keystone rescoping으로 토큰 재발급 없이 프로젝트 전환
+- Auth 재생성 플로우
+**Motivation**: --cloud CLI(PR#55)로 시작 시 선택 가능하지만, 런타임 중 전환 미지원
+**Ref**: GitHub Issue #39
 
 #### BL-P2-016: 토큰 보안 강화
 **Priority**: Low
@@ -198,7 +186,7 @@
 - 대상: 서버 리스트 테이블, 디테일 패널, 네비게이션 바, 상태 바 등
 - 다양한 터미널 크기(40x10, 80x24, 120x40 등)에서 레이아웃 깨짐 검증
 - 키 입력 후 상태 변화 → 재렌더 → 스냅샷 비교 시나리오
-**Motivation**: 현재 580+ 테스트가 로직/상태 전이를 검증하지만, 실제 렌더링 출력(프레젠테이션 레이어)은 FormWidget 5개 테스트만 커버. UI 변경 시 레이아웃 깨짐이나 스타일 변경을 자동 감지할 수 없음
+**Motivation**: 현재 830+ 테스트가 로직/상태 전이를 검증하지만, 실제 렌더링 출력은 FormWidget 5개 테스트만 커버. UI 변경 시 레이아웃 깨짐이나 스타일 변경을 자동 감지할 수 없음
 **Ref**: `src/ui/form.rs:2160` 기존 `render_to_buffer` 헬퍼
 
 #### BL-P2-018: 커스텀 키 바인딩
@@ -229,92 +217,9 @@
 **Motivation**: TR-09. Phase 1의 Thick Client에서 Phase 2의 Service Layer 중심으로 점진 전환
 **Ref**: `detail-design-port-adapter.md` Phase 2 Adapter Swap 섹션
 
-### Stage 2.5: UI/UX Redesign
+### Stage 2.5-B: Visual Enhancement (Medium Priority)
 
-> devflow-tui + btop 참조 UI 개선. 3단계 구현.
-> 분석 문서: `devflow-docs/inception/ui-redesign-analysis.md`
-
-#### Stage 2.5-A: Theme & Polish (High Priority)
-
-##### BL-P2-034: Theme 시스템 도입
-**Priority**: High
-**Category**: UX
-**Description**:
-- `src/ui/theme.rs` 신규: `Theme` 구조체로 모든 색상/스타일 중앙화
-- devflow-tui 패턴 참조: `active()`, `done()`, `error()`, `waiting()`, `focus_border()`, `unfocus_border()`, `highlight()`, `disabled()`
-- `key_hint()`, `panel_title()`, `status_span()` 유틸 함수
-- `Icons` 구조체: `●✓○✗⟳◐` 상태 아이콘 정의
-- 기존 하드코딩된 색상을 Theme 호출로 교체
-**Motivation**: 색상이 각 파일에 하드코딩되어 있어 일관성 유지 어려움. 중앙화로 테마 변경 용이
-**Ref**: `devflow-tui/src/ui/theme.rs`, `ui-redesign-analysis.md` Section 6
-
-##### BL-P2-035: Rounded 보더 + 포커스 피드백
-**Priority**: High
-**Category**: UX
-**Depends on**: BL-P2-034
-**Description**:
-- Sidebar + Content 영역 모두 `BorderType::Rounded` 적용
-- 포커스 상태: `Theme::focus_border()` (Cyan), 비포커스: `Theme::unfocus_border()` (DarkGray)
-- 기존 Sidebar RIGHT-only border → 전체 Block border로 변경
-- Content 영역에 Block 컨테이너 추가
-**Motivation**: 현재 Content 영역에 보더 없어 텍스트가 떠다니는 느낌. 포커스 상태 불명확
-
-##### BL-P2-036: 패널 타이틀 포맷
-**Priority**: High
-**Category**: UX
-**Depends on**: BL-P2-034
-**Description**:
-- 포커스 패널: `[ Panel Name ]` (bracket 포함)
-- 비포커스 패널: `  Panel Name  ` (space padding)
-- `theme::panel_title(name, focused)` 함수 활용
-**Motivation**: devflow-tui에서 검증된 패턴. 포커스 상태를 타이틀에서도 즉시 식별 가능
-
-##### BL-P2-037: 상태바 리디자인
-**Priority**: High
-**Category**: UX
-**Depends on**: BL-P2-034
-**Description**:
-- 배경: `on_dark_gray().white()` (현재는 투명)
-- 좌측: `[패널명] context` (예: `[Servers] 1/5`)
-- 우측: key hints — key=Cyan Bold + description=Dim
-- `theme::key_hint(key, desc)` 활용
-- Toast 표시 시 상태바 오버라이드 유지
-**Motivation**: 현재 상태바 Gray 힌트 가독성 낮음. devflow-tui 패턴이 더 명확
-
-##### BL-P2-038: 리스트 하이라이트 개선
-**Priority**: High
-**Category**: UX
-**Depends on**: BL-P2-034
-**Description**:
-- 선택 행: Black on White → White Bold (시맨틱 컬러 유지)
-- ACTIVE 행 선택 시에도 Green 유지, ERROR는 Red 유지
-- 선택 표시: `>` prefix 또는 White Bold modifier
-**Motivation**: 현재 선택 시 시맨틱 컬러(Active=Green, Error=Red) 정보 손실
-
-#### Stage 2.5-B: Visual Enhancement (Medium Priority)
-
-##### BL-P2-039: 헤더 리디자인
-**Priority**: Medium
-**Category**: UX
-**Depends on**: BL-P2-034
-**Description**:
-- 기본 스타일: Dim (전체)
-- 앱명: White Bold (`nexttui`)
-- 채움선: `─` 문자로 좌→우 연결
-- 우측: `user@cloud | Region` (context 정보)
-- devflow-tui 헤더 패턴 참조
-**Motivation**: 현재 Blue 뱃지 배경이 과도. Dim 기반이 더 세련됨
-
-##### BL-P2-040: 상태 아이콘 도입
-**Priority**: Medium
-**Category**: UX
-**Depends on**: BL-P2-034
-**Description**:
-- Server 상태: `●` ACTIVE, `○` SHUTOFF, `✗` ERROR, `⟳` BUILD/RESIZE, `◐` VERIFY_RESIZE, `↔` MIGRATING
-- Sidebar 모듈: 선택 마커 `>` → `▶` 또는 유지
-- 리스트/디테일 뷰에서 상태 텍스트 앞에 아이콘 표시
-- `Theme::Icons` 구조체 활용
-**Motivation**: 색상만으로는 접근성 부족. 아이콘으로 추가 시각 채널 제공
+> Stage 2.5-A (Theme & Polish)는 전체 완료 — PR #51~#53
 
 ##### BL-P2-041: 스크롤바 추가
 **Priority**: Medium
@@ -328,7 +233,6 @@
 ##### BL-P2-042: Content 보더 컨테이너
 **Priority**: Medium
 **Category**: UX
-**Depends on**: BL-P2-035
 **Description**:
 - List/Detail/Form 뷰를 Block 컨테이너로 감싸기
 - 뷰 상태에 따라 타이틀 변경: `[ Servers ]`, `[ Server: web-01 ]`, `[ Create Server ]`
@@ -337,14 +241,13 @@
 ##### BL-P2-043: Detail 섹션 구분 개선
 **Priority**: Medium
 **Category**: UX
-**Depends on**: BL-P2-035
 **Description**:
 - `-- Section --` 대시 구분 → Block title 또는 bold underline 섹션 헤더
 - 섹션 간 1줄 공백 유지
 - ResourceLink 포커스 시 시각적 피드백 (reverse 또는 bold)
 **Motivation**: ASCII 대시 구분자가 올드 스타일
 
-#### Stage 2.5-C: Advanced Layout (Low Priority)
+### Stage 2.5-C: Advanced Layout (Low Priority)
 
 ##### BL-P2-044: 반응형 레이아웃 모드
 **Priority**: Low
@@ -360,7 +263,7 @@
 ##### BL-P2-045: 다크 테마 옵션
 **Priority**: Low
 **Category**: UX
-**Depends on**: BL-P2-034
+**Depends on**: BL-P2-034 (완료)
 **Description**:
 - Config에서 `theme: dark | light` 선택
 - 다크 테마: btop 스타일 어두운 배경 + 밝은 텍스트
@@ -370,7 +273,7 @@
 ##### BL-P2-046: NO_COLOR 접근성 지원
 **Priority**: Low
 **Category**: UX
-**Depends on**: BL-P2-034
+**Depends on**: BL-P2-034 (완료)
 **Description**:
 - `NO_COLOR` 환경변수 감지 시 색상 대신 Bold/Dim/Underline만 사용
 - devflow-tui `no_color()` 패턴 참조
@@ -404,10 +307,28 @@
 **Ref**: user-stories Phase 2 예정 서비스
 
 ## Completed
-- **BL-001**: Submit 확인 화면 + Toast 피드백 (PR #27 merged, 2026-03-25)
-- **BL-P2-001**: Module Registry 시스템 (PR #28 merged, 2026-03-25)
+
+- **BL-001**: Submit 확인 화면 + Toast 피드백 (PR #27, 2026-03-25)
+- **BL-P2-001**: Module Registry 시스템 (PR #28, 2026-03-25)
 - **#32 BL-P2-027**: Error enum `#[non_exhaustive]` 적용 (PR #36, 2026-03-26)
 - **#30 BL-P2-025**: Clippy 엄격 lint 정책 도입 (PR #36, 2026-03-26)
 - **#35 BL-P2-030**: Pagination Combinator 추상화 (PR #36, 2026-03-26)
 - **#31 BL-P2-026**: tracing 구조적 로깅/계측 도입 (PR #37, 2026-03-26)
 - **#33 BL-P2-028**: 토큰 캐시 파일 영속화 (PR #38, 2026-03-26)
+- **#34 BL-P2-029**: Scope 기반 다중 토큰 맵 (PR #40, 2026-03-26)
+- **#12 BL-P2-010**: RBAC 3단계 권한 제어 (PR #42, 2026-03-26)
+- **#41 BL-P2-032**: 전체 프로젝트 리소스 조회 all_tenants (PR #43, 2026-03-27)
+- **#16 BL-P2-014**: Server Migration / Evacuate (PR #44, 2026-03-30)
+- **Server Resize**: flavor SelectPopup (PR #47~#48, 2026-03-31)
+- **BL-P2-034**: Theme 시스템 도입 (PR #51, 2026-03-31)
+- **BL-P2-035**: Rounded 보더 + 포커스 피드백 (PR #51, 2026-03-31)
+- **BL-P2-036**: 패널 타이틀 포맷 (PR #51, 2026-03-31)
+- **BL-P2-037**: 상태바 리디자인 (PR #51, 2026-03-31)
+- **BL-P2-038**: 리스트 하이라이트 개선 (PR #51, 2026-03-31)
+- **BL-P2-039**: 헤더 리디자인 (PR #52, 2026-03-31)
+- **BL-P2-040**: 상태 아이콘 도입 (PR #53, 2026-04-01)
+- **UX 가시성 수정**: ALL 뱃지, admin 마커, 패널 타이틀 (PR #54, 2026-04-01)
+- **--cloud CLI**: 시작 시 클라우드 선택 (PR #55, 2026-04-01)
+- **Auto-Refresh Polling**: FetchDedup + API Backoff (PR #56, 2026-04-02)
+- **Activity Log**: StatusBar 에러 뱃지 (PR #57, 2026-04-02)
+- **help_hint()**: 14개 모듈 컨텍스트 인식 힌트 (PR #58, 2026-04-02)

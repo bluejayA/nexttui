@@ -71,6 +71,26 @@ struct NovaMigrationsResponse {
 }
 
 #[derive(Deserialize)]
+struct NovaHypervisorsResponse {
+    hypervisors: Vec<Hypervisor>,
+}
+
+#[derive(Deserialize)]
+struct NovaHypervisorWrapper {
+    hypervisor: Hypervisor,
+}
+
+#[derive(Deserialize)]
+struct NovaComputeServicesResponse {
+    services: Vec<ComputeService>,
+}
+
+#[derive(Deserialize)]
+struct NovaComputeServiceWrapper {
+    service: ComputeService,
+}
+
+#[derive(Deserialize)]
 struct NovaMigrationWrapper {
     migration: ServerMigration,
 }
@@ -379,16 +399,28 @@ impl NovaPort for NovaHttpAdapter {
         self.base.send_no_content(req).await
     }
 
+    // Nova evacuate API field availability by microversion:
+    //   on_shared_storage: < 2.14 only (removed in 2.14)
+    //   force:             2.29+ (added in 2.29, removed in 2.68)
+    //   host:              all versions
+    // Currently no microversion header is sent; fields are included
+    // only when explicitly set (None = omitted from JSON).
     async fn evacuate_server(
         &self,
         server_id: &str,
         params: &EvacuateParams,
     ) -> ApiResult<()> {
-        let body = serde_json::json!({
-            "evacuate": {
-                "host": params.host
-            }
-        });
+        let mut evac = serde_json::json!({});
+        if let Some(host) = &params.host {
+            evac["host"] = serde_json::json!(host);
+        }
+        if let Some(oss) = params.on_shared_storage {
+            evac["on_shared_storage"] = serde_json::json!(oss);
+        }
+        if let Some(force) = params.force {
+            evac["force"] = serde_json::json!(force);
+        }
+        let body = serde_json::json!({ "evacuate": evac });
         let req = self
             .base
             .post(&format!("/servers/{}/action", encode_param(server_id)))
@@ -506,32 +538,49 @@ impl NovaPort for NovaHttpAdapter {
         Err(ApiError::BadRequest("not yet implemented".into()))
     }
 
-    // -- Compute Services (stub — Unit 13) --
+    // -- Compute Services --
 
     async fn list_compute_services(&self) -> ApiResult<Vec<ComputeService>> {
-        Err(ApiError::BadRequest("not yet implemented".into()))
+        let req = self.base.get("/os-services").await?;
+        let resp: NovaComputeServicesResponse = self.base.send_json(req).await?;
+        Ok(resp.services)
     }
 
-    async fn enable_compute_service(&self, _service_id: &str) -> ApiResult<ComputeService> {
-        Err(ApiError::BadRequest("not yet implemented".into()))
+    async fn enable_compute_service(&self, service_id: &str) -> ApiResult<ComputeService> {
+        let url = format!("/os-services/{}", encode_param(service_id));
+        let body = serde_json::json!({ "status": "enabled" });
+        let req = self.base.put(&url).await?.json(&body);
+        let resp: NovaComputeServiceWrapper = self.base.send_json(req).await?;
+        Ok(resp.service)
     }
 
     async fn disable_compute_service(
         &self,
-        _service_id: &str,
-        _reason: Option<&str>,
+        service_id: &str,
+        reason: Option<&str>,
     ) -> ApiResult<ComputeService> {
-        Err(ApiError::BadRequest("not yet implemented".into()))
+        let url = format!("/os-services/{}", encode_param(service_id));
+        let mut body = serde_json::json!({ "status": "disabled" });
+        if let Some(r) = reason {
+            body["disabled_reason"] = serde_json::json!(r);
+        }
+        let req = self.base.put(&url).await?.json(&body);
+        let resp: NovaComputeServiceWrapper = self.base.send_json(req).await?;
+        Ok(resp.service)
     }
 
-    // -- Hypervisors (stub — Unit 13) --
+    // -- Hypervisors --
 
     async fn list_hypervisors(&self) -> ApiResult<Vec<Hypervisor>> {
-        Err(ApiError::BadRequest("not yet implemented".into()))
+        let req = self.base.get("/os-hypervisors/detail").await?;
+        let resp: NovaHypervisorsResponse = self.base.send_json(req).await?;
+        Ok(resp.hypervisors)
     }
 
-    async fn get_hypervisor(&self, _hypervisor_id: &str) -> ApiResult<Hypervisor> {
-        Err(ApiError::BadRequest("not yet implemented".into()))
+    async fn get_hypervisor(&self, hypervisor_id: &str) -> ApiResult<Hypervisor> {
+        let req = self.base.get(&format!("/os-hypervisors/{}", encode_param(hypervisor_id))).await?;
+        let resp: NovaHypervisorWrapper = self.base.send_json(req).await?;
+        Ok(resp.hypervisor)
     }
 
     // -- Usage (stub — Unit 14) --
@@ -803,6 +852,56 @@ mod tests {
     }
 
     #[test]
+    fn test_evacuate_body_with_force_and_shared_storage() {
+        use crate::port::types::EvacuateParams;
+
+        // Build body using the same conditional logic as evacuate_server
+        let params = EvacuateParams {
+            host: Some("compute-03".into()),
+            on_shared_storage: Some(true),
+            force: Some(true),
+        };
+        let mut evac = serde_json::json!({});
+        if let Some(host) = &params.host {
+            evac["host"] = serde_json::json!(host);
+        }
+        if let Some(oss) = params.on_shared_storage {
+            evac["on_shared_storage"] = serde_json::json!(oss);
+        }
+        if let Some(force) = params.force {
+            evac["force"] = serde_json::json!(force);
+        }
+        let body = serde_json::json!({ "evacuate": evac });
+
+        assert_eq!(body["evacuate"]["host"], "compute-03");
+        assert_eq!(body["evacuate"]["on_shared_storage"], true);
+        assert_eq!(body["evacuate"]["force"], true);
+    }
+
+    #[test]
+    fn test_evacuate_body_default_params_omits_optional_fields() {
+        use crate::port::types::EvacuateParams;
+
+        let params = EvacuateParams::default();
+        let mut evac = serde_json::json!({});
+        if let Some(host) = &params.host {
+            evac["host"] = serde_json::json!(host);
+        }
+        if let Some(oss) = params.on_shared_storage {
+            evac["on_shared_storage"] = serde_json::json!(oss);
+        }
+        if let Some(force) = params.force {
+            evac["force"] = serde_json::json!(force);
+        }
+        let body = serde_json::json!({ "evacuate": evac });
+
+        // Default params: all None → empty evacuate object
+        assert!(body["evacuate"]["host"].is_null());
+        assert!(body["evacuate"]["on_shared_storage"].is_null());
+        assert!(body["evacuate"]["force"].is_null());
+    }
+
+    #[test]
     fn test_migrations_response_deserialize() {
         let json = r#"{
             "migrations": [
@@ -856,5 +955,91 @@ mod tests {
         assert_eq!(resp.migration.id, 42);
         assert_eq!(resp.migration.status, "post-migrating");
         assert_eq!(resp.migration.memory_remaining_bytes, Some(0));
+    }
+
+    #[test]
+    fn test_hypervisors_response_deserialize() {
+        let json = r#"{
+            "hypervisors": [
+                {
+                    "id": 1,
+                    "hypervisor_hostname": "compute-01",
+                    "hypervisor_type": "QEMU",
+                    "vcpus": 16,
+                    "vcpus_used": 8,
+                    "memory_mb": 32768,
+                    "memory_mb_used": 16384,
+                    "local_gb": 500,
+                    "local_gb_used": 200,
+                    "running_vms": 5,
+                    "status": "enabled",
+                    "state": "up"
+                },
+                {
+                    "id": "2",
+                    "hypervisor_hostname": "compute-02",
+                    "hypervisor_type": "QEMU",
+                    "vcpus": 32,
+                    "vcpus_used": 0,
+                    "memory_mb": 65536,
+                    "memory_mb_used": 0,
+                    "local_gb": 1000,
+                    "local_gb_used": 0,
+                    "running_vms": 0,
+                    "status": "disabled",
+                    "state": "down"
+                }
+            ]
+        }"#;
+        let resp: NovaHypervisorsResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.hypervisors.len(), 2);
+        assert_eq!(resp.hypervisors[0].id, "1");
+        assert_eq!(resp.hypervisors[0].hypervisor_hostname, "compute-01");
+        assert_eq!(resp.hypervisors[0].vcpus, 16);
+        assert_eq!(resp.hypervisors[0].vcpus_used, 8);
+        assert_eq!(resp.hypervisors[0].status, "enabled");
+        assert_eq!(resp.hypervisors[0].state, "up");
+        // Second hypervisor: id as string
+        assert_eq!(resp.hypervisors[1].id, "2");
+        assert_eq!(resp.hypervisors[1].status, "disabled");
+    }
+
+    #[test]
+    fn test_compute_service_response_deserialize() {
+        let json = r#"{
+            "services": [
+                {
+                    "id": 1,
+                    "binary": "nova-compute",
+                    "host": "compute-01",
+                    "status": "enabled",
+                    "state": "up",
+                    "updated_at": "2026-04-01T10:00:00Z",
+                    "disabled_reason": null
+                }
+            ]
+        }"#;
+        let resp: NovaComputeServicesResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.services.len(), 1);
+        assert_eq!(resp.services[0].host, "compute-01");
+        assert_eq!(resp.services[0].status, "enabled");
+    }
+
+    #[test]
+    fn test_compute_service_wrapper_deserialize() {
+        let json = r#"{
+            "service": {
+                "id": 1,
+                "binary": "nova-compute",
+                "host": "compute-01",
+                "status": "disabled",
+                "state": "up",
+                "updated_at": "2026-04-01T10:05:00Z",
+                "disabled_reason": "maintenance"
+            }
+        }"#;
+        let resp: NovaComputeServiceWrapper = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.service.status, "disabled");
+        assert_eq!(resp.service.disabled_reason, Some("maintenance".into()));
     }
 }
