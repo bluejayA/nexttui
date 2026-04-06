@@ -160,12 +160,13 @@ impl DetailView {
         ))];
         lines.push(Line::from(""));
 
+        let mut link_counter = 0usize;
         for section in &data.sections {
             lines.push(Line::from(Span::styled(
-                &section.name,
+                format!("▸ {}", &section.name),
                 Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
             )));
 
             // Calculate max key width for aligned columns within this section
@@ -243,6 +244,12 @@ impl DetailView {
                         }
                     }
                     DetailField::ResourceLink { key, display, .. } => {
+                        let is_focused = link_counter == self.focused_link_index;
+                        let link_style = if is_focused {
+                            Theme::link().add_modifier(Modifier::REVERSED)
+                        } else {
+                            Theme::link()
+                        };
                         lines.push(Line::from(vec![
                             Span::styled(
                                 format!("  {:>width$}: ", key, width = key_width),
@@ -250,9 +257,10 @@ impl DetailView {
                             ),
                             Span::styled(
                                 format!("[{display}]"),
-                                Theme::link(),
+                                link_style,
                             ),
                         ]));
+                        link_counter += 1;
                     }
                 }
             }
