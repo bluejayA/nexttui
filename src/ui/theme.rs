@@ -51,6 +51,14 @@ impl Theme {
     pub fn timestamp() -> Style {
         Style::default().fg(Color::Cyan)
     }
+
+    pub fn evacuating() -> Style {
+        Style::default().fg(Color::Yellow)
+    }
+
+    pub fn evac_success() -> Style {
+        Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)
+    }
 }
 
 pub struct Icons;
@@ -79,6 +87,12 @@ impl Icons {
     pub fn migrating() -> &'static str {
         "↔"
     }
+
+    pub fn host_up() -> &'static str { "●" }
+    pub fn host_down() -> &'static str { "✗" }
+    pub fn host_disabled() -> &'static str { "⊘" }
+    pub fn checkbox_on() -> &'static str { "☑" }
+    pub fn checkbox_off() -> &'static str { "☐" }
 
     pub fn status_icon(status: &str) -> &'static str {
         match status {

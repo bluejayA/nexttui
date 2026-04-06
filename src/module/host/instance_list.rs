@@ -267,7 +267,7 @@ fn status_color(status: &str) -> Style {
     match status {
         "ACTIVE" => Style::default().fg(Color::Green),
         "ERROR" => Style::default().fg(Color::Red),
-        "BUILD" | "REBUILD" | "RESIZE" | "REBOOT" | "MIGRATING" => Style::default().fg(Color::Yellow),
+        "BUILD" | "REBUILD" | "RESIZE" | "REBOOT" | "MIGRATING" | "VERIFY_RESIZE" => Style::default().fg(Color::Yellow),
         "SHUTOFF" | "STOPPED" => Style::default().fg(Color::DarkGray),
         _ => Style::default(),
     }
