@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -53,7 +53,7 @@ pub struct InstanceList {
     selected: usize,
     checked: HashSet<String>,
     filter: StatusFilter,
-    evac_status: std::collections::HashMap<String, EvacInlineStatus>,
+    evac_status: HashMap<String, EvacInlineStatus>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,6 +61,10 @@ pub enum EvacInlineStatus {
     InFlight,
     Success,
     Failed,
+}
+
+impl Default for InstanceList {
+    fn default() -> Self { Self::new() }
 }
 
 impl InstanceList {
@@ -71,12 +75,14 @@ impl InstanceList {
             selected: 0,
             checked: HashSet::new(),
             filter: StatusFilter::All,
-            evac_status: std::collections::HashMap::new(),
+            evac_status: HashMap::new(),
         }
     }
 
     pub fn set_servers(&mut self, servers: Vec<Server>) {
         self.servers = servers;
+        self.checked.clear();
+        self.evac_status.clear();
         self.rebuild_filter();
     }
 
@@ -151,12 +157,25 @@ impl InstanceList {
         self.checked.clear();
     }
 
+    /// Returns checked IDs that are currently visible (in filtered_indices).
+    /// Prevents phantom selection — hidden servers are never included.
     pub fn checked_ids(&self) -> Vec<String> {
-        self.checked.iter().cloned().collect()
+        self.filtered_indices
+            .iter()
+            .filter_map(|&i| {
+                let s = &self.servers[i];
+                if self.checked.contains(&s.id) {
+                    Some(s.id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
+    /// Count of checked items visible in current filter.
     pub fn checked_count(&self) -> usize {
-        self.checked.len()
+        self.checked_ids().len()
     }
 
     pub fn is_checked(&self, id: &str) -> bool {
@@ -383,5 +402,49 @@ mod tests {
         assert!(StatusFilter::Shutoff.matches("SHUTOFF"));
         assert!(StatusFilter::Shutoff.matches("STOPPED"));
         assert!(!StatusFilter::Shutoff.matches("ACTIVE"));
+    }
+
+    #[test]
+    fn test_instance_list_empty_move_no_panic() {
+        let mut list = InstanceList::new();
+        list.move_down();
+        list.move_up();
+        assert!(list.selected_server().is_none());
+    }
+
+    #[test]
+    fn test_phantom_selection_excluded_from_checked_ids() {
+        let mut list = InstanceList::new();
+        list.set_servers(vec![
+            make_server("s1", "web-01", "ACTIVE"),
+            make_server("s2", "web-02", "ERROR"),
+        ]);
+        // Check both servers in ALL filter
+        list.select_all();
+        assert_eq!(list.checked_count(), 2);
+
+        // Switch to ACTIVE filter — s2 (ERROR) is hidden
+        list.cycle_filter(); // → ACTIVE
+        assert_eq!(list.filtered_count(), 1);
+
+        // checked_ids should only return visible servers
+        let ids = list.checked_ids();
+        assert_eq!(ids.len(), 1);
+        assert!(ids.contains(&"s1".to_string()));
+        assert!(!ids.contains(&"s2".to_string())); // phantom excluded
+    }
+
+    #[test]
+    fn test_set_servers_clears_checked_and_evac_status() {
+        let mut list = InstanceList::new();
+        list.set_servers(vec![make_server("s1", "web-01", "ACTIVE")]);
+        list.toggle_check();
+        list.set_evac_status("s1", EvacInlineStatus::Success);
+        assert_eq!(list.checked_count(), 1);
+
+        // Replace servers — should clear checked and evac_status
+        list.set_servers(vec![make_server("s2", "db-01", "ACTIVE")]);
+        assert_eq!(list.checked_count(), 0);
+        assert!(list.evac_status.is_empty());
     }
 }

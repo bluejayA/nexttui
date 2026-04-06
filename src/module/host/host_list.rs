@@ -11,6 +11,10 @@ pub struct HostList {
     selected: usize,
 }
 
+impl Default for HostList {
+    fn default() -> Self { Self::new() }
+}
+
 impl HostList {
     pub fn new() -> Self {
         Self {
@@ -240,6 +244,14 @@ mod tests {
         assert!(list.is_empty());
         assert_eq!(list.len(), 0);
         assert!(list.selected_hypervisor().is_none());
+    }
+
+    #[test]
+    fn test_host_list_empty_move_no_panic() {
+        let mut list = HostList::new();
+        list.move_down(); // should not panic on empty
+        list.move_up();
+        assert_eq!(list.selected_index(), 0);
     }
 
     #[test]

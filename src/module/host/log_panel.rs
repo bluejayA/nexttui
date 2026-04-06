@@ -47,6 +47,10 @@ pub struct LogPanel {
     entries: VecDeque<LogEntry>,
 }
 
+impl Default for LogPanel {
+    fn default() -> Self { Self::new() }
+}
+
 impl LogPanel {
     pub fn new() -> Self {
         Self {
