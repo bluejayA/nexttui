@@ -83,7 +83,7 @@ impl HostList {
         }
 
         // Each host takes 3 lines: hostname+status, resource bar, separator
-        let visible_hosts = (inner.height as usize) / 3;
+        let visible_hosts = ((inner.height as usize) / 3).max(1);
         let scroll_offset = if self.selected >= visible_hosts {
             self.selected - visible_hosts + 1
         } else {

@@ -214,7 +214,7 @@ impl InstanceList {
             return;
         }
 
-        let visible = inner.height as usize;
+        let visible = (inner.height as usize).max(1);
         let scroll_offset = if self.selected >= visible {
             self.selected - visible + 1
         } else {
