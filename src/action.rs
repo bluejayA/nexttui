@@ -76,6 +76,8 @@ pub enum Action {
     ConfirmMigration { id: String },
     RevertMigration { id: String },
     EvacuateServer { id: String, params: EvacuateParams },
+    DisableComputeService { service_id: String, hostname: String },
+    EnableComputeService { service_id: String, hostname: String },
     FetchMigrationProgress { server_id: String },
 
     // All Tenants

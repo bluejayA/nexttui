@@ -138,6 +138,9 @@ fn action_to_kind(action: &Action) -> Option<ActionKind> {
 
         Action::EvacuateServer { .. } => Some(ActionKind::Evacuate),
 
+        Action::DisableComputeService { .. }
+        | Action::EnableComputeService { .. } => Some(ActionKind::EnableDisable),
+
         // Server lifecycle — treated as CUD for RBAC purposes
         Action::RebootServer { .. }
         | Action::StartServer { .. }
@@ -188,6 +191,8 @@ fn action_name(action: &Action) -> &str {
         Action::ConfirmMigration { .. } => "ConfirmMigration",
         Action::RevertMigration { .. } => "RevertMigration",
         Action::EvacuateServer { .. } => "EvacuateServer",
+        Action::DisableComputeService { .. } => "DisableComputeService",
+        Action::EnableComputeService { .. } => "EnableComputeService",
         Action::FetchMigrationProgress { .. } => "FetchMigrationProgress",
         _ => "Unknown",
     }
@@ -310,6 +315,18 @@ async fn handle_action(registry: &AdapterRegistry, all_tenants: &AtomicBool, act
             match registry.nova.evacuate_server(&id, &params).await {
                 Ok(()) => Some(AppEvent::ServerEvacuated { id }),
                 Err(e) => Some(api_error("EvacuateServer", e)),
+            }
+        }
+        Action::DisableComputeService { service_id, hostname } => {
+            match registry.nova.disable_compute_service(&service_id, None).await {
+                Ok(_) => Some(AppEvent::ComputeServiceToggled { hostname, enabled: false }),
+                Err(e) => Some(api_error("DisableComputeService", e)),
+            }
+        }
+        Action::EnableComputeService { service_id, hostname } => {
+            match registry.nova.enable_compute_service(&service_id).await {
+                Ok(_) => Some(AppEvent::ComputeServiceToggled { hostname, enabled: true }),
+                Err(e) => Some(api_error("EnableComputeService", e)),
             }
         }
         Action::FetchMigrationProgress { server_id } => {

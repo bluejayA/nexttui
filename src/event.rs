@@ -66,6 +66,8 @@ pub enum AppEvent {
     MigrationConfirmed { id: String },
     MigrationReverted { id: String },
     ServerEvacuated { id: String },
+    ServerEvacuateResult { id: String, result: Result<(), String> },
+    ComputeServiceToggled { hostname: String, enabled: bool },
     MigrationProgressLoaded { server_id: String, migration: ServerMigration },
     MigrationPollingStopped { server_id: String },
 
