@@ -8,16 +8,19 @@ impl Theme {
         Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
     }
 
+    /// ACTIVE servers / success states — bright green on dark bg
     pub fn done() -> Style {
-        Style::default().fg(Color::Green)
+        Style::default().fg(Color::LightGreen)
     }
 
+    /// ERROR states — bright red for visibility on dark bg
     pub fn error() -> Style {
-        Style::default().fg(Color::Red)
+        Style::default().fg(Color::LightRed)
     }
 
+    /// SHUTOFF / stopped — mid-gray, not too dark to vanish on black bg
     pub fn waiting() -> Style {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(Color::Gray)
     }
 
     pub fn warning() -> Style {
@@ -32,13 +35,16 @@ impl Theme {
         Style::default().fg(Color::DarkGray)
     }
 
+    /// Selected row highlight — subtle blue-tinted bg to stand out on black
     pub fn highlight() -> Style {
-        Style::default().add_modifier(Modifier::BOLD)
+        Style::default()
+            .bg(Color::Rgb(50, 50, 76))
+            .add_modifier(Modifier::BOLD)
     }
 
     pub fn disabled() -> Style {
         Style::default()
-            .fg(Color::DarkGray)
+            .fg(Color::Gray)
             .add_modifier(Modifier::DIM)
     }
 
@@ -159,13 +165,13 @@ mod tests {
     #[test]
     fn test_theme_done_is_green() {
         let style = Theme::done();
-        assert_eq!(style.fg, Some(Color::Green));
+        assert_eq!(style.fg, Some(Color::LightGreen));
     }
 
     #[test]
     fn test_theme_error_is_red() {
         let style = Theme::error();
-        assert_eq!(style.fg, Some(Color::Red));
+        assert_eq!(style.fg, Some(Color::LightRed));
     }
 
     #[test]

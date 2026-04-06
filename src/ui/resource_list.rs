@@ -386,21 +386,21 @@ mod tests {
     #[test]
     fn test_row_style_active_uses_theme_done() {
         let style = RowStyleHint::Active.style();
-        assert_eq!(style.fg, Some(Color::Green)); // Theme::done()
+        assert_eq!(style.fg, Some(Color::LightGreen)); // Theme::done()
     }
 
     #[test]
     fn test_row_style_error_uses_theme_error() {
         let style = RowStyleHint::Error.style();
-        assert_eq!(style.fg, Some(Color::Red)); // Theme::error()
+        assert_eq!(style.fg, Some(Color::LightRed)); // Theme::error()
     }
 
     #[test]
     fn test_selection_preserves_semantic_color() {
-        // Theme::highlight() is Bold only (no fg) — patch preserves base fg
-        let base = RowStyleHint::Active.style(); // Green
+        // Theme::highlight() adds bg + Bold — patch preserves base fg
+        let base = RowStyleHint::Active.style(); // LightGreen
         let selected = base.patch(super::Theme::highlight());
-        assert_eq!(selected.fg, Some(Color::Green)); // Green preserved
+        assert_eq!(selected.fg, Some(Color::LightGreen)); // fg preserved
         assert!(selected.add_modifier.contains(Modifier::BOLD)); // Bold added
     }
 }

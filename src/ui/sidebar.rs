@@ -251,7 +251,7 @@ mod tests {
         let unfocus_style = super::Theme::unfocus_border();
         assert_eq!(unfocus_style.fg, Some(ratatui::style::Color::DarkGray));
         let disabled = super::Theme::disabled();
-        assert_eq!(disabled.fg, Some(ratatui::style::Color::DarkGray));
+        assert_eq!(disabled.fg, Some(ratatui::style::Color::Gray));
         assert!(disabled.add_modifier.contains(Modifier::DIM));
     }
 
