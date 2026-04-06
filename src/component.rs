@@ -5,6 +5,12 @@ use ratatui::layout::Rect;
 use crate::action::Action;
 use crate::event::AppEvent;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayoutHint {
+    Default,
+    FullWidth,
+}
+
 pub trait Component {
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action>;
     fn handle_event(&mut self, event: &AppEvent);
@@ -15,6 +21,8 @@ pub trait Component {
     fn refresh_action(&self) -> Option<Action> { None }
     fn has_transitional_resources(&self) -> bool { false }
     fn is_modal(&self) -> bool { false }
+    fn layout_hint(&self) -> LayoutHint { LayoutHint::Default }
+    fn is_busy(&self) -> bool { false }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -71,6 +79,19 @@ mod tests {
         }
         let d = Dummy;
         assert!(!d.is_modal());
+    }
+
+    #[test]
+    fn test_component_default_layout_hint_is_default() {
+        struct Dummy;
+        impl Component for Dummy {
+            fn handle_key(&mut self, _key: KeyEvent) -> Option<Action> { None }
+            fn handle_event(&mut self, _event: &AppEvent) {}
+            fn render(&self, _frame: &mut Frame, _area: Rect) {}
+        }
+        let d = Dummy;
+        assert_eq!(d.layout_hint(), LayoutHint::Default);
+        assert!(!d.is_busy());
     }
 
     #[test]
