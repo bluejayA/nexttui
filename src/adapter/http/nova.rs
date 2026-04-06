@@ -71,6 +71,16 @@ struct NovaMigrationsResponse {
 }
 
 #[derive(Deserialize)]
+struct NovaHypervisorsResponse {
+    hypervisors: Vec<Hypervisor>,
+}
+
+#[derive(Deserialize)]
+struct NovaComputeServiceWrapper {
+    service: ComputeService,
+}
+
+#[derive(Deserialize)]
 struct NovaMigrationWrapper {
     migration: ServerMigration,
 }
@@ -536,14 +546,19 @@ impl NovaPort for NovaHttpAdapter {
         Err(ApiError::BadRequest("not yet implemented".into()))
     }
 
-    // -- Hypervisors (stub — Unit 13) --
+    // -- Hypervisors --
 
     async fn list_hypervisors(&self) -> ApiResult<Vec<Hypervisor>> {
-        Err(ApiError::BadRequest("not yet implemented".into()))
+        let req = self.base.get("/os-hypervisors/detail").await?;
+        let resp: NovaHypervisorsResponse = self.base.send_json(req).await?;
+        Ok(resp.hypervisors)
     }
 
-    async fn get_hypervisor(&self, _hypervisor_id: &str) -> ApiResult<Hypervisor> {
-        Err(ApiError::BadRequest("not yet implemented".into()))
+    async fn get_hypervisor(&self, hypervisor_id: &str) -> ApiResult<Hypervisor> {
+        let req = self.base.get(&format!("/os-hypervisors/{}", encode_param(hypervisor_id))).await?;
+        let resp: serde_json::Value = self.base.send_json(req).await?;
+        serde_json::from_value(resp["hypervisor"].clone())
+            .map_err(|e| ApiError::BadRequest(e.to_string()))
     }
 
     // -- Usage (stub — Unit 14) --
@@ -918,5 +933,52 @@ mod tests {
         assert_eq!(resp.migration.id, 42);
         assert_eq!(resp.migration.status, "post-migrating");
         assert_eq!(resp.migration.memory_remaining_bytes, Some(0));
+    }
+
+    #[test]
+    fn test_hypervisors_response_deserialize() {
+        let json = r#"{
+            "hypervisors": [
+                {
+                    "id": 1,
+                    "hypervisor_hostname": "compute-01",
+                    "hypervisor_type": "QEMU",
+                    "vcpus": 16,
+                    "vcpus_used": 8,
+                    "memory_mb": 32768,
+                    "memory_mb_used": 16384,
+                    "local_gb": 500,
+                    "local_gb_used": 200,
+                    "running_vms": 5,
+                    "status": "enabled",
+                    "state": "up"
+                },
+                {
+                    "id": "2",
+                    "hypervisor_hostname": "compute-02",
+                    "hypervisor_type": "QEMU",
+                    "vcpus": 32,
+                    "vcpus_used": 0,
+                    "memory_mb": 65536,
+                    "memory_mb_used": 0,
+                    "local_gb": 1000,
+                    "local_gb_used": 0,
+                    "running_vms": 0,
+                    "status": "disabled",
+                    "state": "down"
+                }
+            ]
+        }"#;
+        let resp: NovaHypervisorsResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.hypervisors.len(), 2);
+        assert_eq!(resp.hypervisors[0].id, "1");
+        assert_eq!(resp.hypervisors[0].hypervisor_hostname, "compute-01");
+        assert_eq!(resp.hypervisors[0].vcpus, 16);
+        assert_eq!(resp.hypervisors[0].vcpus_used, 8);
+        assert_eq!(resp.hypervisors[0].status, "enabled");
+        assert_eq!(resp.hypervisors[0].state, "up");
+        // Second hypervisor: id as string
+        assert_eq!(resp.hypervisors[1].id, "2");
+        assert_eq!(resp.hypervisors[1].status, "disabled");
     }
 }
