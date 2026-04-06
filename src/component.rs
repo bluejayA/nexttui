@@ -23,6 +23,9 @@ pub trait Component {
     fn is_modal(&self) -> bool { false }
     fn layout_hint(&self) -> LayoutHint { LayoutHint::Default }
     fn is_busy(&self) -> bool { false }
+    /// Dynamic content title based on view state (e.g. "Server: web-01").
+    /// Returns None to use the default route label.
+    fn content_title(&self) -> Option<String> { None }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

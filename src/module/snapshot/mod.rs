@@ -179,6 +179,20 @@ impl Component for SnapshotModule {
         self.confirm.render(frame, area);
     }
 
+    fn content_title(&self) -> Option<String> {
+        match &self.view_state {
+            ViewState::List => None,
+            ViewState::Detail(id) => {
+                let name = self.snapshots.iter()
+                    .find(|r| r.id == *id)
+                    .and_then(|r| r.name.as_deref())
+                    .unwrap_or("...");
+                Some(format!("Snapshot: {name}"))
+            }
+            ViewState::Create => None,
+        }
+    }
+
     fn help_hint(&self) -> &str {
         match &self.view_state {
             ViewState::List => "Enter:Detail d:Delete r:Refresh",

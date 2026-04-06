@@ -280,6 +280,20 @@ impl Component for ImageModule {
         self.confirm.render(frame, area);
     }
 
+    fn content_title(&self) -> Option<String> {
+        match &self.view_state {
+            ViewState::List => None,
+            ViewState::Detail(id) => {
+                let name = self.images.iter()
+                    .find(|r| r.id == *id)
+                    .map(|r| r.name.as_str())
+                    .unwrap_or("...");
+                Some(format!("Image: {name}"))
+            }
+            ViewState::Create => Some("Create Image".into()),
+        }
+    }
+
     fn help_hint(&self) -> &str {
         match &self.view_state {
             ViewState::List if self.is_admin => "Enter:Detail c:Create d:Delete r:Refresh",

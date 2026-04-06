@@ -629,6 +629,20 @@ impl Component for ServerModule {
         self.confirm.render(frame, area);
     }
 
+    fn content_title(&self) -> Option<String> {
+        match &self.view_state {
+            ViewState::List => None,
+            ViewState::Detail(id) => {
+                let name = self.servers.iter()
+                    .find(|s| s.id == *id)
+                    .map(|s| s.name.as_str())
+                    .unwrap_or("...");
+                Some(format!("Server: {name}"))
+            }
+            ViewState::Create => Some("Create Server".into()),
+        }
+    }
+
     fn help_hint(&self) -> &str {
         match &self.view_state {
             ViewState::List => "Enter:Detail c:Create d:Delete r:Refresh",

@@ -278,6 +278,20 @@ impl Component for VolumeModule {
         self.confirm.render(frame, area);
     }
 
+    fn content_title(&self) -> Option<String> {
+        match &self.view_state {
+            ViewState::List => None,
+            ViewState::Detail(id) => {
+                let name = self.volumes.iter()
+                    .find(|r| r.id == *id)
+                    .and_then(|r| r.name.as_deref())
+                    .unwrap_or("...");
+                Some(format!("Volume: {name}"))
+            }
+            ViewState::Create => Some("Create Volume".into()),
+        }
+    }
+
     fn help_hint(&self) -> &str {
         match &self.view_state {
             ViewState::List => "Enter:Detail c:Create d:Delete r:Refresh",
