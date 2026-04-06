@@ -248,6 +248,20 @@ impl Component for NetworkModule {
         }
     }
 
+    fn content_title(&self) -> Option<String> {
+        match &self.view_state {
+            ViewState::List => None,
+            ViewState::Detail(id) => {
+                let name = self.networks.iter()
+                    .find(|r| r.id == *id)
+                    .map(|r| r.name.as_str())
+                    .unwrap_or("...");
+                Some(format!("Network: {name}"))
+            }
+            ViewState::Create => Some("Create Network".into()),
+        }
+    }
+
     fn help_hint(&self) -> &str {
         match &self.view_state {
             ViewState::List => "Enter:Detail c:Create r:Refresh",

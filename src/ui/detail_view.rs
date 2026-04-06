@@ -2,7 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
 use ratatui::Frame;
 
 use crate::action::Action;
@@ -160,12 +160,13 @@ impl DetailView {
         ))];
         lines.push(Line::from(""));
 
+        let mut link_counter = 0usize;
         for section in &data.sections {
             lines.push(Line::from(Span::styled(
-                &section.name,
+                format!("▸ {}", &section.name),
                 Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
             )));
 
             // Calculate max key width for aligned columns within this section
@@ -243,6 +244,12 @@ impl DetailView {
                         }
                     }
                     DetailField::ResourceLink { key, display, .. } => {
+                        let is_focused = link_counter == self.focused_link_index;
+                        let link_style = if is_focused {
+                            Theme::link().add_modifier(Modifier::REVERSED)
+                        } else {
+                            Theme::link()
+                        };
                         lines.push(Line::from(vec![
                             Span::styled(
                                 format!("  {:>width$}: ", key, width = key_width),
@@ -250,17 +257,28 @@ impl DetailView {
                             ),
                             Span::styled(
                                 format!("[{display}]"),
-                                Theme::link(),
+                                link_style,
                             ),
                         ]));
+                        link_counter += 1;
                     }
                 }
             }
             lines.push(Line::from(""));
         }
 
+        let total_lines = lines.len();
         let widget = Paragraph::new(lines).scroll((self.scroll_offset as u16, 0));
         frame.render_widget(widget, area);
+
+        // Scrollbar — only show when content exceeds visible area
+        let visible = area.height as usize;
+        if total_lines > visible {
+            let mut scrollbar_state =
+                ScrollbarState::new(total_lines).position(self.scroll_offset);
+            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight);
+            frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+        }
     }
 }
 

@@ -210,6 +210,20 @@ impl Component for UserModule {
         self.confirm.render(frame, area);
     }
 
+    fn content_title(&self) -> Option<String> {
+        match &self.view_state {
+            ViewState::List => None,
+            ViewState::Detail(id) => {
+                let name = self.users.iter()
+                    .find(|r| r.id == *id)
+                    .map(|r| r.name.as_str())
+                    .unwrap_or("...");
+                Some(format!("User: {name}"))
+            }
+            ViewState::Create => Some("Create User".into()),
+        }
+    }
+
     fn help_hint(&self) -> &str {
         match &self.view_state {
             ViewState::List => "c:Create d:Delete r:Refresh",

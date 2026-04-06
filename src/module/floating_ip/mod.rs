@@ -222,6 +222,20 @@ impl Component for FloatingIpModule {
         self.confirm.render(frame, area);
     }
 
+    fn content_title(&self) -> Option<String> {
+        match &self.view_state {
+            ViewState::List => None,
+            ViewState::Detail(id) => {
+                let addr = self.floating_ips.iter()
+                    .find(|r| r.id == *id)
+                    .map(|r| r.floating_ip_address.as_str())
+                    .unwrap_or("...");
+                Some(format!("Floating IP: {addr}"))
+            }
+            ViewState::Create => Some("Create Floating IP".into()),
+        }
+    }
+
     fn help_hint(&self) -> &str {
         match &self.view_state {
             ViewState::List => "c:Create d:Delete r:Refresh",

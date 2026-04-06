@@ -200,6 +200,20 @@ impl App {
             return true;
         }
 
+        // Modal component (ConfirmDialog, SelectPopup) — delegate all keys directly
+        if self.input_mode == InputMode::Normal {
+            let is_modal = self.components.get(&self.router.current())
+                .map_or(false, |c| c.is_modal());
+            if is_modal {
+                if let Some(component) = self.components.get_mut(&self.router.current()) {
+                    if let Some(action) = component.handle_key(key) {
+                        self.dispatch_action(action);
+                    }
+                }
+                return true;
+            }
+        }
+
         // Global keys in Normal mode (only without modifiers to avoid Ctrl+q etc.)
         if self.input_mode == InputMode::Normal && no_modifiers {
             match key.code {
@@ -609,7 +623,9 @@ impl App {
                     Theme::unfocus_border()
                 };
                 let all_tenants = self.all_tenants.load(Ordering::Relaxed);
-                let title = theme::panel_title_line(&route_label, content_focused, all_tenants);
+                let display_label = component.content_title()
+                    .unwrap_or_else(|| route_label.to_string());
+                let title = theme::panel_title_line(&display_label, content_focused, all_tenants);
                 let content_block = Block::default()
                     .title(title)
                     .borders(Borders::ALL)

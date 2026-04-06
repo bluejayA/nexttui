@@ -241,6 +241,20 @@ impl Component for FlavorModule {
         self.confirm.render(frame, area);
     }
 
+    fn content_title(&self) -> Option<String> {
+        match &self.view_state {
+            ViewState::List => None,
+            ViewState::Detail(id) => {
+                let name = self.flavors.iter()
+                    .find(|r| r.id == *id)
+                    .map(|r| r.name.as_str())
+                    .unwrap_or("...");
+                Some(format!("Flavor: {name}"))
+            }
+            ViewState::Create => Some("Create Flavor".into()),
+        }
+    }
+
     fn help_hint(&self) -> &str {
         match &self.view_state {
             ViewState::List if self.is_admin => "c:Create d:Delete r:Refresh",

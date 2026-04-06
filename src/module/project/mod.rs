@@ -226,6 +226,20 @@ impl Component for ProjectModule {
         self.confirm.render(frame, area);
     }
 
+    fn content_title(&self) -> Option<String> {
+        match &self.view_state {
+            ViewState::List => None,
+            ViewState::Detail(id) => {
+                let name = self.projects.iter()
+                    .find(|r| r.id == *id)
+                    .map(|r| r.name.as_str())
+                    .unwrap_or("...");
+                Some(format!("Project: {name}"))
+            }
+            ViewState::Create => Some("Create Project".into()),
+        }
+    }
+
     fn help_hint(&self) -> &str {
         match &self.view_state {
             ViewState::List => "Enter:Detail c:Create d:Delete r:Refresh",
