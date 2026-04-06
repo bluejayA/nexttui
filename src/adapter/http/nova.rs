@@ -76,6 +76,11 @@ struct NovaHypervisorsResponse {
 }
 
 #[derive(Deserialize)]
+struct NovaComputeServicesResponse {
+    services: Vec<ComputeService>,
+}
+
+#[derive(Deserialize)]
 struct NovaComputeServiceWrapper {
     service: ComputeService,
 }
@@ -528,22 +533,35 @@ impl NovaPort for NovaHttpAdapter {
         Err(ApiError::BadRequest("not yet implemented".into()))
     }
 
-    // -- Compute Services (stub — Unit 13) --
+    // -- Compute Services --
 
     async fn list_compute_services(&self) -> ApiResult<Vec<ComputeService>> {
-        Err(ApiError::BadRequest("not yet implemented".into()))
+        let req = self.base.get("/os-services").await?;
+        let resp: NovaComputeServicesResponse = self.base.send_json(req).await?;
+        Ok(resp.services)
     }
 
-    async fn enable_compute_service(&self, _service_id: &str) -> ApiResult<ComputeService> {
-        Err(ApiError::BadRequest("not yet implemented".into()))
+    async fn enable_compute_service(&self, service_id: &str) -> ApiResult<ComputeService> {
+        let url = format!("/os-services/{}", encode_param(service_id));
+        let body = serde_json::json!({ "status": "enabled" });
+        let req = self.base.put(&url).await?.json(&body);
+        let resp: NovaComputeServiceWrapper = self.base.send_json(req).await?;
+        Ok(resp.service)
     }
 
     async fn disable_compute_service(
         &self,
-        _service_id: &str,
-        _reason: Option<&str>,
+        service_id: &str,
+        reason: Option<&str>,
     ) -> ApiResult<ComputeService> {
-        Err(ApiError::BadRequest("not yet implemented".into()))
+        let url = format!("/os-services/{}", encode_param(service_id));
+        let mut body = serde_json::json!({ "status": "disabled" });
+        if let Some(r) = reason {
+            body["disabled_reason"] = serde_json::json!(r);
+        }
+        let req = self.base.put(&url).await?.json(&body);
+        let resp: NovaComputeServiceWrapper = self.base.send_json(req).await?;
+        Ok(resp.service)
     }
 
     // -- Hypervisors --
@@ -980,5 +998,44 @@ mod tests {
         // Second hypervisor: id as string
         assert_eq!(resp.hypervisors[1].id, "2");
         assert_eq!(resp.hypervisors[1].status, "disabled");
+    }
+
+    #[test]
+    fn test_compute_service_response_deserialize() {
+        let json = r#"{
+            "services": [
+                {
+                    "id": 1,
+                    "binary": "nova-compute",
+                    "host": "compute-01",
+                    "status": "enabled",
+                    "state": "up",
+                    "updated_at": "2026-04-01T10:00:00Z",
+                    "disabled_reason": null
+                }
+            ]
+        }"#;
+        let resp: NovaComputeServicesResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.services.len(), 1);
+        assert_eq!(resp.services[0].host, "compute-01");
+        assert_eq!(resp.services[0].status, "enabled");
+    }
+
+    #[test]
+    fn test_compute_service_wrapper_deserialize() {
+        let json = r#"{
+            "service": {
+                "id": 1,
+                "binary": "nova-compute",
+                "host": "compute-01",
+                "status": "disabled",
+                "state": "up",
+                "updated_at": "2026-04-01T10:05:00Z",
+                "disabled_reason": "maintenance"
+            }
+        }"#;
+        let resp: NovaComputeServiceWrapper = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.service.status, "disabled");
+        assert_eq!(resp.service.disabled_reason, Some("maintenance".into()));
     }
 }
