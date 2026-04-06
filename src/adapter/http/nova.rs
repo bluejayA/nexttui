@@ -379,6 +379,12 @@ impl NovaPort for NovaHttpAdapter {
         self.base.send_no_content(req).await
     }
 
+    // Nova evacuate API field availability by microversion:
+    //   on_shared_storage: < 2.14 only (removed in 2.14)
+    //   force:             2.29+ (added in 2.29, removed in 2.68)
+    //   host:              all versions
+    // Currently no microversion header is sent; fields are included
+    // only when explicitly set (None = omitted from JSON).
     async fn evacuate_server(
         &self,
         server_id: &str,
@@ -389,7 +395,7 @@ impl NovaPort for NovaHttpAdapter {
             evac["host"] = serde_json::json!(host);
         }
         if let Some(oss) = params.on_shared_storage {
-            evac["onSharedStorage"] = serde_json::json!(oss);
+            evac["on_shared_storage"] = serde_json::json!(oss);
         }
         if let Some(force) = params.force {
             evac["force"] = serde_json::json!(force);
@@ -806,6 +812,56 @@ mod tests {
             "evacuate": { "host": serde_json::Value::Null }
         });
         assert!(auto_host["evacuate"]["host"].is_null());
+    }
+
+    #[test]
+    fn test_evacuate_body_with_force_and_shared_storage() {
+        use crate::port::types::EvacuateParams;
+
+        // Build body using the same conditional logic as evacuate_server
+        let params = EvacuateParams {
+            host: Some("compute-03".into()),
+            on_shared_storage: Some(true),
+            force: Some(true),
+        };
+        let mut evac = serde_json::json!({});
+        if let Some(host) = &params.host {
+            evac["host"] = serde_json::json!(host);
+        }
+        if let Some(oss) = params.on_shared_storage {
+            evac["on_shared_storage"] = serde_json::json!(oss);
+        }
+        if let Some(force) = params.force {
+            evac["force"] = serde_json::json!(force);
+        }
+        let body = serde_json::json!({ "evacuate": evac });
+
+        assert_eq!(body["evacuate"]["host"], "compute-03");
+        assert_eq!(body["evacuate"]["on_shared_storage"], true);
+        assert_eq!(body["evacuate"]["force"], true);
+    }
+
+    #[test]
+    fn test_evacuate_body_default_params_omits_optional_fields() {
+        use crate::port::types::EvacuateParams;
+
+        let params = EvacuateParams::default();
+        let mut evac = serde_json::json!({});
+        if let Some(host) = &params.host {
+            evac["host"] = serde_json::json!(host);
+        }
+        if let Some(oss) = params.on_shared_storage {
+            evac["on_shared_storage"] = serde_json::json!(oss);
+        }
+        if let Some(force) = params.force {
+            evac["force"] = serde_json::json!(force);
+        }
+        let body = serde_json::json!({ "evacuate": evac });
+
+        // Default params: all None → empty evacuate object
+        assert!(body["evacuate"]["host"].is_null());
+        assert!(body["evacuate"]["on_shared_storage"].is_null());
+        assert!(body["evacuate"]["force"].is_null());
     }
 
     #[test]

@@ -815,6 +815,15 @@ mod tests {
             action_to_kind(&Action::EvacuateServer { id: "s1".into(), params: EvacuateParams::default() }),
             Some(ActionKind::Evacuate),
         );
+        // Disable/Enable should map to EnableDisable (admin-only)
+        assert_eq!(
+            action_to_kind(&Action::DisableComputeService { service_id: "svc-1".into(), hostname: "h1".into() }),
+            Some(ActionKind::EnableDisable),
+        );
+        assert_eq!(
+            action_to_kind(&Action::EnableComputeService { service_id: "svc-1".into(), hostname: "h1".into() }),
+            Some(ActionKind::EnableDisable),
+        );
         // FetchMigrationProgress is read-only
         assert_eq!(
             action_to_kind(&Action::FetchMigrationProgress { server_id: "s1".into() }),

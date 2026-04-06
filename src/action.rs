@@ -163,7 +163,9 @@ mod tests {
             Action::RevertMigration { id: "s1".into() },
             Action::EvacuateServer { id: "s1".into(), params: EvacuateParams { host: Some("compute-02".into()), ..Default::default() } },
             Action::FetchMigrationProgress { server_id: "s1".into() },
+            Action::DisableComputeService { service_id: "svc-1".into(), hostname: "compute-01".into() },
+            Action::EnableComputeService { service_id: "svc-1".into(), hostname: "compute-01".into() },
         ];
-        assert_eq!(actions.len(), 6);
+        assert_eq!(actions.len(), 8);
     }
 }
