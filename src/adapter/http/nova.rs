@@ -384,11 +384,17 @@ impl NovaPort for NovaHttpAdapter {
         server_id: &str,
         params: &EvacuateParams,
     ) -> ApiResult<()> {
-        let body = serde_json::json!({
-            "evacuate": {
-                "host": params.host
-            }
-        });
+        let mut evac = serde_json::json!({});
+        if let Some(host) = &params.host {
+            evac["host"] = serde_json::json!(host);
+        }
+        if let Some(oss) = params.on_shared_storage {
+            evac["onSharedStorage"] = serde_json::json!(oss);
+        }
+        if let Some(force) = params.force {
+            evac["force"] = serde_json::json!(force);
+        }
+        let body = serde_json::json!({ "evacuate": evac });
         let req = self
             .base
             .post(&format!("/servers/{}/action", encode_param(server_id)))

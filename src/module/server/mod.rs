@@ -11,7 +11,7 @@ use crate::event::AppEvent;
 use crate::models::common::is_terminal_server_status;
 use crate::models::nova::{Flavor, Server, ServerMigration};
 use crate::module::{ConfirmHandler, PendingAction, ViewState};
-use crate::port::types::{NetworkAttachment, ServerCreateParams};
+use crate::port::types::{EvacuateParams, NetworkAttachment, ServerCreateParams};
 use crate::ui::confirm::ConfirmDialog;
 use crate::ui::form::{FormAction, FormWidget, SelectOption};
 use crate::ui::resource_list::{ResourceList, Row};
@@ -125,7 +125,10 @@ impl ServerModule {
             PendingAction::ColdMigrate { id } => Some(Action::ColdMigrateServer { id }),
             PendingAction::ConfirmMigrate { id } => Some(Action::ConfirmMigration { id }),
             PendingAction::RevertMigrate { id } => Some(Action::RevertMigration { id }),
-            PendingAction::Evacuate { id } => Some(Action::EvacuateServer { id, host: None }),
+            PendingAction::Evacuate { id } => Some(Action::EvacuateServer {
+                id,
+                params: EvacuateParams::default(),
+            }),
             _ => None,
         }
     }
@@ -1162,7 +1165,7 @@ mod tests {
     #[test]
     fn test_resolve_evacuate() {
         let action = ServerModule::resolve_action(PendingAction::Evacuate { id: "s1".into() });
-        assert!(matches!(action, Some(Action::EvacuateServer { id, host: None }) if id == "s1"));
+        assert!(matches!(action, Some(Action::EvacuateServer { id, .. }) if id == "s1"));
     }
 
     // -- set_all_tenants with admin -----------------------------------------

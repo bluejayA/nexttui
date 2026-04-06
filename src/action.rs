@@ -1,4 +1,5 @@
 use crate::models::common::Route;
+use crate::port::types::EvacuateParams;
 
 #[derive(Debug, Clone)]
 pub enum Action {
@@ -74,7 +75,7 @@ pub enum Action {
     ColdMigrateServer { id: String },
     ConfirmMigration { id: String },
     RevertMigration { id: String },
-    EvacuateServer { id: String, host: Option<String> },
+    EvacuateServer { id: String, params: EvacuateParams },
     FetchMigrationProgress { server_id: String },
 
     // All Tenants
@@ -158,7 +159,7 @@ mod tests {
             Action::ColdMigrateServer { id: "s1".into() },
             Action::ConfirmMigration { id: "s1".into() },
             Action::RevertMigration { id: "s1".into() },
-            Action::EvacuateServer { id: "s1".into(), host: Some("compute-02".into()) },
+            Action::EvacuateServer { id: "s1".into(), params: EvacuateParams { host: Some("compute-02".into()), ..Default::default() } },
             Action::FetchMigrationProgress { server_id: "s1".into() },
         ];
         assert_eq!(actions.len(), 6);

@@ -306,8 +306,7 @@ async fn handle_action(registry: &AdapterRegistry, all_tenants: &AtomicBool, act
                 Err(e) => Some(api_error("RevertMigration", e)),
             }
         }
-        Action::EvacuateServer { id, host } => {
-            let params = EvacuateParams { host };
+        Action::EvacuateServer { id, params } => {
             match registry.nova.evacuate_server(&id, &params).await {
                 Ok(()) => Some(AppEvent::ServerEvacuated { id }),
                 Err(e) => Some(api_error("EvacuateServer", e)),
@@ -796,7 +795,7 @@ mod tests {
         );
         // Evacuate should map to Evacuate
         assert_eq!(
-            action_to_kind(&Action::EvacuateServer { id: "s1".into(), host: None }),
+            action_to_kind(&Action::EvacuateServer { id: "s1".into(), params: EvacuateParams::default() }),
             Some(ActionKind::Evacuate),
         );
         // FetchMigrationProgress is read-only
