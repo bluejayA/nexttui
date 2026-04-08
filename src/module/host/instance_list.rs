@@ -299,6 +299,7 @@ mod tests {
             updated: None,
             key_name: None,
             volumes_attached: vec![],
+            security_groups: vec![],
         }
     }
 

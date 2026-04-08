@@ -34,6 +34,13 @@ pub struct Server {
     pub host: Option<String>,
     #[serde(default, rename = "os-extended-volumes:volumes_attached")]
     pub volumes_attached: Vec<AttachedVolume>,
+    #[serde(default)]
+    pub security_groups: Vec<ServerSecurityGroup>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ServerSecurityGroup {
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -183,6 +190,28 @@ mod tests {
         assert_eq!(server.flavor.vcpus, Some(2));
         assert_eq!(server.availability_zone.as_deref(), Some("nova"));
         assert_eq!(server.host.as_deref(), Some("compute-01"));
+        // security_groups defaults to empty when absent
+        assert!(server.security_groups.is_empty());
+    }
+
+    #[test]
+    fn test_server_deserialize_with_security_groups() {
+        let json = r#"{
+            "id": "srv-002",
+            "name": "web-02",
+            "status": "ACTIVE",
+            "addresses": {},
+            "flavor": {"id": "flv-1"},
+            "created": "2026-01-01T00:00:00Z",
+            "security_groups": [
+                {"name": "default"},
+                {"name": "web-sg"}
+            ]
+        }"#;
+        let server: Server = serde_json::from_str(json).unwrap();
+        assert_eq!(server.security_groups.len(), 2);
+        assert_eq!(server.security_groups[0].name, "default");
+        assert_eq!(server.security_groups[1].name, "web-sg");
     }
 
     #[test]

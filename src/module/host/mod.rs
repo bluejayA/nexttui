@@ -322,7 +322,7 @@ mod tests {
             flavor: FlavorRef { id: "f1".into(), original_name: None, vcpus: None, ram: None, disk: None },
             image: None, addresses: std::collections::HashMap::new(),
             created: "2026-01-01T00:00:00Z".into(), updated: None, key_name: None,
-            volumes_attached: vec![],
+            volumes_attached: vec![], security_groups: vec![],
         }
     }
 
