@@ -20,7 +20,7 @@ use crate::ui::form::{FormAction, FormWidget};
 use crate::ui::resource_list::{ResourceList, Row};
 use crate::ui::select_popup::{ItemHint, SelectItem, SelectPopup, SelectResult};
 
-use self::view_model::{volume_columns, volume_create_defs, volume_detail_data, volume_to_row};
+use self::view_model::{volume_columns, volume_create_defs, volume_detail_data_with_servers, volume_to_row};
 
 pub struct VolumeModule {
     view_state: ViewState,
@@ -620,7 +620,7 @@ impl Component for VolumeModule {
             }
             ViewState::Detail(id) => {
                 if let Some(vol) = self.volumes.iter().find(|v| v.id == *id) {
-                    let data = volume_detail_data(vol);
+                    let data = volume_detail_data_with_servers(vol, &self.cached_servers);
                     let mut dv = crate::ui::detail_view::DetailView::new();
                     dv.set_data(data);
                     dv.render(frame, area);

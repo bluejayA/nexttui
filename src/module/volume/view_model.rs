@@ -109,6 +109,10 @@ pub fn volume_status_display(status: &str) -> (&'static str, RowStyleHint) {
 }
 
 pub fn volume_detail_data(volume: &Volume) -> DetailData {
+    volume_detail_data_with_servers(volume, &[])
+}
+
+pub fn volume_detail_data_with_servers(volume: &Volume, cached_servers: &[crate::models::nova::Server]) -> DetailData {
     let mut sections = vec![];
 
     // Basic info
@@ -180,11 +184,18 @@ pub fn volume_detail_data(volume: &Volume) -> DetailData {
 
     // Attachments
     if !volume.attachments.is_empty() {
-        let columns = vec!["Server ID".into(), "Device".into(), "Attachment ID".into()];
+        let columns = vec!["Server".into(), "Device".into(), "Attachment ID".into()];
         let rows: Vec<Vec<String>> = volume
             .attachments
             .iter()
-            .map(|a| vec![a.server_id.clone(), a.device.clone(), a.id.clone()])
+            .map(|a| {
+                let server_label = cached_servers
+                    .iter()
+                    .find(|s| s.id == a.server_id)
+                    .map(|s| format!("{} ({})", s.name, &a.server_id[..8.min(a.server_id.len())]))
+                    .unwrap_or_else(|| a.server_id.clone());
+                vec![server_label, a.device.clone(), a.id.clone()]
+            })
             .collect();
         sections.push(DetailSection {
             name: "Attachments".into(),
