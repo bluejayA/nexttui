@@ -54,8 +54,13 @@ pub fn server_columns_full(show_tenant: bool, show_host: bool) -> Vec<ColumnDef>
         },
         ColumnDef {
             name: "Image".into(),
-            width: ColumnWidth::Percent(15),
+            width: ColumnWidth::Percent(13),
             alignment: ratatui::layout::Alignment::Left,
+        },
+        ColumnDef {
+            name: "Vol".into(),
+            width: ColumnWidth::Fixed(4),
+            alignment: ratatui::layout::Alignment::Center,
         },
     ]);
     cols
@@ -89,11 +94,18 @@ pub fn server_to_row_full(server: &Server, show_tenant: bool, show_host: bool) -
     if show_host {
         cells.push(server.host.as_deref().unwrap_or("-").to_string());
     }
+    let vol_count = server.volumes_attached.len();
+    let vol_display = if vol_count > 0 {
+        vol_count.to_string()
+    } else {
+        "-".into()
+    };
     cells.extend([
         server.status.clone(),
         ips,
         flavor_name.to_string(),
         image_name.to_string(),
+        vol_display,
     ]);
 
     Row {
@@ -461,8 +473,8 @@ mod tests {
 
     #[test]
     fn test_server_columns_count() {
-        assert_eq!(server_columns(false).len(), 6);
-        assert_eq!(server_columns(true).len(), 7);
+        assert_eq!(server_columns(false).len(), 7);
+        assert_eq!(server_columns(true).len(), 8);
         assert_eq!(server_columns(true)[2].name, "Project");
     }
 
@@ -556,14 +568,14 @@ mod tests {
     #[test]
     fn test_server_columns_with_host() {
         let cols = server_columns_full(false, true);
-        assert_eq!(cols.len(), 7); // base 6 + Host
+        assert_eq!(cols.len(), 8); // base 7 + Host
         assert_eq!(cols[2].name, "Host");
     }
 
     #[test]
     fn test_server_columns_with_tenant_and_host() {
         let cols = server_columns_full(true, true);
-        assert_eq!(cols.len(), 8); // base 6 + Project + Host
+        assert_eq!(cols.len(), 9); // base 7 + Project + Host
         assert_eq!(cols[2].name, "Project");
         assert_eq!(cols[3].name, "Host");
     }
