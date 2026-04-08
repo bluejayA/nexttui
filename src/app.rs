@@ -221,10 +221,8 @@ impl App {
                     self.input_mode = InputMode::Command;
                     return true;
                 }
-                KeyCode::Char('/') => {
-                    self.input_mode = InputMode::Search;
-                    return true;
-                }
+                // '/' search is handled by SelectPopup when open (not App-level)
+                // KeyCode::Char('/') — disabled: App-level search mode is unimplemented
                 KeyCode::Tab => {
                     // FullWidth module: Tab restores sidebar and returns to previous route
                     let full_width = self.components.get(&self.router.current())
@@ -789,10 +787,12 @@ mod tests {
     }
 
     #[test]
-    fn test_app_global_key_slash() {
+    fn test_app_global_key_slash_does_not_enter_search() {
         let mut app = make_app();
         app.handle_key(make_key(KeyCode::Char('/')));
-        assert_eq!(app.input_mode, InputMode::Search);
+        // '/' no longer activates App-level search (unimplemented)
+        // Search is handled by SelectPopup when open
+        assert_eq!(app.input_mode, InputMode::Normal);
     }
 
     #[test]
