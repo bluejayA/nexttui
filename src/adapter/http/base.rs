@@ -148,7 +148,7 @@ impl BaseHttpClient {
             403 => Err(ApiError::Forbidden(body)),
             404 => Err(ApiError::NotFound {
                 resource_type: String::new(),
-                id: String::new(),
+                id: body,
             }),
             409 => Err(ApiError::Conflict(body)),
             400 => Err(ApiError::BadRequest(body)),
