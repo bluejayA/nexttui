@@ -20,7 +20,7 @@ use crate::ui::form::{FormAction, FormWidget};
 use crate::ui::resource_list::{ResourceList, Row};
 use crate::ui::select_popup::{ItemHint, SelectItem, SelectPopup, SelectResult};
 
-use self::view_model::{volume_columns, volume_create_defs, volume_detail_data_with_servers, volume_to_row};
+use self::view_model::{volume_columns, volume_create_defs, volume_detail_data_with_servers, volume_to_row_with_servers};
 
 pub struct VolumeModule {
     view_state: ViewState,
@@ -79,7 +79,7 @@ impl VolumeModule {
     }
 
     fn rows(&self) -> Vec<Row> {
-        self.volumes.iter().map(|v| volume_to_row(v, self.all_tenants)).collect()
+        self.volumes.iter().map(|v| volume_to_row_with_servers(v, self.all_tenants, &self.cached_servers)).collect()
     }
 
     fn resolve_action(pending: PendingAction) -> Option<Action> {

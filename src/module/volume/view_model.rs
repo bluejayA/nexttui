@@ -54,6 +54,10 @@ pub fn volume_columns(show_tenant: bool) -> Vec<ColumnDef> {
 }
 
 pub fn volume_to_row(volume: &Volume, show_tenant: bool) -> Row {
+    volume_to_row_with_servers(volume, show_tenant, &[])
+}
+
+pub fn volume_to_row_with_servers(volume: &Volume, show_tenant: bool, cached_servers: &[crate::models::nova::Server]) -> Row {
     let (icon, style) = volume_status_display(&volume.status);
     let name = volume.name.as_deref().unwrap_or("-");
     let vol_type = volume.volume_type.as_deref().unwrap_or("-");
@@ -65,8 +69,12 @@ pub fn volume_to_row(volume: &Volume, show_tenant: bool) -> Row {
             .attachments
             .iter()
             .map(|a| {
-                let short_id: String = a.server_id.chars().take(8).collect();
-                format!("{short_id} ({})", a.device)
+                let server_name = cached_servers
+                    .iter()
+                    .find(|s| s.id == a.server_id)
+                    .map(|s| s.name.as_str())
+                    .unwrap_or(&a.server_id[..8.min(a.server_id.len())]);
+                format!("{server_name} ({})", a.device)
             })
             .collect::<Vec<_>>()
             .join(", ")

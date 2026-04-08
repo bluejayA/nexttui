@@ -18,7 +18,7 @@ use crate::ui::form::{FormAction, FormWidget, SelectOption};
 use crate::ui::resource_list::{ResourceList, Row};
 use crate::ui::select_popup::{ItemHint, SelectItem, SelectPopup, SelectResult};
 
-use self::view_model::{fip_columns, fip_create_defs, fip_to_row};
+use self::view_model::{fip_columns, fip_create_defs, fip_to_row_with_servers};
 
 pub struct FloatingIpModule {
     view_state: ViewState,
@@ -87,7 +87,7 @@ impl FloatingIpModule {
     }
 
     fn rows(&self) -> Vec<Row> {
-        self.floating_ips.iter().map(|f| fip_to_row(f, self.all_tenants)).collect()
+        self.floating_ips.iter().map(|f| fip_to_row_with_servers(f, self.all_tenants, &self.cached_servers, &self.cached_ports)).collect()
     }
 
     fn resolve_action(pending: PendingAction) -> Option<Action> {
