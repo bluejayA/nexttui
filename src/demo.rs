@@ -75,6 +75,7 @@ fn demo_servers() -> Vec<Server> {
             tenant_id: Some("proj-admin".into()),
             host_id: None,
             host: Some("compute-01".into()),
+            volumes_attached: vec![],
         },
         Server {
             id: "b2c3d4e5-2222-3333-4444-555566667777".into(),
@@ -96,6 +97,7 @@ fn demo_servers() -> Vec<Server> {
             tenant_id: Some("proj-admin".into()),
             host_id: None,
             host: Some("compute-02".into()),
+            volumes_attached: vec![],
         },
         Server {
             id: "c3d4e5f6-3333-4444-5555-666677778888".into(),
@@ -117,6 +119,7 @@ fn demo_servers() -> Vec<Server> {
             tenant_id: Some("proj-admin".into()),
             host_id: None,
             host: Some("compute-01".into()),
+            volumes_attached: vec![],
         },
         Server {
             id: "d4e5f6a7-4444-5555-6666-777788889999".into(),
@@ -138,6 +141,7 @@ fn demo_servers() -> Vec<Server> {
             tenant_id: Some("proj-admin".into()),
             host_id: None,
             host: Some("compute-03".into()),
+            volumes_attached: vec![],
         },
         Server {
             id: "e5f6a7b8-5555-6666-7777-888899990000".into(),
@@ -153,6 +157,7 @@ fn demo_servers() -> Vec<Server> {
             tenant_id: Some("proj-demo".into()),
             host_id: None,
             host: None,
+            volumes_attached: vec![],
         },
     ]
 }

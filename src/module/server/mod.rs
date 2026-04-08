@@ -951,7 +951,7 @@ impl Component for ServerModule {
                 if let Some(server) = self.servers.iter().find(|s| s.id == *id) {
                     let matched_flavor = self.cached_flavors.iter().find(|f| f.id == server.flavor.id);
                     let is_resize = self.resize_pending.as_ref().is_some_and(|rp| rp.server_id == *id);
-                    let data = server_detail_data_full(server, self.migration_progress_for(id), matched_flavor, is_resize);
+                    let data = server_detail_data_full(server, self.migration_progress_for(id), matched_flavor, is_resize, &self.cached_volumes);
                     let mut dv = crate::ui::detail_view::DetailView::new();
                     dv.set_data(data);
                     dv.render(frame, area);
@@ -1046,6 +1046,7 @@ mod tests {
             tenant_id: None,
             host_id: None,
             host: None,
+            volumes_attached: vec![],
         }
     }
 

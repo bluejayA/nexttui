@@ -104,7 +104,7 @@ pub fn server_to_row_full(server: &Server, show_tenant: bool, show_host: bool) -
 }
 
 pub fn server_detail_data(server: &Server) -> DetailData {
-    server_detail_data_full(server, None, None, false)
+    server_detail_data_full(server, None, None, false, &[])
 }
 
 pub fn server_detail_data_full(
@@ -112,6 +112,7 @@ pub fn server_detail_data_full(
     migration_progress: Option<&ServerMigration>,
     flavor: Option<&Flavor>,
     is_resize_pending: bool,
+    cached_volumes: &[crate::models::cinder::Volume],
 ) -> DetailData {
     let mut sections = vec![];
 
@@ -252,6 +253,41 @@ pub fn server_detail_data_full(
                 label: "Addresses".into(),
                 columns: net_columns,
                 rows: net_rows,
+            }],
+        });
+    }
+
+    // Attached Volumes
+    if !server.volumes_attached.is_empty() {
+        let vol_columns = vec!["Name".into(), "Size".into(), "Status".into(), "Device".into()];
+        let mut vol_rows = Vec::new();
+        for att_vol in &server.volumes_attached {
+            // Try to resolve volume details from cached_volumes
+            let cached = cached_volumes.iter().find(|v| v.id == att_vol.id);
+            let name = cached
+                .and_then(|v| v.name.as_deref())
+                .unwrap_or(&att_vol.id[..8]);
+            let size = cached
+                .map(|v| format!("{} GB", v.size))
+                .unwrap_or("-".into());
+            let status = cached
+                .map(|v| v.status.clone())
+                .unwrap_or("-".into());
+            let device = cached
+                .and_then(|v| {
+                    v.attachments.iter()
+                        .find(|a| a.server_id == server.id)
+                        .map(|a| a.device.clone())
+                })
+                .unwrap_or("-".into());
+            vol_rows.push(vec![name.to_string(), size, status, device]);
+        }
+        sections.push(DetailSection {
+            name: "Volumes".into(),
+            fields: vec![DetailField::NestedTable {
+                label: "Attached".into(),
+                columns: vol_columns,
+                rows: vol_rows,
             }],
         });
     }
@@ -419,6 +455,7 @@ mod tests {
             tenant_id: Some("proj-1".into()),
             host_id: None,
             host: Some("compute-01".into()),
+            volumes_attached: vec![],
         }
     }
 
@@ -543,14 +580,14 @@ mod tests {
     #[test]
     fn test_detail_verify_resize_banner() {
         let server = make_server("VERIFY_RESIZE");
-        let data = server_detail_data_full(&server, None, None, false);
+        let data = server_detail_data_full(&server, None, None, false, &[]);
         assert_eq!(data.sections[0].name, "⚠ Migration Pending");
     }
 
     #[test]
     fn test_detail_no_banner_for_active() {
         let server = make_server("ACTIVE");
-        let data = server_detail_data_full(&server, None, None, false);
+        let data = server_detail_data_full(&server, None, None, false, &[]);
         assert_ne!(data.sections[0].name, "⚠ Migration Pending");
     }
 
@@ -571,7 +608,7 @@ mod tests {
             created_at: None,
             updated_at: None,
         };
-        let data = server_detail_data_full(&server, Some(&mig), None, false);
+        let data = server_detail_data_full(&server, Some(&mig), None, false, &[]);
         let mig_section = data.sections.iter().find(|s| s.name == "Migration Progress");
         assert!(mig_section.is_some());
         let fields = &mig_section.unwrap().fields;
@@ -582,7 +619,7 @@ mod tests {
     #[test]
     fn test_detail_no_migration_progress_without_data() {
         let server = make_server("ACTIVE");
-        let data = server_detail_data_full(&server, None, None, false);
+        let data = server_detail_data_full(&server, None, None, false, &[]);
         let mig_section = data.sections.iter().find(|s| s.name == "Migration Progress");
         assert!(mig_section.is_none());
     }
@@ -621,7 +658,7 @@ mod tests {
             created_at: None,
             updated_at: None,
         };
-        let data = server_detail_data_full(&server, Some(&mig), None, false);
+        let data = server_detail_data_full(&server, Some(&mig), None, false, &[]);
         let mig_section = data.sections.iter().find(|s| s.name == "Migration Progress").unwrap();
         // Status, Source, Dest, Memory = 4 fields (no Disk)
         assert_eq!(mig_section.fields.len(), 4);
@@ -630,7 +667,7 @@ mod tests {
     #[test]
     fn test_detail_verify_resize_banner_migration() {
         let server = make_server("VERIFY_RESIZE");
-        let data = server_detail_data_full(&server, None, None, false);
+        let data = server_detail_data_full(&server, None, None, false, &[]);
         let banner = &data.sections[0];
         assert_eq!(banner.name, "⚠ Migration Pending");
         if let DetailField::KeyValue { value, style, .. } = &banner.fields[0] {
@@ -644,7 +681,7 @@ mod tests {
     #[test]
     fn test_detail_verify_resize_banner_resize() {
         let server = make_server("VERIFY_RESIZE");
-        let data = server_detail_data_full(&server, None, None, true);
+        let data = server_detail_data_full(&server, None, None, true, &[]);
         let banner = &data.sections[0];
         assert_eq!(banner.name, "⚠ Resize Pending");
         if let DetailField::KeyValue { value, style, .. } = &banner.fields[0] {

@@ -540,6 +540,7 @@ mod tests {
             tenant_id: None,
             host_id: None,
             host: None,
+            volumes_attached: vec![],
         }
     }
 
