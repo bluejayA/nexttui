@@ -12,6 +12,7 @@ use crate::background::BackgroundTracker;
 use crate::component::{Component, InputMode, LayoutHint};
 use crate::config::Config;
 use crate::event::AppEvent;
+use crate::infra::audit::{AuditEntry, AuditLogger, AuditResult};
 use crate::infra::rbac::{ActionKind, RbacGuard};
 use crate::models::common::Route;
 use crate::router::Router;
@@ -53,11 +54,13 @@ pub struct App {
     activity_log: ActivityLog,
     activity_popup: ActivityLogPopup,
     show_activity_log: bool,
+    audit_logger: Option<AuditLogger>,
 }
 
 impl App {
     pub fn new(config: Config, action_tx: mpsc::UnboundedSender<Action>) -> Self {
         let tick_rate = std::time::Duration::from_millis(config.app_config().tick_rate_ms);
+        let audit_logger = Self::init_audit_logger();
         Self {
             should_quit: false,
             input_mode: InputMode::Normal,
@@ -79,6 +82,7 @@ impl App {
             activity_log: ActivityLog::new(),
             activity_popup: ActivityLogPopup::new(),
             show_activity_log: false,
+            audit_logger,
         }
     }
 
@@ -90,6 +94,7 @@ impl App {
     ) -> (Self, Vec<Action>) {
         let parts = registry.into_parts();
         let tick_rate = std::time::Duration::from_millis(config.app_config().tick_rate_ms);
+        let audit_logger = Self::init_audit_logger();
         let mut app = Self {
             should_quit: false,
             input_mode: InputMode::Normal,
@@ -111,6 +116,7 @@ impl App {
             activity_log: ActivityLog::new(),
             activity_popup: ActivityLogPopup::new(),
             show_activity_log: false,
+            audit_logger,
         };
         // Store sidebar items for number-key navigation
         app.sidebar.sync_active(&Route::Servers, false);
@@ -134,6 +140,12 @@ impl App {
     #[cfg(test)]
     pub fn register_component(&mut self, route: Route, component: Box<dyn Component>) {
         self.components.insert(route, component);
+    }
+
+    /// Inject an audit logger for testing.
+    #[cfg(test)]
+    pub fn set_audit_logger(&mut self, logger: AuditLogger) {
+        self.audit_logger = Some(logger);
     }
 
     /// Handle key input. Returns true if a re-render is needed.
@@ -444,6 +456,7 @@ impl App {
         }
 
         self.generate_toast(&event);
+        self.record_audit(&event);
         for component in self.components.values_mut() {
             component.handle_event(&event);
         }
@@ -490,6 +503,149 @@ impl App {
             Action::RevertResize { .. } => Some("Reverting resize...".into()),
             _ => None,
         }
+    }
+
+    /// Initialize audit logger. Returns None on failure (non-fatal).
+    fn init_audit_logger() -> Option<AuditLogger> {
+        #[cfg(test)]
+        {
+            // In tests, do not create audit logger by default
+            None
+        }
+        #[cfg(not(test))]
+        {
+            let path = dirs::config_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from(".config"))
+                .join("nexttui")
+                .join("audit.log");
+            match AuditLogger::new(path) {
+                Ok(logger) => Some(logger),
+                Err(e) => {
+                    tracing::warn!("Failed to initialize audit logger: {e}");
+                    None
+                }
+            }
+        }
+    }
+
+    /// Record a CUD event to the audit log. Errors are logged as warnings, never propagated.
+    fn record_audit(&self, event: &AppEvent) {
+        let Some(ref logger) = self.audit_logger else {
+            return;
+        };
+        let Some(entry) = self.build_audit_entry(event) else {
+            return;
+        };
+        if let Err(e) = logger.log_entry(entry) {
+            tracing::warn!("Failed to write audit log: {e}");
+        }
+        if let Err(e) = logger.rotate_if_needed() {
+            tracing::warn!("Failed to rotate audit log: {e}");
+        }
+    }
+
+    /// Map an AppEvent to an AuditEntry. Returns None for non-auditable events.
+    fn build_audit_entry(&self, event: &AppEvent) -> Option<AuditEntry> {
+        let cloud = self.config.active_cloud_name().to_string();
+        let user = self
+            .config
+            .active_cloud_config()
+            .auth
+            .username
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string());
+        let project = self.rbac.project_id();
+        let timestamp = chrono::Local::now().to_rfc3339();
+
+        let (action, resource_type, resource_id, resource_name, result) = match event {
+            // Server CUD
+            AppEvent::ServerCreated(s) => ("CreateServer", "server", s.id.clone(), Some(s.name.clone()), AuditResult::Success),
+            AppEvent::ServerDeleted { id, name } => ("DeleteServer", "server", id.clone(), Some(name.clone()), AuditResult::Success),
+            AppEvent::ServerRebooted { id } => ("RebootServer", "server", id.clone(), None, AuditResult::Success),
+            AppEvent::ServerStarted { id } => ("StartServer", "server", id.clone(), None, AuditResult::Success),
+            AppEvent::ServerStopped { id } => ("StopServer", "server", id.clone(), None, AuditResult::Success),
+            AppEvent::ServerSnapshotCreated { server_id, .. } => ("CreateSnapshot", "server", server_id.clone(), None, AuditResult::Success),
+            AppEvent::ServerResized { id } => ("ResizeServer", "server", id.clone(), None, AuditResult::Success),
+            AppEvent::ServerLiveMigrated { id } => ("LiveMigrate", "server", id.clone(), None, AuditResult::Success),
+            AppEvent::ServerColdMigrated { id } => ("ColdMigrate", "server", id.clone(), None, AuditResult::Success),
+            AppEvent::ServerEvacuated { id } => ("Evacuate", "server", id.clone(), None, AuditResult::Success),
+
+            // Volume CUD
+            AppEvent::VolumeCreated(v) => ("CreateVolume", "volume", v.id.clone(), v.name.clone(), AuditResult::Success),
+            AppEvent::VolumeDeleted { id } => ("DeleteVolume", "volume", id.clone(), None, AuditResult::Success),
+            AppEvent::VolumeExtended { id } => ("ExtendVolume", "volume", id.clone(), None, AuditResult::Success),
+            AppEvent::VolumeAttached { volume_id, server_id: _ } => ("AttachVolume", "volume", volume_id.clone(), None, AuditResult::Success),
+            AppEvent::VolumeDetached { volume_id } => ("DetachVolume", "volume", volume_id.clone(), None, AuditResult::Success),
+            AppEvent::VolumeForceDetached { volume_id } => ("ForceDetach", "volume", volume_id.clone(), None, AuditResult::Success),
+            AppEvent::VolumeStateReset { volume_id } => ("ResetState", "volume", volume_id.clone(), None, AuditResult::Success),
+
+            // Floating IP CUD
+            AppEvent::FloatingIpCreated(f) => ("CreateFloatingIp", "floatingip", f.id.clone(), Some(f.floating_ip_address.clone()), AuditResult::Success),
+            AppEvent::FloatingIpDeleted { id } => ("DeleteFloatingIp", "floatingip", id.clone(), None, AuditResult::Success),
+            AppEvent::FloatingIpAssociated(f) => ("AssociateFloatingIp", "floatingip", f.id.clone(), Some(f.floating_ip_address.clone()), AuditResult::Success),
+            AppEvent::FloatingIpDisassociated(f) => ("DisassociateFloatingIp", "floatingip", f.id.clone(), Some(f.floating_ip_address.clone()), AuditResult::Success),
+
+            // Image CUD
+            AppEvent::ImageCreated(i) => ("CreateImage", "image", i.id.clone(), Some(i.name.clone()), AuditResult::Success),
+            AppEvent::ImageDeleted { id } => ("DeleteImage", "image", id.clone(), None, AuditResult::Success),
+
+            // Network CUD
+            AppEvent::NetworkCreated(n) => ("CreateNetwork", "network", n.id.clone(), Some(n.name.clone()), AuditResult::Success),
+
+            // Security Group CUD
+            AppEvent::SecurityGroupCreated(sg) => ("CreateSecurityGroup", "securitygroup", sg.id.clone(), Some(sg.name.clone()), AuditResult::Success),
+            AppEvent::SecurityGroupDeleted { id } => ("DeleteSecurityGroup", "securitygroup", id.clone(), None, AuditResult::Success),
+            AppEvent::SecurityGroupRuleCreated(r) => ("CreateSGRule", "sgRule", r.id.clone(), None, AuditResult::Success),
+            AppEvent::SecurityGroupRuleDeleted { rule_id } => ("DeleteSGRule", "sgRule", rule_id.clone(), None, AuditResult::Success),
+
+            // Snapshot CUD
+            AppEvent::SnapshotCreated(s) => ("CreateSnapshot", "snapshot", s.id.clone(), s.name.clone(), AuditResult::Success),
+            AppEvent::SnapshotDeleted { id } => ("DeleteSnapshot", "snapshot", id.clone(), None, AuditResult::Success),
+
+            // Keystone CUD
+            AppEvent::ProjectCreated(p) => ("CreateProject", "project", p.id.clone(), Some(p.name.clone()), AuditResult::Success),
+            AppEvent::ProjectDeleted { id } => ("DeleteProject", "project", id.clone(), None, AuditResult::Success),
+            AppEvent::UserCreated(u) => ("CreateUser", "user", u.id.clone(), Some(u.name.clone()), AuditResult::Success),
+            AppEvent::UserDeleted { id } => ("DeleteUser", "user", id.clone(), None, AuditResult::Success),
+
+            // Errors
+            AppEvent::ApiError { operation, message } => ("ApiError", "error", String::new(), Some(operation.clone()), AuditResult::Failed(message.clone())),
+            AppEvent::PermissionDenied { operation } => ("PermissionDenied", "permission", String::new(), Some(operation.clone()), AuditResult::Failed(format!("Permission denied: {operation}"))),
+            AppEvent::AuthFailed(msg) => ("AuthFailed", "auth", String::new(), None, AuditResult::Failed(msg.clone())),
+
+            // Compute service toggle
+            AppEvent::ComputeServiceToggled { hostname, enabled } => {
+                let detail = if *enabled { "enabled" } else { "disabled" };
+                return Some(AuditEntry {
+                    timestamp,
+                    cloud,
+                    user,
+                    project,
+                    action: "ToggleService".to_string(),
+                    resource_type: "service".to_string(),
+                    resource_id: hostname.clone(),
+                    resource_name: Some(hostname.clone()),
+                    details: Some(serde_json::json!({ "enabled": *enabled, "state": detail })),
+                    result: AuditResult::Success,
+                });
+            }
+
+            // Non-auditable events (data loads, system, polling, etc.)
+            _ => return None,
+        };
+
+        Some(AuditEntry {
+            timestamp,
+            cloud,
+            user,
+            project,
+            action: action.to_string(),
+            resource_type: resource_type.to_string(),
+            resource_id,
+            resource_name,
+            details: None,
+            result,
+        })
     }
 
     fn truncate_name(name: &str, max_len: usize) -> &str {
@@ -1298,6 +1454,277 @@ mod tests {
         // Opening popup marks all read
         app.handle_key(make_key_with_modifiers(KeyCode::Char('!'), KeyModifiers::SHIFT));
         assert_eq!(app.activity_log.unread_error_count(), 0);
+    }
+
+    // --- Audit Logger integration ---
+
+    fn make_app_with_audit() -> (App, tempfile::TempDir) {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let config = test_config();
+        let mut app = App::new(config, tx);
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("audit.log");
+        let logger = crate::infra::audit::AuditLogger::new(path).unwrap();
+        app.set_audit_logger(logger);
+        (app, dir)
+    }
+
+    fn read_audit_lines(dir: &tempfile::TempDir) -> Vec<serde_json::Value> {
+        let path = dir.path().join("audit.log");
+        let content = std::fs::read_to_string(path).unwrap_or_default();
+        content
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn test_audit_server_created() {
+        let (mut app, dir) = make_app_with_audit();
+        let server: crate::models::nova::Server = serde_json::from_str(r#"{
+            "id": "s1", "name": "web-01", "status": "ACTIVE",
+            "addresses": {}, "flavor": {"id": "f1"}, "created": "2026-01-01"
+        }"#).unwrap();
+        app.handle_event(AppEvent::ServerCreated(server));
+        let lines = read_audit_lines(&dir);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0]["action"], "CreateServer");
+        assert_eq!(lines[0]["resource_type"], "server");
+        assert_eq!(lines[0]["resource_id"], "s1");
+        assert_eq!(lines[0]["resource_name"], "web-01");
+        assert_eq!(lines[0]["result"], "success");
+    }
+
+    #[test]
+    fn test_audit_server_deleted() {
+        let (mut app, dir) = make_app_with_audit();
+        app.handle_event(AppEvent::ServerDeleted { id: "s1".into(), name: "web-01".into() });
+        let lines = read_audit_lines(&dir);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0]["action"], "DeleteServer");
+        assert_eq!(lines[0]["resource_id"], "s1");
+        assert_eq!(lines[0]["resource_name"], "web-01");
+    }
+
+    #[test]
+    fn test_audit_volume_created() {
+        let (mut app, dir) = make_app_with_audit();
+        let volume: crate::models::cinder::Volume = serde_json::from_str(r#"{
+            "id": "v1", "name": "data-vol", "status": "available", "size": 100
+        }"#).unwrap();
+        app.handle_event(AppEvent::VolumeCreated(volume));
+        let lines = read_audit_lines(&dir);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0]["action"], "CreateVolume");
+        assert_eq!(lines[0]["resource_type"], "volume");
+        assert_eq!(lines[0]["resource_id"], "v1");
+        assert_eq!(lines[0]["resource_name"], "data-vol");
+    }
+
+    #[test]
+    fn test_audit_api_error() {
+        let (mut app, dir) = make_app_with_audit();
+        app.handle_event(AppEvent::ApiError {
+            operation: "CreateServer".into(),
+            message: "quota exceeded".into(),
+        });
+        let lines = read_audit_lines(&dir);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0]["action"], "ApiError");
+        assert_eq!(lines[0]["resource_type"], "error");
+        let result = &lines[0]["result"];
+        assert!(result.is_object() || result.as_str().is_some(),
+            "result should indicate failure");
+    }
+
+    #[test]
+    fn test_audit_permission_denied() {
+        let (mut app, dir) = make_app_with_audit();
+        app.handle_event(AppEvent::PermissionDenied { operation: "DeleteServer".into() });
+        let lines = read_audit_lines(&dir);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0]["action"], "PermissionDenied");
+        assert_eq!(lines[0]["resource_type"], "permission");
+    }
+
+    #[test]
+    fn test_audit_auth_failed() {
+        let (mut app, dir) = make_app_with_audit();
+        app.handle_event(AppEvent::AuthFailed("expired token".into()));
+        let lines = read_audit_lines(&dir);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0]["action"], "AuthFailed");
+        assert_eq!(lines[0]["resource_type"], "auth");
+    }
+
+    #[test]
+    fn test_audit_skips_data_loaded_events() {
+        let (mut app, dir) = make_app_with_audit();
+        app.handle_event(AppEvent::ServersLoaded(vec![]));
+        app.handle_event(AppEvent::VolumesLoaded(vec![]));
+        app.handle_event(AppEvent::ImagesLoaded(vec![]));
+        let lines = read_audit_lines(&dir);
+        assert!(lines.is_empty(), "data-load events should not be audited");
+    }
+
+    #[test]
+    fn test_audit_floating_ip_created() {
+        use crate::models::neutron::FloatingIp;
+        let (mut app, dir) = make_app_with_audit();
+        let fip = FloatingIp {
+            id: "fip-1".into(),
+            floating_ip_address: "203.0.113.10".into(),
+            status: "ACTIVE".into(),
+            port_id: None,
+            floating_network_id: "ext-1".into(),
+            fixed_ip_address: None,
+            router_id: None,
+            tenant_id: None,
+        };
+        app.handle_event(AppEvent::FloatingIpCreated(fip));
+        let lines = read_audit_lines(&dir);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0]["action"], "CreateFloatingIp");
+        assert_eq!(lines[0]["resource_type"], "floatingip");
+        assert_eq!(lines[0]["resource_id"], "fip-1");
+    }
+
+    #[test]
+    fn test_audit_security_group_deleted() {
+        let (mut app, dir) = make_app_with_audit();
+        app.handle_event(AppEvent::SecurityGroupDeleted { id: "sg-1".into() });
+        let lines = read_audit_lines(&dir);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0]["action"], "DeleteSecurityGroup");
+        assert_eq!(lines[0]["resource_type"], "securitygroup");
+    }
+
+    #[test]
+    fn test_audit_multiple_events_produce_multiple_lines() {
+        let (mut app, dir) = make_app_with_audit();
+        app.handle_event(AppEvent::ServerRebooted { id: "s1".into() });
+        app.handle_event(AppEvent::ServerStarted { id: "s2".into() });
+        app.handle_event(AppEvent::ServerStopped { id: "s3".into() });
+        let lines = read_audit_lines(&dir);
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0]["action"], "RebootServer");
+        assert_eq!(lines[1]["action"], "StartServer");
+        assert_eq!(lines[2]["action"], "StopServer");
+    }
+
+    #[test]
+    fn test_audit_contains_cloud_and_user() {
+        let (mut app, dir) = make_app_with_audit();
+        app.handle_event(AppEvent::ServerRebooted { id: "s1".into() });
+        let lines = read_audit_lines(&dir);
+        assert_eq!(lines.len(), 1);
+        // Cloud name comes from test_config (cloud name "test")
+        assert_eq!(lines[0]["cloud"], "test");
+        // User comes from test_config (username "admin")
+        assert_eq!(lines[0]["user"], "admin");
+    }
+
+    #[test]
+    fn test_audit_no_logger_does_not_panic() {
+        // App without audit logger (default in tests)
+        let mut app = make_app();
+        // Should not panic even without audit logger
+        app.handle_event(AppEvent::ServerRebooted { id: "s1".into() });
+        app.handle_event(AppEvent::ApiError { operation: "op".into(), message: "err".into() });
+    }
+
+    #[test]
+    fn test_audit_volume_attach_detach() {
+        let (mut app, dir) = make_app_with_audit();
+        app.handle_event(AppEvent::VolumeAttached { volume_id: "v1".into(), server_id: "s1".into() });
+        app.handle_event(AppEvent::VolumeDetached { volume_id: "v2".into() });
+        app.handle_event(AppEvent::VolumeForceDetached { volume_id: "v3".into() });
+        app.handle_event(AppEvent::VolumeStateReset { volume_id: "v4".into() });
+        let lines = read_audit_lines(&dir);
+        assert_eq!(lines.len(), 4);
+        assert_eq!(lines[0]["action"], "AttachVolume");
+        assert_eq!(lines[1]["action"], "DetachVolume");
+        assert_eq!(lines[2]["action"], "ForceDetach");
+        assert_eq!(lines[3]["action"], "ResetState");
+    }
+
+    #[test]
+    fn test_audit_migration_events() {
+        let (mut app, dir) = make_app_with_audit();
+        app.handle_event(AppEvent::ServerLiveMigrated { id: "s1".into() });
+        app.handle_event(AppEvent::ServerColdMigrated { id: "s2".into() });
+        app.handle_event(AppEvent::ServerEvacuated { id: "s3".into() });
+        let lines = read_audit_lines(&dir);
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0]["action"], "LiveMigrate");
+        assert_eq!(lines[1]["action"], "ColdMigrate");
+        assert_eq!(lines[2]["action"], "Evacuate");
+    }
+
+    #[test]
+    fn test_audit_keystone_events() {
+        let (mut app, dir) = make_app_with_audit();
+        let project: crate::models::keystone::Project = serde_json::from_str(r#"{
+            "id": "p1", "name": "infra", "domain_id": "default", "enabled": true
+        }"#).unwrap();
+        app.handle_event(AppEvent::ProjectCreated(project));
+        app.handle_event(AppEvent::ProjectDeleted { id: "p2".into() });
+        let user: crate::models::keystone::User = serde_json::from_str(r#"{
+            "id": "u1", "name": "jay", "domain_id": "default", "enabled": true
+        }"#).unwrap();
+        app.handle_event(AppEvent::UserCreated(user));
+        app.handle_event(AppEvent::UserDeleted { id: "u2".into() });
+        let lines = read_audit_lines(&dir);
+        assert_eq!(lines.len(), 4);
+        assert_eq!(lines[0]["action"], "CreateProject");
+        assert_eq!(lines[1]["action"], "DeleteProject");
+        assert_eq!(lines[2]["action"], "CreateUser");
+        assert_eq!(lines[3]["action"], "DeleteUser");
+    }
+
+    #[test]
+    fn test_audit_image_snapshot_events() {
+        let (mut app, dir) = make_app_with_audit();
+        let image: crate::models::glance::Image = serde_json::from_str(r#"{
+            "id": "i1", "name": "ubuntu-22", "status": "active", "size": 1000,
+            "min_disk": 0, "min_ram": 0, "visibility": "public"
+        }"#).unwrap();
+        app.handle_event(AppEvent::ImageCreated(image));
+        app.handle_event(AppEvent::ImageDeleted { id: "i2".into() });
+        let lines = read_audit_lines(&dir);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0]["action"], "CreateImage");
+        assert_eq!(lines[1]["action"], "DeleteImage");
+    }
+
+    #[test]
+    fn test_audit_does_not_break_toast_generation() {
+        let (mut app, _dir) = make_app_with_audit();
+        let server: crate::models::nova::Server = serde_json::from_str(r#"{
+            "id": "s1", "name": "web-01", "status": "ACTIVE",
+            "addresses": {}, "flavor": {"id": "f1"}, "created": "2026-01-01"
+        }"#).unwrap();
+        app.handle_event(AppEvent::ServerCreated(server));
+        // Toast should still be generated
+        let toasts = app.background_tracker().active_toasts();
+        assert_eq!(toasts.len(), 1);
+        assert!(toasts[0].message.contains("web-01"));
+    }
+
+    #[test]
+    fn test_audit_compute_service_toggled() {
+        let (mut app, dir) = make_app_with_audit();
+        app.handle_event(AppEvent::ComputeServiceToggled {
+            hostname: "compute-01".into(),
+            enabled: false,
+        });
+        let lines = read_audit_lines(&dir);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0]["action"], "ToggleService");
+        assert_eq!(lines[0]["resource_type"], "service");
+        assert_eq!(lines[0]["resource_id"], "compute-01");
+        assert_eq!(lines[0]["details"]["enabled"], false);
     }
 
     #[test]
