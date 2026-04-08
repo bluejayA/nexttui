@@ -399,13 +399,22 @@ impl Component for FloatingIpModule {
             AppEvent::FloatingIpCreated(_) | AppEvent::FloatingIpDeleted { .. } => {
                 let _ = self.action_tx.send(Action::FetchFloatingIps);
             }
-            AppEvent::FloatingIpAssociated(_) => {
+            AppEvent::FloatingIpAssociated(fip) => {
+                // Update local state immediately for visual feedback
+                if let Some(local_fip) = self.floating_ips.iter_mut().find(|f| f.id == fip.id) {
+                    local_fip.port_id = fip.port_id.clone();
+                    local_fip.fixed_ip_address = fip.fixed_ip_address.clone();
+                    local_fip.status = "ACTIVE".into();
+                }
                 let _ = self.action_tx.send(Action::FetchFloatingIps);
             }
-            AppEvent::FloatingIpDisassociated(_) => {
-                let _ = self.action_tx.send(Action::ShowToast {
-                    message: "Floating IP disassociated. Press 'a' to re-associate.".into(),
-                });
+            AppEvent::FloatingIpDisassociated(fip) => {
+                // Update local state immediately for visual feedback
+                if let Some(local_fip) = self.floating_ips.iter_mut().find(|f| f.id == fip.id) {
+                    local_fip.port_id = None;
+                    local_fip.fixed_ip_address = None;
+                    local_fip.status = "DOWN".into();
+                }
                 let _ = self.action_tx.send(Action::FetchFloatingIps);
             }
             AppEvent::ServersLoaded(servers) => {
@@ -969,14 +978,20 @@ mod tests {
     }
 
     #[test]
-    fn test_handle_event_fip_disassociated_triggers_toast_and_refresh() {
+    fn test_handle_event_fip_disassociated_updates_local_and_refreshes() {
         let (mut module, mut rx) = setup();
-        let fip = make_fip("fip-1", "203.0.113.10", "DOWN");
-        module.handle_event(&AppEvent::FloatingIpDisassociated(fip));
-        let action1 = rx.try_recv().unwrap();
-        assert!(matches!(action1, Action::ShowToast { message } if message.contains("re-associate")));
-        let action2 = rx.try_recv().unwrap();
-        assert!(matches!(action2, Action::FetchFloatingIps));
+        // Add a FIP to local state first
+        let fip = make_fip_associated("fip-1", "203.0.113.10", "port-1");
+        module.floating_ips.push(fip.clone());
+        // Disassociate event
+        let disassociated_fip = make_fip("fip-1", "203.0.113.10", "DOWN");
+        module.handle_event(&AppEvent::FloatingIpDisassociated(disassociated_fip));
+        // Local state should be updated immediately
+        assert!(module.floating_ips[0].port_id.is_none());
+        assert_eq!(module.floating_ips[0].status, "DOWN");
+        // Should trigger refresh
+        let action = rx.try_recv().unwrap();
+        assert!(matches!(action, Action::FetchFloatingIps));
     }
 
     #[test]

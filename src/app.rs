@@ -555,7 +555,7 @@ impl App {
             AppEvent::VolumeStateReset { volume_id } => (format!("Volume {volume_id} state reset to available"), ToastLevel::Success, "ResetVolumeState".into(), volume_id.clone()),
             // Floating IP Associate/Disassociate
             AppEvent::FloatingIpAssociated(f) => (format!("Floating IP {} associated successfully", f.floating_ip_address), ToastLevel::Success, "AssociateFloatingIp".into(), f.floating_ip_address.clone()),
-            AppEvent::FloatingIpDisassociated(f) => (format!("Floating IP {} disassociated", f.floating_ip_address), ToastLevel::Success, "DisassociateFloatingIp".into(), f.floating_ip_address.clone()),
+            AppEvent::FloatingIpDisassociated(f) => (format!("FIP {} disassociated. Press 'a' to re-associate.", f.floating_ip_address), ToastLevel::Success, "DisassociateFloatingIp".into(), f.floating_ip_address.clone()),
             // Errors
             AppEvent::ApiError { operation, message } => (format!("{operation} failed: {message}"), ToastLevel::Error, operation.clone(), String::new()),
             AppEvent::AuthFailed(msg) => (format!("Auth failed: {msg}"), ToastLevel::Error, "Auth".into(), String::new()),
