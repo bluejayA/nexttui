@@ -54,6 +54,10 @@ pub fn volume_columns(show_tenant: bool) -> Vec<ColumnDef> {
 }
 
 pub fn volume_to_row(volume: &Volume, show_tenant: bool) -> Row {
+    volume_to_row_with_servers(volume, show_tenant, &[])
+}
+
+pub fn volume_to_row_with_servers(volume: &Volume, show_tenant: bool, cached_servers: &[crate::models::nova::Server]) -> Row {
     let (icon, style) = volume_status_display(&volume.status);
     let name = volume.name.as_deref().unwrap_or("-");
     let vol_type = volume.volume_type.as_deref().unwrap_or("-");
@@ -65,8 +69,12 @@ pub fn volume_to_row(volume: &Volume, show_tenant: bool) -> Row {
             .attachments
             .iter()
             .map(|a| {
-                let short_id: String = a.server_id.chars().take(8).collect();
-                format!("{short_id} ({})", a.device)
+                let server_name = cached_servers
+                    .iter()
+                    .find(|s| s.id == a.server_id)
+                    .map(|s| s.name.as_str())
+                    .unwrap_or(&a.server_id[..8.min(a.server_id.len())]);
+                format!("{server_name} ({})", a.device)
             })
             .collect::<Vec<_>>()
             .join(", ")
@@ -109,6 +117,10 @@ pub fn volume_status_display(status: &str) -> (&'static str, RowStyleHint) {
 }
 
 pub fn volume_detail_data(volume: &Volume) -> DetailData {
+    volume_detail_data_with_servers(volume, &[])
+}
+
+pub fn volume_detail_data_with_servers(volume: &Volume, cached_servers: &[crate::models::nova::Server]) -> DetailData {
     let mut sections = vec![];
 
     // Basic info
@@ -180,11 +192,18 @@ pub fn volume_detail_data(volume: &Volume) -> DetailData {
 
     // Attachments
     if !volume.attachments.is_empty() {
-        let columns = vec!["Server ID".into(), "Device".into(), "Attachment ID".into()];
+        let columns = vec!["Server Name".into(), "Server ID".into(), "Device".into(), "Attachment ID".into()];
         let rows: Vec<Vec<String>> = volume
             .attachments
             .iter()
-            .map(|a| vec![a.server_id.clone(), a.device.clone(), a.id.clone()])
+            .map(|a| {
+                let server_name = cached_servers
+                    .iter()
+                    .find(|s| s.id == a.server_id)
+                    .map(|s| s.name.clone())
+                    .unwrap_or_else(|| "-".into());
+                vec![server_name, a.server_id.clone(), a.device.clone(), a.id.clone()]
+            })
             .collect();
         sections.push(DetailSection {
             name: "Attachments".into(),

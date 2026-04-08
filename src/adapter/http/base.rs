@@ -136,19 +136,47 @@ impl BaseHttpClient {
         Ok(())
     }
 
+    /// Extract a human-readable error message from OpenStack JSON error bodies.
+    /// Handles formats: {"NeutronError": {"message": "..."}}, {"badRequest": {"message": "..."}},
+    /// {"error": {"message": "..."}}, {"itemNotFound": {"message": "..."}}, etc.
+    fn extract_error_message(body: &str) -> String {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(body) {
+            // Try common OpenStack error wrapper keys
+            for key in &["NeutronError", "badRequest", "itemNotFound", "conflictingRequest",
+                         "forbidden", "error", "computeFault"] {
+                if let Some(inner) = json.get(key) {
+                    if let Some(msg) = inner.get("message").and_then(|m| m.as_str()) {
+                        return msg.to_string();
+                    }
+                }
+            }
+            // Fallback: try any top-level object with a "message" field
+            if let Some(obj) = json.as_object() {
+                for (_k, v) in obj {
+                    if let Some(msg) = v.get("message").and_then(|m| m.as_str()) {
+                        return msg.to_string();
+                    }
+                }
+            }
+        }
+        // Not JSON or no message found — return raw body
+        body.to_string()
+    }
+
     /// Map HTTP status codes to ApiError.
     pub(crate) async fn check_status(resp: Response) -> ApiResult<Response> {
         let status = resp.status();
         if status.is_success() {
             return Ok(resp);
         }
-        let body = resp.text().await.unwrap_or_default();
+        let raw_body = resp.text().await.unwrap_or_default();
+        let body = Self::extract_error_message(&raw_body);
         match status.as_u16() {
             401 => Err(ApiError::TokenExpired),
             403 => Err(ApiError::Forbidden(body)),
             404 => Err(ApiError::NotFound {
                 resource_type: String::new(),
-                id: String::new(),
+                id: body,
             }),
             409 => Err(ApiError::Conflict(body)),
             400 => Err(ApiError::BadRequest(body)),

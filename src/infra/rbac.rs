@@ -17,6 +17,8 @@ pub enum ActionKind {
     EnableDisable,
     ManageQuota,
     ViewAllTenants,
+    Attach,
+    Detach,
 }
 
 /// Effective role derived from Keystone token roles.

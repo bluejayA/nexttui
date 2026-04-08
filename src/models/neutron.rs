@@ -63,6 +63,35 @@ pub struct FloatingIp {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct Port {
+    pub id: String,
+    pub name: Option<String>,
+    pub network_id: String,
+    pub fixed_ips: Vec<FixedIp>,
+    pub device_id: Option<String>,
+    pub device_owner: Option<String>,
+    pub status: String,
+    #[serde(default)]
+    pub tenant_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FixedIp {
+    pub subnet_id: String,
+    pub ip_address: String,
+}
+
+impl Port {
+    pub fn display_label(&self, networks: &[Network]) -> String {
+        let ip = self.fixed_ips.first().map(|f| f.ip_address.as_str()).unwrap_or("no-ip");
+        let net = networks.iter().find(|n| n.id == self.network_id);
+        let net_name = net.map(|n| n.name.as_str()).unwrap_or("unknown-net");
+        let ext_badge = if net.is_some_and(|n| n.external) { " [EXT]" } else { "" };
+        format!("{ip} on {net_name}{ext_badge}")
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct NetworkAgent {
     pub id: String,
     pub agent_type: String,
@@ -147,6 +176,107 @@ mod tests {
         assert_eq!(fip.floating_ip_address, "203.0.113.10");
         assert_eq!(fip.status, "ACTIVE");
         assert_eq!(fip.port_id.as_deref(), Some("port-123"));
+    }
+
+    #[test]
+    fn test_port_deserialize() {
+        let json = r#"{
+            "id": "port-001",
+            "name": "my-port",
+            "network_id": "net-001",
+            "fixed_ips": [
+                {"subnet_id": "sub-1", "ip_address": "10.0.0.5"}
+            ],
+            "device_id": "srv-1",
+            "device_owner": "compute:az1",
+            "status": "ACTIVE",
+            "tenant_id": "proj-1"
+        }"#;
+        let port: Port = serde_json::from_str(json).unwrap();
+        assert_eq!(port.id, "port-001");
+        assert_eq!(port.name.as_deref(), Some("my-port"));
+        assert_eq!(port.network_id, "net-001");
+        assert_eq!(port.fixed_ips.len(), 1);
+        assert_eq!(port.fixed_ips[0].ip_address, "10.0.0.5");
+        assert_eq!(port.device_id.as_deref(), Some("srv-1"));
+        assert_eq!(port.status, "ACTIVE");
+    }
+
+    #[test]
+    fn test_port_display_label_with_network() {
+        let port = Port {
+            id: "port-1".into(),
+            name: None,
+            network_id: "net-1".into(),
+            fixed_ips: vec![FixedIp { subnet_id: "sub-1".into(), ip_address: "10.0.0.5".into() }],
+            device_id: None,
+            device_owner: None,
+            status: "ACTIVE".into(),
+            tenant_id: None,
+        };
+        let networks = vec![Network {
+            id: "net-1".into(),
+            name: "private-net".into(),
+            status: "ACTIVE".into(),
+            description: None,
+            admin_state_up: true,
+            external: false,
+            shared: false,
+            mtu: None,
+            port_security_enabled: None,
+            subnets: vec![],
+            provider_network_type: None,
+            provider_physical_network: None,
+            provider_segmentation_id: None,
+            tenant_id: None,
+        }];
+        assert_eq!(port.display_label(&networks), "10.0.0.5 on private-net");
+    }
+
+    #[test]
+    fn test_port_display_label_external_network() {
+        let port = Port {
+            id: "port-1".into(),
+            name: None,
+            network_id: "ext-1".into(),
+            fixed_ips: vec![FixedIp { subnet_id: "sub-1".into(), ip_address: "203.0.113.10".into() }],
+            device_id: None,
+            device_owner: None,
+            status: "ACTIVE".into(),
+            tenant_id: None,
+        };
+        let networks = vec![Network {
+            id: "ext-1".into(),
+            name: "public".into(),
+            status: "ACTIVE".into(),
+            description: None,
+            admin_state_up: true,
+            external: true,
+            shared: false,
+            mtu: None,
+            port_security_enabled: None,
+            subnets: vec![],
+            provider_network_type: None,
+            provider_physical_network: None,
+            provider_segmentation_id: None,
+            tenant_id: None,
+        }];
+        assert_eq!(port.display_label(&networks), "203.0.113.10 on public [EXT]");
+    }
+
+    #[test]
+    fn test_port_display_label_no_ip_unknown_net() {
+        let port = Port {
+            id: "port-1".into(),
+            name: None,
+            network_id: "unknown-net".into(),
+            fixed_ips: vec![],
+            device_id: None,
+            device_owner: None,
+            status: "ACTIVE".into(),
+            tenant_id: None,
+        };
+        assert_eq!(port.display_label(&[]), "no-ip on unknown-net");
     }
 
     #[test]

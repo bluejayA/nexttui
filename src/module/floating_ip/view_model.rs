@@ -29,8 +29,8 @@ pub fn fip_columns(show_tenant: bool) -> Vec<ColumnDef> {
             alignment: ratatui::layout::Alignment::Left,
         },
         ColumnDef {
-            name: "Network ID".into(),
-            width: ColumnWidth::Percent(30),
+            name: "Associated Server".into(),
+            width: ColumnWidth::Percent(20),
             alignment: ratatui::layout::Alignment::Left,
         },
     ]);
@@ -38,8 +38,38 @@ pub fn fip_columns(show_tenant: bool) -> Vec<ColumnDef> {
 }
 
 pub fn fip_to_row(fip: &FloatingIp, show_tenant: bool) -> Row {
+    fip_to_row_with_servers(fip, show_tenant, &[], &[])
+}
+
+pub fn fip_to_row_with_servers(
+    fip: &FloatingIp,
+    show_tenant: bool,
+    cached_servers: &[crate::models::nova::Server],
+    cached_ports: &[crate::models::neutron::Port],
+) -> Row {
     let (icon, style) = fip_status_display(&fip.status);
     let fixed_ip = fip.fixed_ip_address.as_deref().unwrap_or("-");
+
+    // Resolve associated server name via port_id → port.device_id → server.name
+    let associated_server = if let Some(port_id) = &fip.port_id {
+        let server_id = cached_ports
+            .iter()
+            .find(|p| p.id == *port_id)
+            .and_then(|p| p.device_id.as_deref());
+        if let Some(sid) = server_id {
+            cached_servers
+                .iter()
+                .find(|s| s.id == sid)
+                .map(|s| s.name.clone())
+                .unwrap_or_else(|| sid[..8.min(sid.len())].to_string())
+        } else {
+            // Port found but no device_id — show port_id prefix
+            port_id[..8.min(port_id.len())].to_string()
+        }
+    } else {
+        "-".to_string()
+    };
+
     let mut cells = vec![
         fip.floating_ip_address.clone(),
     ];
@@ -49,7 +79,7 @@ pub fn fip_to_row(fip: &FloatingIp, show_tenant: bool) -> Row {
     cells.extend([
         format!("{icon} {}", fip.status),
         fixed_ip.to_string(),
-        fip.floating_network_id.clone(),
+        associated_server,
     ]);
     Row {
         id: fip.id.clone(),
@@ -107,7 +137,9 @@ mod tests {
         assert_eq!(row.cells[0], "203.0.113.10");
         assert!(row.cells[1].contains("ACTIVE"));
         assert_eq!(row.cells[2], "10.0.0.5");
-        assert_eq!(row.cells[3], "ext-net-1");
+        // cells[3] = associated server (resolved from port_id → device_id → server name)
+        // With empty caches, falls back to port_id prefix
+        assert_eq!(row.cells[3], "port-1");
         assert_eq!(row.style_hint, Some(RowStyleHint::Active));
     }
 

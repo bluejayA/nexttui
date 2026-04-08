@@ -32,6 +32,15 @@ pub struct Server {
     pub host_id: Option<String>,
     #[serde(rename = "OS-EXT-SRV-ATTR:host")]
     pub host: Option<String>,
+    #[serde(default, rename = "os-extended-volumes:volumes_attached")]
+    pub volumes_attached: Vec<AttachedVolume>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AttachedVolume {
+    pub id: String,
+    #[serde(default)]
+    pub delete_on_termination: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

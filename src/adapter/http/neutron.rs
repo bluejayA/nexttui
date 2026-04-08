@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{Link, append_pagination_parts, encode_param, extract_next_marker, paginated_list};
 use crate::adapter::http::base::BaseHttpClient;
-use crate::models::neutron::{FloatingIp, Network, NetworkAgent, SecurityGroup, SecurityGroupRule};
+use crate::models::neutron::{FloatingIp, Network, NetworkAgent, Port, SecurityGroup, SecurityGroupRule};
 use crate::port::auth::AuthProvider;
 use crate::port::error::{ApiError, ApiResult};
 use crate::port::neutron::NeutronPort;
@@ -66,6 +66,11 @@ struct NeutronFloatingIpsResponse {
 #[derive(Deserialize)]
 struct NeutronFloatingIpWrapper {
     floatingip: FloatingIp,
+}
+
+#[derive(Deserialize)]
+struct NeutronPortsResponse {
+    ports: Vec<Port>,
 }
 
 #[allow(dead_code)] // Used in Unit 14
@@ -481,6 +486,15 @@ impl NeutronPort for NeutronHttpAdapter {
             .json(&body);
         let resp: NeutronFloatingIpWrapper = self.base.send_json(req).await?;
         Ok(resp.floatingip)
+    }
+
+    // -- Ports --
+
+    async fn list_ports(&self, device_id: &str) -> ApiResult<Vec<Port>> {
+        let path = format!("/v2.0/ports?device_id={}", encode_param(device_id));
+        let req = self.base.get(&path).await?;
+        let resp: NeutronPortsResponse = self.base.send_json(req).await?;
+        Ok(resp.ports)
     }
 
     // -- Network Agents (stubs — Unit 14) --

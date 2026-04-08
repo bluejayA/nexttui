@@ -2,7 +2,7 @@ use crate::models::{
     cinder::{Volume, VolumeSnapshot},
     glance::Image,
     keystone::{Project, User},
-    neutron::{FloatingIp, Network, NetworkAgent, SecurityGroup},
+    neutron::{FloatingIp, Network, NetworkAgent, Port, SecurityGroup},
     nova::{Aggregate, ComputeService, Flavor, Hypervisor, Server, ServerMigration},
 };
 
@@ -70,6 +70,19 @@ pub enum AppEvent {
     ComputeServiceToggled { hostname: String, enabled: bool },
     MigrationProgressLoaded { server_id: String, migration: ServerMigration },
     MigrationPollingStopped { server_id: String },
+
+    // Volume Attach/Detach results
+    VolumeAttached { volume_id: String, server_id: String },
+    VolumeDetached { volume_id: String },
+    VolumeForceDetached { volume_id: String },
+    VolumeStateReset { volume_id: String },
+
+    // Floating IP Associate/Disassociate results
+    FloatingIpAssociated(FloatingIp),
+    FloatingIpDisassociated(FloatingIp),
+
+    // Ports
+    PortsLoaded { server_id: String, ports: Vec<Port> },
 
     // Server status polling (resize / cold-migrate state transitions)
     ServerStatusPolled { server: Server },
@@ -197,6 +210,7 @@ mod tests {
             tenant_id: None,
             host_id: None,
             host: None,
+            volumes_attached: vec![],
         };
         let event = AppEvent::ServerStatusPolled { server };
         match event {
@@ -205,6 +219,51 @@ mod tests {
             }
             _ => panic!("expected ServerStatusPolled"),
         }
+    }
+
+    #[test]
+    fn test_volume_fip_event_variants_exist() {
+        use crate::models::neutron::{FloatingIp, Port, FixedIp};
+        let events: Vec<AppEvent> = vec![
+            AppEvent::VolumeAttached { volume_id: "v1".into(), server_id: "s1".into() },
+            AppEvent::VolumeDetached { volume_id: "v1".into() },
+            AppEvent::VolumeForceDetached { volume_id: "v1".into() },
+            AppEvent::VolumeStateReset { volume_id: "v1".into() },
+            AppEvent::FloatingIpAssociated(FloatingIp {
+                id: "fip-1".into(),
+                floating_ip_address: "203.0.113.10".into(),
+                status: "ACTIVE".into(),
+                port_id: Some("port-1".into()),
+                floating_network_id: "ext-1".into(),
+                fixed_ip_address: None,
+                router_id: None,
+                tenant_id: None,
+            }),
+            AppEvent::FloatingIpDisassociated(FloatingIp {
+                id: "fip-1".into(),
+                floating_ip_address: "203.0.113.10".into(),
+                status: "DOWN".into(),
+                port_id: None,
+                floating_network_id: "ext-1".into(),
+                fixed_ip_address: None,
+                router_id: None,
+                tenant_id: None,
+            }),
+            AppEvent::PortsLoaded {
+                server_id: "s1".into(),
+                ports: vec![Port {
+                    id: "port-1".into(),
+                    name: None,
+                    network_id: "net-1".into(),
+                    fixed_ips: vec![FixedIp { subnet_id: "sub-1".into(), ip_address: "10.0.0.5".into() }],
+                    device_id: Some("s1".into()),
+                    device_owner: Some("compute:az1".into()),
+                    status: "ACTIVE".into(),
+                    tenant_id: None,
+                }],
+            },
+        ];
+        assert_eq!(events.len(), 7);
     }
 
     #[test]

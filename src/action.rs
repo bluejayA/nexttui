@@ -80,8 +80,24 @@ pub enum Action {
     EnableComputeService { service_id: String, hostname: String },
     FetchMigrationProgress { server_id: String },
 
+    // Volume Attach/Detach
+    AttachVolume { volume_id: String, server_id: String, device: Option<String> },
+    DetachVolume { volume_id: String, server_id: String, attachment_id: String },
+    ForceDetachVolume { volume_id: String, server_id: String, attachment_id: String },
+    ForceResetVolumeState { volume_id: String, target_state: String },
+
+    // Floating IP Associate/Disassociate
+    AssociateFloatingIp { fip_id: String, port_id: String },
+    DisassociateFloatingIp { fip_id: String },
+
+    // Ports
+    FetchPorts { server_id: String },
+
     // All Tenants
     ToggleAllTenants,
+
+    // Toast (module-initiated hints)
+    ShowToast { message: String },
 
     // System
     RefreshAll,
@@ -142,6 +158,20 @@ mod tests {
             Action::Quit,
         ];
         assert!(actions.len() >= 18);
+    }
+
+    #[test]
+    fn test_volume_fip_action_variants_exist() {
+        let actions: Vec<Action> = vec![
+            Action::AttachVolume { volume_id: "v1".into(), server_id: "s1".into(), device: Some("/dev/vdb".into()) },
+            Action::DetachVolume { volume_id: "v1".into(), server_id: "s1".into(), attachment_id: "att-1".into() },
+            Action::ForceDetachVolume { volume_id: "v1".into(), server_id: "s1".into(), attachment_id: "att-1".into() },
+            Action::ForceResetVolumeState { volume_id: "v1".into(), target_state: "available".into() },
+            Action::AssociateFloatingIp { fip_id: "fip-1".into(), port_id: "port-1".into() },
+            Action::DisassociateFloatingIp { fip_id: "fip-1".into() },
+            Action::FetchPorts { server_id: "s1".into() },
+        ];
+        assert_eq!(actions.len(), 7);
     }
 
     #[test]

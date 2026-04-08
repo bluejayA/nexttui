@@ -26,6 +26,7 @@ pub trait CinderPort: Send + Sync {
         device: Option<&str>,
     ) -> ApiResult<()>;
     async fn detach_volume(&self, volume_id: &str, attachment_id: &str) -> ApiResult<()>;
+    async fn force_detach_volume(&self, volume_id: &str, attachment_id: &str) -> ApiResult<()>;
     async fn force_set_volume_state(&self, volume_id: &str, state: &str) -> ApiResult<()>;
     async fn migrate_volume(
         &self,

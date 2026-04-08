@@ -569,6 +569,46 @@ impl NovaPort for NovaHttpAdapter {
         Ok(resp.service)
     }
 
+    // -- Volume Attachments --
+
+    async fn attach_volume(
+        &self,
+        server_id: &str,
+        volume_id: &str,
+        device: Option<&str>,
+    ) -> ApiResult<()> {
+        let mut attachment = serde_json::json!({
+            "volumeId": volume_id,
+        });
+        if let Some(dev) = device {
+            attachment["device"] = serde_json::json!(dev);
+        }
+        let body = serde_json::json!({ "volumeAttachment": attachment });
+        let req = self
+            .base
+            .post(&format!(
+                "/servers/{}/os-volume_attachments",
+                encode_param(server_id)
+            ))
+            .await?
+            .json(&body);
+        // Nova returns 200 with attachment body, but we only need success/fail
+        let _resp: serde_json::Value = self.base.send_json(req).await?;
+        Ok(())
+    }
+
+    async fn detach_volume(&self, server_id: &str, volume_id: &str) -> ApiResult<()> {
+        let req = self
+            .base
+            .delete(&format!(
+                "/servers/{}/os-volume_attachments/{}",
+                encode_param(server_id),
+                encode_param(volume_id)
+            ))
+            .await?;
+        self.base.send_no_content(req).await
+    }
+
     // -- Hypervisors --
 
     async fn list_hypervisors(&self) -> ApiResult<Vec<Hypervisor>> {

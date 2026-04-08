@@ -54,8 +54,13 @@ pub fn server_columns_full(show_tenant: bool, show_host: bool) -> Vec<ColumnDef>
         },
         ColumnDef {
             name: "Image".into(),
-            width: ColumnWidth::Percent(15),
+            width: ColumnWidth::Percent(13),
             alignment: ratatui::layout::Alignment::Left,
+        },
+        ColumnDef {
+            name: "Vol".into(),
+            width: ColumnWidth::Fixed(4),
+            alignment: ratatui::layout::Alignment::Center,
         },
     ]);
     cols
@@ -89,11 +94,18 @@ pub fn server_to_row_full(server: &Server, show_tenant: bool, show_host: bool) -
     if show_host {
         cells.push(server.host.as_deref().unwrap_or("-").to_string());
     }
+    let vol_count = server.volumes_attached.len();
+    let vol_display = if vol_count > 0 {
+        vol_count.to_string()
+    } else {
+        "-".into()
+    };
     cells.extend([
         server.status.clone(),
         ips,
         flavor_name.to_string(),
         image_name.to_string(),
+        vol_display,
     ]);
 
     Row {
@@ -104,7 +116,7 @@ pub fn server_to_row_full(server: &Server, show_tenant: bool, show_host: bool) -
 }
 
 pub fn server_detail_data(server: &Server) -> DetailData {
-    server_detail_data_full(server, None, None, false)
+    server_detail_data_full(server, None, None, false, &[], &[])
 }
 
 pub fn server_detail_data_full(
@@ -112,6 +124,8 @@ pub fn server_detail_data_full(
     migration_progress: Option<&ServerMigration>,
     flavor: Option<&Flavor>,
     is_resize_pending: bool,
+    cached_volumes: &[crate::models::cinder::Volume],
+    cached_floating_ips: &[crate::models::neutron::FloatingIp],
 ) -> DetailData {
     let mut sections = vec![];
 
@@ -252,6 +266,87 @@ pub fn server_detail_data_full(
                 label: "Addresses".into(),
                 columns: net_columns,
                 rows: net_rows,
+            }],
+        });
+    }
+
+    // Floating IPs — match by floating IP address in server.addresses
+    {
+        let mut fip_fields = Vec::new();
+        // Collect floating IPs from addresses
+        let floating_addrs: Vec<&str> = server.addresses.values()
+            .flat_map(|addrs| addrs.iter())
+            .filter(|a| a.ip_type.as_deref() == Some("floating"))
+            .map(|a| a.addr.as_str())
+            .collect();
+
+        // Match against cached FIPs for full info
+        for addr in &floating_addrs {
+            if let Some(fip) = cached_floating_ips.iter().find(|f| f.floating_ip_address == *addr) {
+                fip_fields.push(DetailField::KeyValue {
+                    key: "FIP".into(),
+                    value: format!("{} → {}", fip.floating_ip_address,
+                        fip.fixed_ip_address.as_deref().unwrap_or("-")),
+                    style: Some(RowStyleHint::Active),
+                });
+                fip_fields.push(DetailField::KeyValue {
+                    key: "  ID".into(),
+                    value: fip.id.clone(),
+                    style: None,
+                });
+                fip_fields.push(DetailField::KeyValue {
+                    key: "  Status".into(),
+                    value: fip.status.clone(),
+                    style: None,
+                });
+            } else {
+                // FIP found in addresses but not in cache — show address only
+                fip_fields.push(DetailField::KeyValue {
+                    key: "FIP".into(),
+                    value: addr.to_string(),
+                    style: Some(RowStyleHint::Active),
+                });
+            }
+        }
+        if !fip_fields.is_empty() {
+            sections.push(DetailSection {
+                name: "Floating IPs".into(),
+                fields: fip_fields,
+            });
+        }
+    }
+
+    // Attached Volumes
+    if !server.volumes_attached.is_empty() {
+        let vol_columns = vec!["Name".into(), "Size".into(), "Status".into(), "Device".into()];
+        let mut vol_rows = Vec::new();
+        for att_vol in &server.volumes_attached {
+            // Try to resolve volume details from cached_volumes
+            let cached = cached_volumes.iter().find(|v| v.id == att_vol.id);
+            let name = cached
+                .and_then(|v| v.name.as_deref())
+                .unwrap_or(&att_vol.id[..8]);
+            let size = cached
+                .map(|v| format!("{} GB", v.size))
+                .unwrap_or("-".into());
+            let status = cached
+                .map(|v| v.status.clone())
+                .unwrap_or("-".into());
+            let device = cached
+                .and_then(|v| {
+                    v.attachments.iter()
+                        .find(|a| a.server_id == server.id)
+                        .map(|a| a.device.clone())
+                })
+                .unwrap_or("-".into());
+            vol_rows.push(vec![name.to_string(), size, status, device]);
+        }
+        sections.push(DetailSection {
+            name: "Volumes".into(),
+            fields: vec![DetailField::NestedTable {
+                label: "Attached".into(),
+                columns: vol_columns,
+                rows: vol_rows,
             }],
         });
     }
@@ -419,13 +514,14 @@ mod tests {
             tenant_id: Some("proj-1".into()),
             host_id: None,
             host: Some("compute-01".into()),
+            volumes_attached: vec![],
         }
     }
 
     #[test]
     fn test_server_columns_count() {
-        assert_eq!(server_columns(false).len(), 6);
-        assert_eq!(server_columns(true).len(), 7);
+        assert_eq!(server_columns(false).len(), 7);
+        assert_eq!(server_columns(true).len(), 8);
         assert_eq!(server_columns(true)[2].name, "Project");
     }
 
@@ -519,14 +615,14 @@ mod tests {
     #[test]
     fn test_server_columns_with_host() {
         let cols = server_columns_full(false, true);
-        assert_eq!(cols.len(), 7); // base 6 + Host
+        assert_eq!(cols.len(), 8); // base 7 + Host
         assert_eq!(cols[2].name, "Host");
     }
 
     #[test]
     fn test_server_columns_with_tenant_and_host() {
         let cols = server_columns_full(true, true);
-        assert_eq!(cols.len(), 8); // base 6 + Project + Host
+        assert_eq!(cols.len(), 9); // base 7 + Project + Host
         assert_eq!(cols[2].name, "Project");
         assert_eq!(cols[3].name, "Host");
     }
@@ -543,14 +639,14 @@ mod tests {
     #[test]
     fn test_detail_verify_resize_banner() {
         let server = make_server("VERIFY_RESIZE");
-        let data = server_detail_data_full(&server, None, None, false);
+        let data = server_detail_data_full(&server, None, None, false, &[], &[]);
         assert_eq!(data.sections[0].name, "⚠ Migration Pending");
     }
 
     #[test]
     fn test_detail_no_banner_for_active() {
         let server = make_server("ACTIVE");
-        let data = server_detail_data_full(&server, None, None, false);
+        let data = server_detail_data_full(&server, None, None, false, &[], &[]);
         assert_ne!(data.sections[0].name, "⚠ Migration Pending");
     }
 
@@ -571,7 +667,7 @@ mod tests {
             created_at: None,
             updated_at: None,
         };
-        let data = server_detail_data_full(&server, Some(&mig), None, false);
+        let data = server_detail_data_full(&server, Some(&mig), None, false, &[], &[]);
         let mig_section = data.sections.iter().find(|s| s.name == "Migration Progress");
         assert!(mig_section.is_some());
         let fields = &mig_section.unwrap().fields;
@@ -582,7 +678,7 @@ mod tests {
     #[test]
     fn test_detail_no_migration_progress_without_data() {
         let server = make_server("ACTIVE");
-        let data = server_detail_data_full(&server, None, None, false);
+        let data = server_detail_data_full(&server, None, None, false, &[], &[]);
         let mig_section = data.sections.iter().find(|s| s.name == "Migration Progress");
         assert!(mig_section.is_none());
     }
@@ -621,7 +717,7 @@ mod tests {
             created_at: None,
             updated_at: None,
         };
-        let data = server_detail_data_full(&server, Some(&mig), None, false);
+        let data = server_detail_data_full(&server, Some(&mig), None, false, &[], &[]);
         let mig_section = data.sections.iter().find(|s| s.name == "Migration Progress").unwrap();
         // Status, Source, Dest, Memory = 4 fields (no Disk)
         assert_eq!(mig_section.fields.len(), 4);
@@ -630,7 +726,7 @@ mod tests {
     #[test]
     fn test_detail_verify_resize_banner_migration() {
         let server = make_server("VERIFY_RESIZE");
-        let data = server_detail_data_full(&server, None, None, false);
+        let data = server_detail_data_full(&server, None, None, false, &[], &[]);
         let banner = &data.sections[0];
         assert_eq!(banner.name, "⚠ Migration Pending");
         if let DetailField::KeyValue { value, style, .. } = &banner.fields[0] {
@@ -644,7 +740,7 @@ mod tests {
     #[test]
     fn test_detail_verify_resize_banner_resize() {
         let server = make_server("VERIFY_RESIZE");
-        let data = server_detail_data_full(&server, None, None, true);
+        let data = server_detail_data_full(&server, None, None, true, &[], &[]);
         let banner = &data.sections[0];
         assert_eq!(banner.name, "⚠ Resize Pending");
         if let DetailField::KeyValue { value, style, .. } = &banner.fields[0] {

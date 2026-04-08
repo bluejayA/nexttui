@@ -8,7 +8,7 @@ use super::types::*;
 use crate::models::cinder::{Volume, VolumeSnapshot};
 use crate::models::glance::Image;
 use crate::models::keystone::{Project, Role, RoleAssignment, User};
-use crate::models::neutron::{FloatingIp, Network, NetworkAgent, SecurityGroup, SecurityGroupRule};
+use crate::models::neutron::{FloatingIp, Network, NetworkAgent, Port, SecurityGroup, SecurityGroupRule};
 use crate::models::nova::{Aggregate, ComputeService, Flavor, Hypervisor, Server};
 
 // ============================================================
@@ -161,6 +161,17 @@ impl super::nova::NovaPort for MockNovaAdapter {
     ) -> ApiResult<ComputeService> {
         Err(ApiError::BadRequest("mock: not implemented".into()))
     }
+    async fn attach_volume(
+        &self,
+        _server_id: &str,
+        _volume_id: &str,
+        _device: Option<&str>,
+    ) -> ApiResult<()> {
+        Ok(())
+    }
+    async fn detach_volume(&self, _server_id: &str, _volume_id: &str) -> ApiResult<()> {
+        Ok(())
+    }
     async fn list_hypervisors(&self) -> ApiResult<Vec<Hypervisor>> {
         Ok(vec![])
     }
@@ -293,6 +304,9 @@ impl super::neutron::NeutronPort for MockNeutronAdapter {
     async fn disassociate_floating_ip(&self, _fip_id: &str) -> ApiResult<FloatingIp> {
         Err(ApiError::BadRequest("mock: not implemented".into()))
     }
+    async fn list_ports(&self, _device_id: &str) -> ApiResult<Vec<Port>> {
+        Ok(vec![])
+    }
     async fn list_network_agents(&self) -> ApiResult<Vec<NetworkAgent>> {
         Ok(vec![])
     }
@@ -349,6 +363,9 @@ impl super::cinder::CinderPort for MockCinderAdapter {
         Ok(())
     }
     async fn detach_volume(&self, _volume_id: &str, _attachment_id: &str) -> ApiResult<()> {
+        Ok(())
+    }
+    async fn force_detach_volume(&self, _volume_id: &str, _attachment_id: &str) -> ApiResult<()> {
         Ok(())
     }
     async fn force_set_volume_state(&self, _volume_id: &str, _state: &str) -> ApiResult<()> {
