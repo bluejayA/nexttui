@@ -2,7 +2,7 @@ use async_trait::async_trait;
 
 use super::error::ApiResult;
 use super::types::*;
-use crate::models::neutron::{FloatingIp, Network, NetworkAgent, SecurityGroup, SecurityGroupRule};
+use crate::models::neutron::{FloatingIp, Network, NetworkAgent, Port, SecurityGroup, SecurityGroupRule};
 
 #[async_trait]
 pub trait NeutronPort: Send + Sync {
@@ -59,6 +59,9 @@ pub trait NeutronPort: Send + Sync {
     async fn delete_floating_ip(&self, fip_id: &str) -> ApiResult<()>;
     async fn associate_floating_ip(&self, fip_id: &str, port_id: &str) -> ApiResult<FloatingIp>;
     async fn disassociate_floating_ip(&self, fip_id: &str) -> ApiResult<FloatingIp>;
+
+    // Ports
+    async fn list_ports(&self, device_id: &str) -> ApiResult<Vec<Port>>;
 
     // Network Agents
     async fn list_network_agents(&self) -> ApiResult<Vec<NetworkAgent>>;

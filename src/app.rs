@@ -390,6 +390,9 @@ impl App {
                     let _ = self.action_tx.send(a);
                 }
             }
+            Action::ShowToast { message } => {
+                self.background_tracker.add_toast(message, crate::background::ToastLevel::Info);
+            }
             Action::Quit => {
                 self.should_quit = true;
             }
@@ -545,6 +548,14 @@ impl App {
             AppEvent::ServerResized { id } => (format!("Server {id} resized — confirm(Y) or revert(N)"), ToastLevel::Success, "Resize".into(), id.clone()),
             AppEvent::ResizeConfirmed { id } => (format!("Resize confirmed for {id}"), ToastLevel::Success, "ConfirmResize".into(), id.clone()),
             AppEvent::ResizeReverted { id } => (format!("Resize reverted for {id}"), ToastLevel::Success, "RevertResize".into(), id.clone()),
+            // Volume Attach/Detach
+            AppEvent::VolumeAttached { volume_id, .. } => (format!("Volume {volume_id} attached successfully"), ToastLevel::Success, "AttachVolume".into(), volume_id.clone()),
+            AppEvent::VolumeDetached { volume_id } => (format!("Volume {volume_id} detached successfully"), ToastLevel::Success, "DetachVolume".into(), volume_id.clone()),
+            AppEvent::VolumeForceDetached { volume_id } => (format!("Volume {volume_id} force-detached (verify data integrity)"), ToastLevel::Success, "ForceDetachVolume".into(), volume_id.clone()),
+            AppEvent::VolumeStateReset { volume_id } => (format!("Volume {volume_id} state reset to available"), ToastLevel::Success, "ResetVolumeState".into(), volume_id.clone()),
+            // Floating IP Associate/Disassociate
+            AppEvent::FloatingIpAssociated(f) => (format!("Floating IP {} associated successfully", f.floating_ip_address), ToastLevel::Success, "AssociateFloatingIp".into(), f.floating_ip_address.clone()),
+            AppEvent::FloatingIpDisassociated(f) => (format!("Floating IP {} disassociated", f.floating_ip_address), ToastLevel::Success, "DisassociateFloatingIp".into(), f.floating_ip_address.clone()),
             // Errors
             AppEvent::ApiError { operation, message } => (format!("{operation} failed: {message}"), ToastLevel::Error, operation.clone(), String::new()),
             AppEvent::AuthFailed(msg) => (format!("Auth failed: {msg}"), ToastLevel::Error, "Auth".into(), String::new()),

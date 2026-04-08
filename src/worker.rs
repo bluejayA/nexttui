@@ -149,6 +149,18 @@ fn action_to_kind(action: &Action) -> Option<ActionKind> {
         // Volume extend
         Action::ExtendVolume { .. } => Some(ActionKind::Create),
 
+        // Attach / Associate (member-level)
+        Action::AttachVolume { .. }
+        | Action::AssociateFloatingIp { .. } => Some(ActionKind::Attach),
+
+        // Detach / Disassociate (member-level)
+        Action::DetachVolume { .. }
+        | Action::DisassociateFloatingIp { .. } => Some(ActionKind::Detach),
+
+        // Force operations (admin-only)
+        Action::ForceDetachVolume { .. }
+        | Action::ForceResetVolumeState { .. } => Some(ActionKind::ForceDelete),
+
         // Read / UI / System — no guard
         _ => None,
     }
@@ -194,6 +206,13 @@ fn action_name(action: &Action) -> &str {
         Action::DisableComputeService { .. } => "DisableComputeService",
         Action::EnableComputeService { .. } => "EnableComputeService",
         Action::FetchMigrationProgress { .. } => "FetchMigrationProgress",
+        Action::AttachVolume { .. } => "AttachVolume",
+        Action::DetachVolume { .. } => "DetachVolume",
+        Action::ForceDetachVolume { .. } => "ForceDetachVolume",
+        Action::ForceResetVolumeState { .. } => "ForceResetVolumeState",
+        Action::AssociateFloatingIp { .. } => "AssociateFloatingIp",
+        Action::DisassociateFloatingIp { .. } => "DisassociateFloatingIp",
+        Action::FetchPorts { .. } => "FetchPorts",
         _ => "Unknown",
     }
 }
@@ -621,6 +640,54 @@ async fn handle_action(registry: &AdapterRegistry, all_tenants: &AtomicBool, act
             }
         }
 
+        // -- Cinder: Volume Attach/Detach -----------------------------------
+        Action::AttachVolume { volume_id, server_id, device } => {
+            match registry.cinder.attach_volume(&volume_id, &server_id, device.as_deref()).await {
+                Ok(()) => Some(AppEvent::VolumeAttached { volume_id, server_id }),
+                Err(e) => Some(api_error("AttachVolume", e)),
+            }
+        }
+        Action::DetachVolume { volume_id, attachment_id } => {
+            match registry.cinder.detach_volume(&volume_id, &attachment_id).await {
+                Ok(()) => Some(AppEvent::VolumeDetached { volume_id }),
+                Err(e) => Some(api_error("DetachVolume", e)),
+            }
+        }
+        Action::ForceDetachVolume { volume_id, attachment_id } => {
+            match registry.cinder.force_detach_volume(&volume_id, &attachment_id).await {
+                Ok(()) => Some(AppEvent::VolumeForceDetached { volume_id }),
+                Err(e) => Some(api_error("ForceDetachVolume", e)),
+            }
+        }
+        Action::ForceResetVolumeState { volume_id, target_state } => {
+            match registry.cinder.force_set_volume_state(&volume_id, &target_state).await {
+                Ok(()) => Some(AppEvent::VolumeStateReset { volume_id }),
+                Err(e) => Some(api_error("ForceResetVolumeState", e)),
+            }
+        }
+
+        // -- Neutron: Floating IP Associate/Disassociate --------------------
+        Action::AssociateFloatingIp { fip_id, port_id } => {
+            match registry.neutron.associate_floating_ip(&fip_id, &port_id).await {
+                Ok(fip) => Some(AppEvent::FloatingIpAssociated(fip)),
+                Err(e) => Some(api_error("AssociateFloatingIp", e)),
+            }
+        }
+        Action::DisassociateFloatingIp { fip_id } => {
+            match registry.neutron.disassociate_floating_ip(&fip_id).await {
+                Ok(fip) => Some(AppEvent::FloatingIpDisassociated(fip)),
+                Err(e) => Some(api_error("DisassociateFloatingIp", e)),
+            }
+        }
+
+        // -- Neutron: Ports -------------------------------------------------
+        Action::FetchPorts { server_id } => {
+            match registry.neutron.list_ports(&server_id).await {
+                Ok(ports) => Some(AppEvent::PortsLoaded { server_id, ports }),
+                Err(e) => Some(api_error("FetchPorts", e)),
+            }
+        }
+
         // -- UI-only actions (handled by App::dispatch_action, not worker) --
         Action::Navigate(_)
         | Action::Back
@@ -630,6 +697,7 @@ async fn handle_action(registry: &AdapterRegistry, all_tenants: &AtomicBool, act
         | Action::EnterFormMode
         | Action::ExitFormMode
         | Action::ToggleAllTenants
+        | Action::ShowToast { .. }
         | Action::Quit => None,
 
         // -- System ---------------------------------------------------------

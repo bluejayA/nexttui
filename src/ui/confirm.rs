@@ -31,6 +31,7 @@ pub enum ConfirmResult {
 pub struct ConfirmDialog {
     mode: ConfirmMode,
     active: bool,
+    detail_lines: Vec<String>,
 }
 
 impl ConfirmDialog {
@@ -40,6 +41,17 @@ impl ConfirmDialog {
                 message: message.into(),
             },
             active: true,
+            detail_lines: Vec::new(),
+        }
+    }
+
+    pub fn yes_no_with_details(message: impl Into<String>, details: Vec<String>) -> Self {
+        Self {
+            mode: ConfirmMode::YesNo {
+                message: message.into(),
+            },
+            active: true,
+            detail_lines: details,
         }
     }
 
@@ -51,6 +63,23 @@ impl ConfirmDialog {
                 buffer: String::new(),
             },
             active: true,
+            detail_lines: Vec::new(),
+        }
+    }
+
+    pub fn type_to_confirm_with_details(
+        message: impl Into<String>,
+        expected: impl Into<String>,
+        details: Vec<String>,
+    ) -> Self {
+        Self {
+            mode: ConfirmMode::TypeToConfirm {
+                message: message.into(),
+                expected: expected.into(),
+                buffer: String::new(),
+            },
+            active: true,
+            detail_lines: details,
         }
     }
 
@@ -63,6 +92,10 @@ impl ConfirmDialog {
             ConfirmMode::YesNo { message } => message,
             ConfirmMode::TypeToConfirm { message, .. } => message,
         }
+    }
+
+    pub fn detail_lines(&self) -> &[String] {
+        &self.detail_lines
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> ConfirmResult {
@@ -118,31 +151,38 @@ impl ConfirmDialog {
             return;
         }
 
-        // Calculate centered modal area (50% width, 5 lines tall)
+        // Calculate centered modal area (50% width, dynamic height)
         let width = (area.width / 2).max(30).min(area.width);
-        let height = 7u16.min(area.height);
+        let detail_count = self.detail_lines.len() as u16;
+        let height = (7u16 + detail_count).min(area.height);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
         let modal_area = Rect::new(x, y, width, height);
 
         frame.render_widget(Clear, modal_area);
 
+        let detail_style = Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM);
+
         let lines = match &self.mode {
             ConfirmMode::YesNo { message } => {
-                vec![
+                let mut l = vec![
                     Line::from(""),
                     Line::from(Span::styled(
                         message.as_str(),
                         Theme::warning().add_modifier(Modifier::BOLD),
                     )),
-                    Line::from(""),
-                    Line::from(vec![
-                        Span::styled("[Y]", Theme::focus_border().add_modifier(Modifier::BOLD)),
-                        Span::styled("es  ", Style::default().fg(Color::White)),
-                        Span::styled("[N]", Theme::focus_border().add_modifier(Modifier::BOLD)),
-                        Span::styled("o", Style::default().fg(Color::White)),
-                    ]),
-                ]
+                ];
+                for detail in &self.detail_lines {
+                    l.push(Line::from(Span::styled(detail.as_str(), detail_style)));
+                }
+                l.push(Line::from(""));
+                l.push(Line::from(vec![
+                    Span::styled("[Y]", Theme::focus_border().add_modifier(Modifier::BOLD)),
+                    Span::styled("es  ", Style::default().fg(Color::White)),
+                    Span::styled("[N]", Theme::focus_border().add_modifier(Modifier::BOLD)),
+                    Span::styled("o", Style::default().fg(Color::White)),
+                ]));
+                l
             }
             ConfirmMode::TypeToConfirm {
                 message,
@@ -150,22 +190,26 @@ impl ConfirmDialog {
                 buffer,
                 ..
             } => {
-                vec![
+                let mut l = vec![
                     Line::from(Span::styled(
                         message.as_str(),
                         Theme::warning().add_modifier(Modifier::BOLD),
                     )),
-                    Line::from(format!("Type '{expected}' to confirm:")),
-                    Line::from(""),
-                    Line::from(vec![
-                        Span::raw("> "),
-                        Span::styled(
-                            buffer.as_str(),
-                            Style::default().fg(Color::White),
-                        ),
-                        Span::styled("_", Theme::waiting()),
-                    ]),
-                ]
+                ];
+                for detail in &self.detail_lines {
+                    l.push(Line::from(Span::styled(detail.as_str(), detail_style)));
+                }
+                l.push(Line::from(format!("Type '{expected}' to confirm:")));
+                l.push(Line::from(""));
+                l.push(Line::from(vec![
+                    Span::raw("> "),
+                    Span::styled(
+                        buffer.as_str(),
+                        Style::default().fg(Color::White),
+                    ),
+                    Span::styled("_", Theme::waiting()),
+                ]));
+                l
             }
         };
 
@@ -247,5 +291,66 @@ mod tests {
         dialog.handle_key(key(KeyCode::Char('y'))); // confirms, now inactive
         let result = dialog.handle_key(key(KeyCode::Char('y'))); // should be ignored
         assert!(matches!(result, ConfirmResult::Pending));
+    }
+
+    // --- detail_lines tests ---
+
+    #[test]
+    fn test_yes_no_with_details_creates_dialog() {
+        let details = vec!["Volume: vol-01".into(), "Size: 100GB".into()];
+        let dialog = ConfirmDialog::yes_no_with_details("Detach volume?", details.clone());
+        assert!(dialog.is_active());
+        assert_eq!(dialog.message(), "Detach volume?");
+        assert_eq!(dialog.detail_lines(), &details);
+    }
+
+    #[test]
+    fn test_type_to_confirm_with_details_creates_dialog() {
+        let details = vec!["Server: web-01".into(), "IP: 10.0.0.1".into()];
+        let dialog = ConfirmDialog::type_to_confirm_with_details(
+            "Type 'web-01' to delete",
+            "web-01",
+            details.clone(),
+        );
+        assert!(dialog.is_active());
+        assert_eq!(dialog.message(), "Type 'web-01' to delete");
+        assert_eq!(dialog.detail_lines(), &details);
+    }
+
+    #[test]
+    fn test_yes_no_has_empty_details() {
+        let dialog = ConfirmDialog::yes_no("Delete?");
+        assert!(dialog.detail_lines().is_empty());
+    }
+
+    #[test]
+    fn test_type_to_confirm_has_empty_details() {
+        let dialog = ConfirmDialog::type_to_confirm("Confirm", "abc");
+        assert!(dialog.detail_lines().is_empty());
+    }
+
+    #[test]
+    fn test_yes_no_with_details_confirm_works() {
+        let mut dialog = ConfirmDialog::yes_no_with_details(
+            "Detach?",
+            vec!["info".into()],
+        );
+        let result = dialog.handle_key(key(KeyCode::Char('y')));
+        assert!(matches!(result, ConfirmResult::Confirmed));
+        assert!(!dialog.is_active());
+    }
+
+    #[test]
+    fn test_type_to_confirm_with_details_confirm_works() {
+        let mut dialog = ConfirmDialog::type_to_confirm_with_details(
+            "Confirm",
+            "abc",
+            vec!["detail".into()],
+        );
+        for c in "abc".chars() {
+            dialog.handle_key(key(KeyCode::Char(c)));
+        }
+        let result = dialog.handle_key(key(KeyCode::Enter));
+        assert!(matches!(result, ConfirmResult::Confirmed));
     }
 }

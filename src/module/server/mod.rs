@@ -8,7 +8,9 @@ use tokio::sync::mpsc;
 use crate::action::Action;
 use crate::component::Component;
 use crate::event::AppEvent;
+use crate::models::cinder::Volume;
 use crate::models::common::is_terminal_server_status;
+use crate::models::neutron::{FloatingIp, Network, Port};
 use crate::models::nova::{Flavor, Server, ServerMigration};
 use crate::module::{ConfirmHandler, PendingAction, ViewState};
 use crate::port::types::{EvacuateParams, NetworkAttachment, ServerCreateParams};
@@ -26,6 +28,16 @@ pub struct ResizePendingInfo {
     pub server_id: String,
 }
 
+/// Tracks which popup context is active in detail view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DetailPopupKind {
+    Resize,
+    AttachVolume,
+    DetachVolume,
+    AssociateFip,
+    SelectPort,
+}
+
 pub struct ServerModule {
     view_state: ViewState,
     servers: Vec<Server>,
@@ -38,8 +50,15 @@ pub struct ServerModule {
     is_admin: bool,
     migration_progress: Option<(String, ServerMigration)>,
     select_popup: Option<SelectPopup>,
+    popup_kind: Option<DetailPopupKind>,
     resize_pending: Option<ResizePendingInfo>,
     cached_flavors: Vec<Flavor>,
+    cached_volumes: Vec<Volume>,
+    cached_floating_ips: Vec<FloatingIp>,
+    cached_ports: Vec<Port>,
+    cached_networks: Vec<Network>,
+    pending_fip_id: Option<String>,
+    loading_ports: bool,
     // Cached dropdown options — populated by handle_event, applied to form on open/load
     cached_flavor_opts: Vec<SelectOption>,
     cached_image_opts: Vec<SelectOption>,
@@ -62,8 +81,15 @@ impl ServerModule {
             is_admin: false,
             migration_progress: None,
             select_popup: None,
+            popup_kind: None,
             resize_pending: None,
             cached_flavors: Vec::new(),
+            cached_volumes: Vec::new(),
+            cached_floating_ips: Vec::new(),
+            cached_ports: Vec::new(),
+            cached_networks: Vec::new(),
+            pending_fip_id: None,
+            loading_ports: false,
             cached_flavor_opts: Vec::new(),
             cached_image_opts: Vec::new(),
             cached_network_opts: Vec::new(),
@@ -129,6 +155,15 @@ impl ServerModule {
                 id,
                 params: EvacuateParams::default(),
             }),
+            PendingAction::AttachVolume { volume_id, server_id, device } => {
+                Some(Action::AttachVolume { volume_id, server_id, device })
+            }
+            PendingAction::DetachVolume { volume_id, attachment_id } => {
+                Some(Action::DetachVolume { volume_id, attachment_id })
+            }
+            PendingAction::AssociateFloatingIp { fip_id, port_id } => {
+                Some(Action::AssociateFloatingIp { fip_id, port_id })
+            }
             _ => None,
         }
     }
@@ -222,30 +257,270 @@ impl ServerModule {
             .collect()
     }
 
+    fn build_available_volume_items(&self) -> Vec<SelectItem> {
+        self.cached_volumes
+            .iter()
+            .filter(|v| v.status == "available")
+            .map(|v| {
+                let name = v.name.as_deref().unwrap_or("-");
+                let vol_type = v.volume_type.as_deref().unwrap_or("-");
+                SelectItem {
+                    id: v.id.clone(),
+                    label: format!("{name} ({}GB, {vol_type})", v.size),
+                    hint: ItemHint::Normal,
+                }
+            })
+            .collect()
+    }
+
+    fn build_attached_volume_items(&self, server_id: &str) -> Vec<SelectItem> {
+        self.cached_volumes
+            .iter()
+            .filter(|v| v.status == "in-use" && v.attachments.iter().any(|a| a.server_id == server_id))
+            .flat_map(|v| {
+                v.attachments.iter().filter(|a| a.server_id == server_id).map(move |a| {
+                    let name = v.name.as_deref().unwrap_or("-");
+                    SelectItem {
+                        id: format!("{}:{}", v.id, a.id),
+                        label: format!("{name} ({}, {}GB)", a.device, v.size),
+                        hint: if v.bootable == "true" {
+                            ItemHint::Warning("boot".into())
+                        } else {
+                            ItemHint::Normal
+                        },
+                    }
+                })
+            })
+            .collect()
+    }
+
+    fn build_available_fip_items(&self) -> Vec<SelectItem> {
+        self.cached_floating_ips
+            .iter()
+            .filter(|f| f.port_id.is_none())
+            .map(|f| SelectItem {
+                id: f.id.clone(),
+                label: f.floating_ip_address.clone(),
+                hint: ItemHint::Normal,
+            })
+            .collect()
+    }
+
+    fn build_port_items(&self) -> Vec<SelectItem> {
+        self.cached_ports
+            .iter()
+            .map(|p| SelectItem {
+                id: p.id.clone(),
+                label: p.display_label(&self.cached_networks),
+                hint: ItemHint::Normal,
+            })
+            .collect()
+    }
+
+    fn handle_attach_volume_selected(&mut self, volume_id: String) {
+        let server_id = match &self.view_state {
+            ViewState::Detail(id) => id.clone(),
+            _ => return,
+        };
+        let vol = self.cached_volumes.iter().find(|v| v.id == volume_id);
+        let Some(vol) = vol else { return };
+        let server_name = self.servers.iter()
+            .find(|s| s.id == server_id)
+            .map(|s| s.name.as_str())
+            .unwrap_or("unknown");
+        let name = vol.name.as_deref().unwrap_or("-");
+        let vol_type = vol.volume_type.as_deref().unwrap_or("-");
+        let details = vec![
+            format!("  Volume: {name}"),
+            format!("  Size: {} GB", vol.size),
+            format!("  Type: {vol_type}"),
+        ];
+        self.confirm.open(
+            ConfirmDialog::yes_no_with_details(
+                format!("Attach {name} to '{server_name}'?"),
+                details,
+            ),
+            PendingAction::AttachVolume {
+                volume_id,
+                server_id,
+                device: None,
+            },
+        );
+    }
+
+    fn handle_detach_volume_selected(&mut self, composite_id: String) {
+        // composite_id = "volume_id:attachment_id"
+        let parts: Vec<&str> = composite_id.splitn(2, ':').collect();
+        if parts.len() != 2 { return; }
+        let volume_id = parts[0].to_string();
+        let attachment_id = parts[1].to_string();
+
+        let vol = self.cached_volumes.iter().find(|v| v.id == volume_id);
+        let Some(vol) = vol else { return };
+        let att = vol.attachments.iter().find(|a| a.id == attachment_id);
+        let Some(att) = att else { return };
+
+        let server_name = self.servers.iter()
+            .find(|s| s.id == att.server_id)
+            .map(|s| s.name.as_str())
+            .unwrap_or("unknown");
+        let name = vol.name.as_deref().unwrap_or("-");
+        let vol_type = vol.volume_type.as_deref().unwrap_or("-");
+        let details = vec![
+            format!("  Volume: {name}"),
+            format!("  Size: {} GB", vol.size),
+            format!("  Type: {vol_type}"),
+            format!("  Device: {}", att.device),
+        ];
+        self.confirm.open(
+            ConfirmDialog::yes_no_with_details(
+                format!("Detach {name} from '{server_name}'? Device: {}", att.device),
+                details,
+            ),
+            PendingAction::DetachVolume {
+                volume_id,
+                attachment_id,
+            },
+        );
+    }
+
+    fn handle_fip_selected(&mut self, fip_id: String) {
+        let server_id = match &self.view_state {
+            ViewState::Detail(id) => id.clone(),
+            _ => return,
+        };
+        self.pending_fip_id = Some(fip_id);
+        self.loading_ports = true;
+        let _ = self.action_tx.send(Action::FetchPorts { server_id });
+    }
+
+    fn handle_ports_loaded(&mut self, ports: Vec<Port>) {
+        self.cached_ports = ports;
+        self.loading_ports = false;
+
+        let Some(fip_id) = self.pending_fip_id.clone() else { return };
+
+        if self.cached_ports.is_empty() {
+            let _ = self.action_tx.send(Action::ShowToast {
+                message: "No ports found for this server".into(),
+            });
+            self.pending_fip_id = None;
+            return;
+        }
+
+        if self.cached_ports.len() == 1 {
+            let port = &self.cached_ports[0];
+            let port_label = port.display_label(&self.cached_networks);
+            let fip = self.cached_floating_ips.iter().find(|f| f.id == fip_id);
+            let Some(fip) = fip else {
+                self.pending_fip_id = None;
+                return;
+            };
+            let server_name = match &self.view_state {
+                ViewState::Detail(id) => self.servers.iter()
+                    .find(|s| s.id == *id)
+                    .map(|s| s.name.as_str())
+                    .unwrap_or("unknown"),
+                _ => "unknown",
+            };
+            let details = vec![
+                format!("  Floating IP: {}", fip.floating_ip_address),
+                format!("  Server: {server_name}"),
+                format!("  Port: {port_label}"),
+            ];
+            self.confirm.open(
+                ConfirmDialog::yes_no_with_details(
+                    format!("Associate {} to port {}?", fip.floating_ip_address, port_label),
+                    details,
+                ),
+                PendingAction::AssociateFloatingIp {
+                    fip_id,
+                    port_id: port.id.clone(),
+                },
+            );
+            self.pending_fip_id = None;
+            return;
+        }
+
+        // Multiple ports: show SelectPopup
+        let items = self.build_port_items();
+        self.select_popup = Some(SelectPopup::new("Select Port", items));
+        self.popup_kind = Some(DetailPopupKind::SelectPort);
+    }
+
+    fn handle_port_selected(&mut self, port_id: String) {
+        let Some(fip_id) = self.pending_fip_id.take() else { return };
+        let port = self.cached_ports.iter().find(|p| p.id == port_id);
+        let fip = self.cached_floating_ips.iter().find(|f| f.id == fip_id);
+        let (Some(port), Some(fip)) = (port, fip) else { return };
+
+        let port_label = port.display_label(&self.cached_networks);
+        let server_name = match &self.view_state {
+            ViewState::Detail(id) => self.servers.iter()
+                .find(|s| s.id == *id)
+                .map(|s| s.name.as_str())
+                .unwrap_or("unknown"),
+            _ => "unknown",
+        };
+        let details = vec![
+            format!("  Floating IP: {}", fip.floating_ip_address),
+            format!("  Server: {server_name}"),
+            format!("  Port: {port_label}"),
+        ];
+        self.confirm.open(
+            ConfirmDialog::yes_no_with_details(
+                format!("Associate {} to port {}?", fip.floating_ip_address, port_label),
+                details,
+            ),
+            PendingAction::AssociateFloatingIp {
+                fip_id: fip.id.clone(),
+                port_id,
+            },
+        );
+    }
+
     fn handle_detail_key(&mut self, key: KeyEvent) -> Option<Action> {
         // SelectPopup takes priority after ConfirmDialog
         if let Some(ref mut popup) = self.select_popup {
+            let ctx = self.popup_kind.unwrap_or(DetailPopupKind::Resize);
             match popup.handle_key(key) {
-                SelectResult::Selected(flavor_id) => {
-                    let flavor_name = self.cached_flavors.iter()
-                        .find(|f| f.id == flavor_id)
-                        .map(|f| f.name.as_str())
-                        .unwrap_or(&flavor_id);
-                    let msg = format!("Resize to {flavor_name}?");
-                    if let ViewState::Detail(ref id) = self.view_state {
-                        let id = id.clone();
-                        self.select_popup = None;
-                        self.confirm.open(
-                            ConfirmDialog::yes_no(msg),
-                            PendingAction::Resize { id, flavor_id },
-                        );
-                    } else {
-                        self.select_popup = None;
+                SelectResult::Selected(selected_id) => {
+                    self.select_popup = None;
+                    self.popup_kind = None;
+                    match ctx {
+                        DetailPopupKind::Resize => {
+                            let flavor_name = self.cached_flavors.iter()
+                                .find(|f| f.id == selected_id)
+                                .map(|f| f.name.as_str())
+                                .unwrap_or(&selected_id);
+                            let msg = format!("Resize to {flavor_name}?");
+                            if let ViewState::Detail(ref id) = self.view_state {
+                                let id = id.clone();
+                                self.confirm.open(
+                                    ConfirmDialog::yes_no(msg),
+                                    PendingAction::Resize { id, flavor_id: selected_id },
+                                );
+                            }
+                        }
+                        DetailPopupKind::AttachVolume => {
+                            self.handle_attach_volume_selected(selected_id);
+                        }
+                        DetailPopupKind::DetachVolume => {
+                            self.handle_detach_volume_selected(selected_id);
+                        }
+                        DetailPopupKind::AssociateFip => {
+                            self.handle_fip_selected(selected_id);
+                        }
+                        DetailPopupKind::SelectPort => {
+                            self.handle_port_selected(selected_id);
+                        }
                     }
                     return None;
                 }
                 SelectResult::Cancelled => {
                     self.select_popup = None;
+                    self.popup_kind = None;
+                    self.pending_fip_id = None;
                     return None;
                 }
                 SelectResult::Pending => return None,
@@ -295,6 +570,7 @@ impl ServerModule {
                             let current_disk = server.and_then(|s| s.flavor.disk);
                             let items = self.build_flavor_items(current_flavor_id, current_disk);
                             self.select_popup = Some(SelectPopup::new("Select Flavor", items));
+                            self.popup_kind = Some(DetailPopupKind::Resize);
                         }
                     }
                 }
@@ -379,6 +655,59 @@ impl ServerModule {
                             PendingAction::Evacuate { id },
                         );
                     }
+                }
+                None
+            }
+            // Attach volume (Shift+A)
+            KeyCode::Char('A') => {
+                let items = self.build_available_volume_items();
+                if items.is_empty() {
+                    if self.cached_volumes.is_empty() {
+                        let _ = self.action_tx.send(Action::FetchVolumes);
+                    } else {
+                        let _ = self.action_tx.send(Action::ShowToast {
+                            message: "No available volumes to attach".into(),
+                        });
+                    }
+                } else {
+                    self.select_popup = Some(SelectPopup::new("Attach Volume", items));
+                    self.popup_kind = Some(DetailPopupKind::AttachVolume);
+                }
+                None
+            }
+            // Detach volume
+            KeyCode::Char('x') => {
+                if let ViewState::Detail(ref id) = self.view_state {
+                    let items = self.build_attached_volume_items(id);
+                    if items.is_empty() {
+                        let _ = self.action_tx.send(Action::ShowToast {
+                            message: "No volumes attached to this server".into(),
+                        });
+                    } else if items.len() == 1 {
+                        // Single volume: skip popup, go straight to confirm
+                        let composite_id = items[0].id.clone();
+                        self.handle_detach_volume_selected(composite_id);
+                    } else {
+                        self.select_popup = Some(SelectPopup::new("Detach Volume", items));
+                        self.popup_kind = Some(DetailPopupKind::DetachVolume);
+                    }
+                }
+                None
+            }
+            // Associate floating IP
+            KeyCode::Char('f') => {
+                let items = self.build_available_fip_items();
+                if items.is_empty() {
+                    if self.cached_floating_ips.is_empty() {
+                        let _ = self.action_tx.send(Action::FetchFloatingIps);
+                    } else {
+                        let _ = self.action_tx.send(Action::ShowToast {
+                            message: "No unassociated floating IPs available".into(),
+                        });
+                    }
+                } else {
+                    self.select_popup = Some(SelectPopup::new("Associate Floating IP", items));
+                    self.popup_kind = Some(DetailPopupKind::AssociateFip);
                 }
                 None
             }
@@ -585,11 +914,28 @@ impl Component for ServerModule {
                     form.set_field_options("Security Group", opts);
                 }
             }
+            AppEvent::VolumesLoaded(volumes) => {
+                self.cached_volumes = volumes.clone();
+            }
+            AppEvent::FloatingIpsLoaded(fips) => {
+                self.cached_floating_ips = fips.clone();
+            }
+            AppEvent::PortsLoaded { ports, .. } => {
+                if self.pending_fip_id.is_some() {
+                    self.handle_ports_loaded(ports.clone());
+                }
+            }
+            AppEvent::VolumeAttached { .. }
+            | AppEvent::VolumeDetached { .. }
+            | AppEvent::FloatingIpAssociated(_) => {
+                let _ = self.action_tx.send(Action::FetchServers);
+            }
             AppEvent::ApiError {
                 operation, message, ..
             } => {
                 self.error_message = Some(format!("{operation}: {message}"));
                 self.loading = false;
+                self.loading_ports = false;
             }
             _ => {}
         }
@@ -652,15 +998,15 @@ impl Component for ServerModule {
                 let is_error = server.is_some_and(|s| s.status == "ERROR");
 
                 if is_verify && self.is_admin {
-                    "Esc:Back R:Reboot S:Start X:Stop F:Resize M:Migrate C:Cold Y:Confirm N:Revert"
+                    "Esc:Back R:Reboot S:Start X:Stop F:Resize A:AttachVol x:DetachVol f:AssocFIP M:Migrate C:Cold Y:Confirm N:Revert"
                 } else if is_verify {
-                    "Esc:Back R:Reboot S:Start X:Stop F:Resize Y:Confirm N:Revert"
+                    "Esc:Back R:Reboot S:Start X:Stop F:Resize A:AttachVol x:DetachVol f:AssocFIP Y:Confirm N:Revert"
                 } else if is_error && self.is_admin {
-                    "Esc:Back R:Reboot S:Start X:Stop F:Resize M:Migrate C:Cold E:Evacuate"
+                    "Esc:Back R:Reboot S:Start X:Stop F:Resize A:AttachVol x:DetachVol f:AssocFIP M:Migrate C:Cold E:Evacuate"
                 } else if self.is_admin {
-                    "Esc:Back R:Reboot S:Start X:Stop F:Resize M:Migrate C:Cold"
+                    "Esc:Back R:Reboot S:Start X:Stop F:Resize A:AttachVol x:DetachVol f:AssocFIP M:Migrate C:Cold"
                 } else {
-                    "Esc:Back R:Reboot S:Start X:Stop F:Resize"
+                    "Esc:Back R:Reboot S:Start X:Stop F:Resize A:AttachVol x:DetachVol f:AssocFIP"
                 }
             }
             ViewState::Create => "Esc:Cancel Tab:Next Enter:Submit",
@@ -1588,5 +1934,574 @@ mod tests {
         ];
         module.handle_event(&AppEvent::ServersLoaded(servers));
         assert!(module.has_transitional_resources());
+    }
+
+    // -- Volume/FIP helper factories -------------------------------------------
+
+    use crate::models::cinder::{Volume, VolumeAttachment};
+    use crate::models::neutron::{FixedIp, FloatingIp, Network, Port};
+
+    fn make_volume(id: &str, name: &str, status: &str, size: u32, vol_type: &str) -> Volume {
+        Volume {
+            id: id.into(),
+            name: Some(name.into()),
+            description: None,
+            status: status.into(),
+            size,
+            volume_type: Some(vol_type.into()),
+            encrypted: false,
+            bootable: "false".into(),
+            attachments: Vec::new(),
+            availability_zone: None,
+            created_at: None,
+            tenant_id: None,
+        }
+    }
+
+    fn make_volume_attached(id: &str, name: &str, size: u32, server_id: &str, device: &str, att_id: &str) -> Volume {
+        Volume {
+            id: id.into(),
+            name: Some(name.into()),
+            description: None,
+            status: "in-use".into(),
+            size,
+            volume_type: Some("SSD".into()),
+            encrypted: false,
+            bootable: "false".into(),
+            attachments: vec![VolumeAttachment {
+                server_id: server_id.into(),
+                device: device.into(),
+                id: att_id.into(),
+            }],
+            availability_zone: None,
+            created_at: None,
+            tenant_id: None,
+        }
+    }
+
+    fn make_fip(id: &str, ip: &str, port_id: Option<&str>) -> FloatingIp {
+        FloatingIp {
+            id: id.into(),
+            floating_ip_address: ip.into(),
+            status: if port_id.is_some() { "ACTIVE" } else { "DOWN" }.into(),
+            port_id: port_id.map(|s| s.into()),
+            floating_network_id: "ext-net-1".into(),
+            fixed_ip_address: None,
+            router_id: None,
+            tenant_id: None,
+        }
+    }
+
+    fn make_port(id: &str, ip: &str, net_id: &str, device_id: Option<&str>) -> Port {
+        Port {
+            id: id.into(),
+            name: None,
+            network_id: net_id.into(),
+            fixed_ips: vec![FixedIp { subnet_id: "sub-1".into(), ip_address: ip.into() }],
+            device_id: device_id.map(|s| s.into()),
+            device_owner: Some("compute:az1".into()),
+            status: "ACTIVE".into(),
+            tenant_id: None,
+        }
+    }
+
+    fn make_network(id: &str, name: &str) -> Network {
+        Network {
+            id: id.into(),
+            name: name.into(),
+            status: "ACTIVE".into(),
+            description: None,
+            admin_state_up: true,
+            external: false,
+            shared: false,
+            mtu: None,
+            port_security_enabled: None,
+            subnets: vec![],
+            provider_network_type: None,
+            provider_physical_network: None,
+            provider_segmentation_id: None,
+            tenant_id: None,
+        }
+    }
+
+    fn setup_detail_with_volumes() -> (ServerModule, mpsc::UnboundedReceiver<Action>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let mut module = ServerModule::new(tx);
+        let servers = vec![make_test_server("s1", "web-01", "ACTIVE")];
+        module.handle_event(&AppEvent::ServersLoaded(servers));
+        module.handle_event(&AppEvent::VolumesLoaded(vec![
+            make_volume("v1", "data-vol", "available", 100, "SSD"),
+            make_volume("v2", "log-vol", "available", 50, "HDD"),
+            make_volume_attached("v3", "boot-vol", 40, "s1", "/dev/vda", "att-3"),
+            make_volume_attached("v4", "extra-vol", 200, "s1", "/dev/vdb", "att-4"),
+            make_volume_attached("v5", "other-vol", 10, "s2", "/dev/vdc", "att-5"),
+        ]));
+        module.handle_key(key(KeyCode::Enter)); // enter detail for s1
+        (module, rx)
+    }
+
+    fn setup_detail_with_fips() -> (ServerModule, mpsc::UnboundedReceiver<Action>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let mut module = ServerModule::new(tx);
+        let servers = vec![make_test_server("s1", "web-01", "ACTIVE")];
+        module.handle_event(&AppEvent::ServersLoaded(servers));
+        module.handle_event(&AppEvent::FloatingIpsLoaded(vec![
+            make_fip("fip-1", "203.0.113.10", None),
+            make_fip("fip-2", "203.0.113.20", Some("port-99")),
+            make_fip("fip-3", "203.0.113.30", None),
+        ]));
+        module.cached_networks = vec![make_network("net-1", "private-net")];
+        module.handle_key(key(KeyCode::Enter)); // enter detail for s1
+        (module, rx)
+    }
+
+    // -- Attach Volume tests --------------------------------------------------
+
+    #[test]
+    fn test_detail_shift_a_opens_attach_volume_popup() {
+        let (mut module, _rx) = setup_detail_with_volumes();
+        module.handle_key(key(KeyCode::Char('A')));
+        assert!(module.select_popup.is_some(), "Shift+A should open attach volume popup");
+        assert_eq!(module.popup_kind, Some(DetailPopupKind::AttachVolume));
+    }
+
+    #[test]
+    fn test_detail_shift_a_only_shows_available_volumes() {
+        let (mut module, _rx) = setup_detail_with_volumes();
+        module.handle_key(key(KeyCode::Char('A')));
+        let popup = module.select_popup.as_ref().unwrap();
+        // v1 and v2 are available, v3/v4/v5 are in-use
+        assert_eq!(popup.item_count(), 2);
+    }
+
+    #[test]
+    fn test_detail_shift_a_select_volume_opens_confirm() {
+        let (mut module, _rx) = setup_detail_with_volumes();
+        module.handle_key(key(KeyCode::Char('A'))); // open popup
+        module.handle_key(key(KeyCode::Enter)); // select first volume (v1)
+        assert!(module.select_popup.is_none());
+        assert!(module.confirm.is_active(), "Selecting volume should open confirm");
+    }
+
+    #[test]
+    fn test_detail_shift_a_confirm_dispatches_attach() {
+        let (mut module, _rx) = setup_detail_with_volumes();
+        module.handle_key(key(KeyCode::Char('A'))); // open popup
+        module.handle_key(key(KeyCode::Enter)); // select v1
+        let action = module.handle_key(key(KeyCode::Char('y'))); // confirm
+        assert!(matches!(action, Some(Action::AttachVolume { volume_id, server_id, .. })
+            if volume_id == "v1" && server_id == "s1"));
+    }
+
+    #[test]
+    fn test_detail_shift_a_no_available_volumes_shows_toast() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut module = ServerModule::new(tx);
+        let servers = vec![make_test_server("s1", "web-01", "ACTIVE")];
+        module.handle_event(&AppEvent::ServersLoaded(servers));
+        // Only in-use volumes
+        module.handle_event(&AppEvent::VolumesLoaded(vec![
+            make_volume_attached("v3", "boot-vol", 40, "s1", "/dev/vda", "att-3"),
+        ]));
+        module.handle_key(key(KeyCode::Enter)); // detail
+        module.handle_key(key(KeyCode::Char('A')));
+        assert!(module.select_popup.is_none());
+        // Should show toast
+        let action = rx.try_recv().unwrap();
+        assert!(matches!(action, Action::ShowToast { .. }));
+    }
+
+    #[test]
+    fn test_detail_shift_a_empty_cache_fetches_volumes() {
+        let (mut module, mut rx) = setup();
+        module.handle_key(key(KeyCode::Enter)); // detail
+        module.handle_key(key(KeyCode::Char('A')));
+        let action = rx.try_recv().unwrap();
+        assert!(matches!(action, Action::FetchVolumes));
+    }
+
+    // -- Detach Volume tests --------------------------------------------------
+
+    #[test]
+    fn test_detail_x_single_attached_direct_confirm() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut module = ServerModule::new(tx);
+        let servers = vec![make_test_server("s1", "web-01", "ACTIVE")];
+        module.handle_event(&AppEvent::ServersLoaded(servers));
+        module.handle_event(&AppEvent::VolumesLoaded(vec![
+            make_volume_attached("v3", "boot-vol", 40, "s1", "/dev/vda", "att-3"),
+        ]));
+        module.handle_key(key(KeyCode::Enter)); // detail
+        module.handle_key(key(KeyCode::Char('x'))); // detach
+        // Single attachment → direct confirm, no popup
+        assert!(module.select_popup.is_none());
+        assert!(module.confirm.is_active());
+    }
+
+    #[test]
+    fn test_detail_x_multiple_attached_shows_popup() {
+        let (mut module, _rx) = setup_detail_with_volumes();
+        // s1 has v3 (/dev/vda) and v4 (/dev/vdb)
+        module.handle_key(key(KeyCode::Char('x')));
+        assert!(module.select_popup.is_some());
+        assert_eq!(module.popup_kind, Some(DetailPopupKind::DetachVolume));
+    }
+
+    #[test]
+    fn test_detail_x_no_attached_volumes_shows_toast() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut module = ServerModule::new(tx);
+        let servers = vec![make_test_server("s1", "web-01", "ACTIVE")];
+        module.handle_event(&AppEvent::ServersLoaded(servers));
+        module.handle_event(&AppEvent::VolumesLoaded(vec![
+            make_volume("v1", "data-vol", "available", 100, "SSD"),
+        ]));
+        module.handle_key(key(KeyCode::Enter)); // detail
+        module.handle_key(key(KeyCode::Char('x')));
+        let action = rx.try_recv().unwrap();
+        assert!(matches!(action, Action::ShowToast { .. }));
+    }
+
+    #[test]
+    fn test_detail_x_confirm_dispatches_detach() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut module = ServerModule::new(tx);
+        let servers = vec![make_test_server("s1", "web-01", "ACTIVE")];
+        module.handle_event(&AppEvent::ServersLoaded(servers));
+        module.handle_event(&AppEvent::VolumesLoaded(vec![
+            make_volume_attached("v3", "boot-vol", 40, "s1", "/dev/vda", "att-3"),
+        ]));
+        module.handle_key(key(KeyCode::Enter)); // detail
+        module.handle_key(key(KeyCode::Char('x'))); // detach
+        let action = module.handle_key(key(KeyCode::Char('y'))); // confirm
+        assert!(matches!(action, Some(Action::DetachVolume { volume_id, attachment_id })
+            if volume_id == "v3" && attachment_id == "att-3"));
+    }
+
+    #[test]
+    fn test_detail_x_select_from_multiple_then_confirm() {
+        let (mut module, _rx) = setup_detail_with_volumes();
+        module.handle_key(key(KeyCode::Char('x'))); // detach — popup with v3, v4
+        module.handle_key(key(KeyCode::Char('j'))); // select v4
+        module.handle_key(key(KeyCode::Enter)); // select
+        assert!(module.confirm.is_active());
+        let action = module.handle_key(key(KeyCode::Char('y'))); // confirm
+        assert!(matches!(action, Some(Action::DetachVolume { volume_id, attachment_id })
+            if volume_id == "v4" && attachment_id == "att-4"));
+    }
+
+    // -- Associate FIP tests --------------------------------------------------
+
+    #[test]
+    fn test_detail_f_opens_fip_popup() {
+        let (mut module, _rx) = setup_detail_with_fips();
+        module.handle_key(key(KeyCode::Char('f')));
+        assert!(module.select_popup.is_some());
+        assert_eq!(module.popup_kind, Some(DetailPopupKind::AssociateFip));
+    }
+
+    #[test]
+    fn test_detail_f_only_shows_unassociated_fips() {
+        let (mut module, _rx) = setup_detail_with_fips();
+        module.handle_key(key(KeyCode::Char('f')));
+        let popup = module.select_popup.as_ref().unwrap();
+        // fip-1 and fip-3 are unassociated, fip-2 has port_id
+        assert_eq!(popup.item_count(), 2);
+    }
+
+    #[test]
+    fn test_detail_f_select_fip_dispatches_fetch_ports() {
+        let (mut module, mut rx) = setup_detail_with_fips();
+        module.handle_key(key(KeyCode::Char('f'))); // open fip popup
+        module.handle_key(key(KeyCode::Enter)); // select fip-1
+        // Should dispatch FetchPorts for s1
+        let action = rx.try_recv().unwrap();
+        assert!(matches!(action, Action::FetchPorts { server_id } if server_id == "s1"));
+        assert!(module.pending_fip_id.is_some());
+    }
+
+    #[test]
+    fn test_detail_f_single_port_auto_confirm() {
+        let (mut module, _rx) = setup_detail_with_fips();
+        module.handle_key(key(KeyCode::Char('f'))); // open fip popup
+        module.handle_key(key(KeyCode::Enter)); // select fip-1
+        // Simulate single port loaded
+        module.handle_event(&AppEvent::PortsLoaded {
+            server_id: "s1".into(),
+            ports: vec![make_port("port-1", "10.0.0.5", "net-1", Some("s1"))],
+        });
+        // Should go directly to confirm (no port selection popup)
+        assert!(module.select_popup.is_none());
+        assert!(module.confirm.is_active());
+        assert!(module.pending_fip_id.is_none());
+    }
+
+    #[test]
+    fn test_detail_f_single_port_confirm_dispatches_associate() {
+        let (mut module, _rx) = setup_detail_with_fips();
+        module.handle_key(key(KeyCode::Char('f')));
+        module.handle_key(key(KeyCode::Enter)); // select fip-1
+        module.handle_event(&AppEvent::PortsLoaded {
+            server_id: "s1".into(),
+            ports: vec![make_port("port-1", "10.0.0.5", "net-1", Some("s1"))],
+        });
+        let action = module.handle_key(key(KeyCode::Char('y')));
+        assert!(matches!(action, Some(Action::AssociateFloatingIp { fip_id, port_id })
+            if fip_id == "fip-1" && port_id == "port-1"));
+    }
+
+    #[test]
+    fn test_detail_f_multiple_ports_shows_port_popup() {
+        let (mut module, _rx) = setup_detail_with_fips();
+        module.handle_key(key(KeyCode::Char('f')));
+        module.handle_key(key(KeyCode::Enter)); // select fip-1
+        module.handle_event(&AppEvent::PortsLoaded {
+            server_id: "s1".into(),
+            ports: vec![
+                make_port("port-1", "10.0.0.5", "net-1", Some("s1")),
+                make_port("port-2", "10.0.0.6", "net-1", Some("s1")),
+            ],
+        });
+        assert!(module.select_popup.is_some());
+        assert_eq!(module.popup_kind, Some(DetailPopupKind::SelectPort));
+    }
+
+    #[test]
+    fn test_detail_f_select_port_then_confirm() {
+        let (mut module, _rx) = setup_detail_with_fips();
+        module.handle_key(key(KeyCode::Char('f')));
+        module.handle_key(key(KeyCode::Enter)); // select fip-1
+        module.handle_event(&AppEvent::PortsLoaded {
+            server_id: "s1".into(),
+            ports: vec![
+                make_port("port-1", "10.0.0.5", "net-1", Some("s1")),
+                make_port("port-2", "10.0.0.6", "net-1", Some("s1")),
+            ],
+        });
+        module.handle_key(key(KeyCode::Enter)); // select port-1
+        assert!(module.confirm.is_active());
+        let action = module.handle_key(key(KeyCode::Char('y')));
+        assert!(matches!(action, Some(Action::AssociateFloatingIp { fip_id, port_id })
+            if fip_id == "fip-1" && port_id == "port-1"));
+    }
+
+    #[test]
+    fn test_detail_f_no_ports_shows_toast() {
+        let (mut module, mut rx) = setup_detail_with_fips();
+        module.handle_key(key(KeyCode::Char('f')));
+        module.handle_key(key(KeyCode::Enter)); // select fip-1
+        // Drain the FetchPorts action
+        let fetch_action = rx.try_recv().unwrap();
+        assert!(matches!(fetch_action, Action::FetchPorts { .. }));
+        module.handle_event(&AppEvent::PortsLoaded {
+            server_id: "s1".into(),
+            ports: vec![],
+        });
+        assert!(module.select_popup.is_none());
+        assert!(!module.confirm.is_active());
+        let action = rx.try_recv().unwrap();
+        assert!(matches!(action, Action::ShowToast { .. }));
+    }
+
+    #[test]
+    fn test_detail_f_empty_cache_fetches_floating_ips() {
+        let (mut module, mut rx) = setup();
+        module.handle_key(key(KeyCode::Enter)); // detail
+        module.handle_key(key(KeyCode::Char('f')));
+        let action = rx.try_recv().unwrap();
+        assert!(matches!(action, Action::FetchFloatingIps));
+    }
+
+    #[test]
+    fn test_detail_f_no_unassociated_fips_shows_toast() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut module = ServerModule::new(tx);
+        let servers = vec![make_test_server("s1", "web-01", "ACTIVE")];
+        module.handle_event(&AppEvent::ServersLoaded(servers));
+        // All FIPs are associated
+        module.handle_event(&AppEvent::FloatingIpsLoaded(vec![
+            make_fip("fip-2", "203.0.113.20", Some("port-99")),
+        ]));
+        module.handle_key(key(KeyCode::Enter)); // detail
+        module.handle_key(key(KeyCode::Char('f')));
+        let action = rx.try_recv().unwrap();
+        assert!(matches!(action, Action::ShowToast { .. }));
+    }
+
+    // -- Event handling tests -------------------------------------------------
+
+    #[test]
+    fn test_volumes_loaded_caches_volumes() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut module = ServerModule::new(tx);
+        assert!(module.cached_volumes.is_empty());
+        module.handle_event(&AppEvent::VolumesLoaded(vec![
+            make_volume("v1", "test-vol", "available", 50, "SSD"),
+        ]));
+        assert_eq!(module.cached_volumes.len(), 1);
+    }
+
+    #[test]
+    fn test_floating_ips_loaded_caches_fips() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut module = ServerModule::new(tx);
+        assert!(module.cached_floating_ips.is_empty());
+        module.handle_event(&AppEvent::FloatingIpsLoaded(vec![
+            make_fip("fip-1", "203.0.113.10", None),
+        ]));
+        assert_eq!(module.cached_floating_ips.len(), 1);
+    }
+
+    #[test]
+    fn test_volume_attached_triggers_fetch_servers() {
+        let (mut module, mut rx) = setup();
+        module.handle_event(&AppEvent::VolumeAttached {
+            volume_id: "v1".into(),
+            server_id: "s1".into(),
+        });
+        let action = rx.try_recv().unwrap();
+        assert!(matches!(action, Action::FetchServers));
+    }
+
+    #[test]
+    fn test_volume_detached_triggers_fetch_servers() {
+        let (mut module, mut rx) = setup();
+        module.handle_event(&AppEvent::VolumeDetached {
+            volume_id: "v1".into(),
+        });
+        let action = rx.try_recv().unwrap();
+        assert!(matches!(action, Action::FetchServers));
+    }
+
+    #[test]
+    fn test_fip_associated_triggers_fetch_servers() {
+        let (mut module, mut rx) = setup();
+        module.handle_event(&AppEvent::FloatingIpAssociated(FloatingIp {
+            id: "fip-1".into(),
+            floating_ip_address: "203.0.113.10".into(),
+            status: "ACTIVE".into(),
+            port_id: Some("port-1".into()),
+            floating_network_id: "ext-1".into(),
+            fixed_ip_address: None,
+            router_id: None,
+            tenant_id: None,
+        }));
+        let action = rx.try_recv().unwrap();
+        assert!(matches!(action, Action::FetchServers));
+    }
+
+    // -- resolve_action for volume/fip -----------------------------------------
+
+    #[test]
+    fn test_resolve_attach_volume() {
+        let action = ServerModule::resolve_action(PendingAction::AttachVolume {
+            volume_id: "v1".into(),
+            server_id: "s1".into(),
+            device: None,
+        });
+        assert!(matches!(action, Some(Action::AttachVolume { volume_id, server_id, .. })
+            if volume_id == "v1" && server_id == "s1"));
+    }
+
+    #[test]
+    fn test_resolve_detach_volume() {
+        let action = ServerModule::resolve_action(PendingAction::DetachVolume {
+            volume_id: "v1".into(),
+            attachment_id: "att-1".into(),
+        });
+        assert!(matches!(action, Some(Action::DetachVolume { volume_id, attachment_id })
+            if volume_id == "v1" && attachment_id == "att-1"));
+    }
+
+    #[test]
+    fn test_resolve_associate_fip() {
+        let action = ServerModule::resolve_action(PendingAction::AssociateFloatingIp {
+            fip_id: "fip-1".into(),
+            port_id: "port-1".into(),
+        });
+        assert!(matches!(action, Some(Action::AssociateFloatingIp { fip_id, port_id })
+            if fip_id == "fip-1" && port_id == "port-1"));
+    }
+
+    // -- help_hint includes new keys ------------------------------------------
+
+    #[test]
+    fn test_help_hint_detail_includes_attach_vol() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Enter)); // detail
+        let hint = module.help_hint();
+        assert!(hint.contains("A:AttachVol"), "Detail hint should mention AttachVol");
+    }
+
+    #[test]
+    fn test_help_hint_detail_includes_detach_vol() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Enter));
+        let hint = module.help_hint();
+        assert!(hint.contains("x:DetachVol"), "Detail hint should mention DetachVol");
+    }
+
+    #[test]
+    fn test_help_hint_detail_includes_assoc_fip() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Enter));
+        let hint = module.help_hint();
+        assert!(hint.contains("f:AssocFIP"), "Detail hint should mention AssocFIP");
+    }
+
+    // -- Popup cancel tests ---------------------------------------------------
+
+    #[test]
+    fn test_attach_popup_cancel() {
+        let (mut module, _rx) = setup_detail_with_volumes();
+        module.handle_key(key(KeyCode::Char('A')));
+        assert!(module.select_popup.is_some());
+        module.handle_key(key(KeyCode::Esc));
+        assert!(module.select_popup.is_none());
+        assert!(module.popup_kind.is_none());
+    }
+
+    #[test]
+    fn test_fip_popup_cancel_clears_pending() {
+        let (mut module, _rx) = setup_detail_with_fips();
+        module.handle_key(key(KeyCode::Char('f')));
+        module.handle_key(key(KeyCode::Enter)); // select fip → fetch ports
+        // Simulate multi-port
+        module.handle_event(&AppEvent::PortsLoaded {
+            server_id: "s1".into(),
+            ports: vec![
+                make_port("port-1", "10.0.0.5", "net-1", Some("s1")),
+                make_port("port-2", "10.0.0.6", "net-1", Some("s1")),
+            ],
+        });
+        assert!(module.pending_fip_id.is_some());
+        module.handle_key(key(KeyCode::Esc)); // cancel port popup
+        assert!(module.pending_fip_id.is_none());
+    }
+
+    // -- Detach volume only shows current server's volumes --------------------
+
+    #[test]
+    fn test_detail_x_only_shows_current_server_volumes() {
+        let (mut module, _rx) = setup_detail_with_volumes();
+        // s1 is current server, v3 and v4 are attached to s1, v5 to s2
+        module.handle_key(key(KeyCode::Char('x')));
+        let popup = module.select_popup.as_ref().unwrap();
+        assert_eq!(popup.item_count(), 2, "Should only show s1's volumes (v3, v4), not s2's");
+    }
+
+    // -- PortsLoaded is only handled when pending_fip_id is set ---------------
+
+    #[test]
+    fn test_ports_loaded_ignored_without_pending_fip() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Enter)); // detail
+        // No pending_fip_id → should not create popup or confirm
+        module.handle_event(&AppEvent::PortsLoaded {
+            server_id: "s1".into(),
+            ports: vec![make_port("port-1", "10.0.0.5", "net-1", Some("s1"))],
+        });
+        assert!(module.select_popup.is_none());
+        assert!(!module.confirm.is_active());
     }
 }

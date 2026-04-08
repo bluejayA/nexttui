@@ -51,6 +51,14 @@ pub enum PendingAction {
     Resize { id: String, flavor_id: String },
     ConfirmResize { id: String },
     RevertResize { id: String },
+    // Cinder: Attach/Detach
+    AttachVolume { volume_id: String, server_id: String, device: Option<String> },
+    DetachVolume { volume_id: String, attachment_id: String },
+    ForceDetachVolume { volume_id: String, attachment_id: String },
+    ForceResetVolumeState { volume_id: String },
+    // Neutron: Floating IP
+    AssociateFloatingIp { fip_id: String, port_id: String },
+    DisassociateFloatingIp { fip_id: String },
     // Nova: Migration / Evacuate
     LiveMigrate { id: String },
     ColdMigrate { id: String },
@@ -171,6 +179,19 @@ mod tests {
             },
         ];
         assert_eq!(actions.len(), 12);
+    }
+
+    #[test]
+    fn test_volume_fip_pending_action_variants() {
+        let actions: Vec<PendingAction> = vec![
+            PendingAction::AttachVolume { volume_id: "v1".into(), server_id: "s1".into(), device: Some("/dev/vdb".into()) },
+            PendingAction::DetachVolume { volume_id: "v1".into(), attachment_id: "att-1".into() },
+            PendingAction::ForceDetachVolume { volume_id: "v1".into(), attachment_id: "att-1".into() },
+            PendingAction::ForceResetVolumeState { volume_id: "v1".into() },
+            PendingAction::AssociateFloatingIp { fip_id: "fip-1".into(), port_id: "port-1".into() },
+            PendingAction::DisassociateFloatingIp { fip_id: "fip-1".into() },
+        ];
+        assert_eq!(actions.len(), 6);
     }
 
     #[test]

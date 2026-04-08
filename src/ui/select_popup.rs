@@ -34,22 +34,35 @@ pub enum SelectResult {
 pub struct SelectPopup {
     title: String,
     items: Vec<SelectItem>,
+    all_items: Vec<SelectItem>,
     selected: usize,
     active: bool,
+    search_query: Option<String>,
 }
 
 impl SelectPopup {
     pub fn new(title: impl Into<String>, items: Vec<SelectItem>) -> Self {
+        let all_items = items.clone();
         Self {
             title: title.into(),
             items,
+            all_items,
             selected: 0,
             active: true,
+            search_query: None,
         }
     }
 
     pub fn is_active(&self) -> bool {
         self.active
+    }
+
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    pub fn item_count(&self) -> usize {
+        self.items.len()
     }
 
     pub fn selected_index(&self) -> usize {
@@ -60,45 +73,119 @@ impl SelectPopup {
         &self.items
     }
 
+    pub fn is_search_mode(&self) -> bool {
+        self.search_query.is_some()
+    }
+
+    pub fn search_query(&self) -> Option<&str> {
+        self.search_query.as_deref()
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent) -> SelectResult {
         if !self.active {
             return SelectResult::Pending;
         }
-        match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => {
-                self.active = false;
-                SelectResult::Cancelled
+
+        if let Some(ref mut query) = self.search_query {
+            // Search mode
+            match key.code {
+                KeyCode::Esc => {
+                    self.search_query = None;
+                    self.items = self.all_items.clone();
+                    self.selected = 0;
+                    SelectResult::Pending
+                }
+                KeyCode::Enter => {
+                    if let Some(item) = self.items.get(self.selected) {
+                        self.active = false;
+                        SelectResult::Selected(item.id.clone())
+                    } else {
+                        SelectResult::Cancelled
+                    }
+                }
+                KeyCode::Down => {
+                    if self.selected + 1 < self.items.len() {
+                        self.selected += 1;
+                    }
+                    SelectResult::Pending
+                }
+                KeyCode::Up => {
+                    self.selected = self.selected.saturating_sub(1);
+                    SelectResult::Pending
+                }
+                KeyCode::Backspace => {
+                    query.pop();
+                    self.apply_search_filter();
+                    SelectResult::Pending
+                }
+                KeyCode::Char(c) => {
+                    query.push(c);
+                    self.apply_search_filter();
+                    SelectResult::Pending
+                }
+                _ => SelectResult::Pending,
             }
-            KeyCode::Enter => {
-                if let Some(item) = self.items.get(self.selected) {
+        } else {
+            // Normal mode
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('q') => {
                     self.active = false;
-                    SelectResult::Selected(item.id.clone())
-                } else {
                     SelectResult::Cancelled
                 }
-            }
-            KeyCode::Char('j') | KeyCode::Down => {
-                if self.selected + 1 < self.items.len() {
-                    self.selected += 1;
+                KeyCode::Enter => {
+                    if let Some(item) = self.items.get(self.selected) {
+                        self.active = false;
+                        SelectResult::Selected(item.id.clone())
+                    } else {
+                        SelectResult::Cancelled
+                    }
                 }
-                SelectResult::Pending
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.selected = self.selected.saturating_sub(1);
-                SelectResult::Pending
-            }
-            KeyCode::Char('g') => {
-                self.selected = 0;
-                SelectResult::Pending
-            }
-            KeyCode::Char('G') => {
-                if !self.items.is_empty() {
-                    self.selected = self.items.len() - 1;
+                KeyCode::Char('/') => {
+                    self.search_query = Some(String::new());
+                    SelectResult::Pending
                 }
-                SelectResult::Pending
+                KeyCode::Char('j') | KeyCode::Down => {
+                    if self.selected + 1 < self.items.len() {
+                        self.selected += 1;
+                    }
+                    SelectResult::Pending
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    self.selected = self.selected.saturating_sub(1);
+                    SelectResult::Pending
+                }
+                KeyCode::Char('g') => {
+                    self.selected = 0;
+                    SelectResult::Pending
+                }
+                KeyCode::Char('G') => {
+                    if !self.items.is_empty() {
+                        self.selected = self.items.len() - 1;
+                    }
+                    SelectResult::Pending
+                }
+                _ => SelectResult::Pending,
             }
-            _ => SelectResult::Pending,
         }
+    }
+
+    fn apply_search_filter(&mut self) {
+        let query = self.search_query.as_deref().unwrap_or("");
+        if query.is_empty() {
+            self.items = self.all_items.clone();
+        } else {
+            let query_lower = query.to_lowercase();
+            self.items = self
+                .all_items
+                .iter()
+                .filter(|item| {
+                    item.label.to_lowercase().contains(&query_lower)
+                        || item.id.to_lowercase().contains(&query_lower)
+                })
+                .cloned()
+                .collect();
+        }
+        self.selected = 0;
     }
 
     pub fn render(&self, frame: &mut Frame, area: Rect) {
@@ -170,13 +257,25 @@ impl SelectPopup {
         // Bottom hint using theme::key_hint()
         lines.push(Line::from(""));
         let mut hint_spans = Vec::new();
-        for (key, desc) in [("j/k", ":Move  "), ("Enter", ":Select  "), ("Esc", ":Cancel")] {
-            hint_spans.extend(theme::key_hint(key, desc));
+        if self.search_query.is_some() {
+            for (key, desc) in [("↑/↓", ":Move  "), ("Enter", ":Select  "), ("Esc", ":Back")] {
+                hint_spans.extend(theme::key_hint(key, desc));
+            }
+        } else {
+            for (key, desc) in [("j/k", ":Move  "), ("/", ":Search  "), ("Enter", ":Select  "), ("Esc", ":Cancel")] {
+                hint_spans.extend(theme::key_hint(key, desc));
+            }
         }
         lines.push(Line::from(hint_spans));
 
+        let display_title = if let Some(ref query) = self.search_query {
+            format!(" {} [/{}] ", self.title, query)
+        } else {
+            format!(" {} ", self.title)
+        };
+
         let block = Block::default()
-            .title(format!(" {} ", self.title))
+            .title(display_title)
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(Theme::warning().add_modifier(Modifier::BOLD))
@@ -284,5 +383,159 @@ mod tests {
         assert_eq!(popup.selected_index(), 1);
         popup.handle_key(key(KeyCode::Up));
         assert_eq!(popup.selected_index(), 0);
+    }
+
+    // --- Search mode tests ---
+
+    #[test]
+    fn test_slash_enters_search_mode() {
+        let mut popup = SelectPopup::new("Test", make_items());
+        let result = popup.handle_key(key(KeyCode::Char('/')));
+        assert!(matches!(result, SelectResult::Pending));
+        assert!(popup.is_search_mode());
+    }
+
+    #[test]
+    fn test_search_filters_items_by_label() {
+        let mut popup = SelectPopup::new("Test", make_items());
+        popup.handle_key(key(KeyCode::Char('/'))); // enter search mode
+        popup.handle_key(key(KeyCode::Char('t'))); // type 't' -> matches "m1.tiny"
+        popup.handle_key(key(KeyCode::Char('i')));
+        popup.handle_key(key(KeyCode::Char('n')));
+        popup.handle_key(key(KeyCode::Char('y')));
+        assert_eq!(popup.items().len(), 1);
+        assert_eq!(popup.items()[0].id, "f1");
+        assert_eq!(popup.selected_index(), 0);
+    }
+
+    #[test]
+    fn test_search_filters_items_by_id() {
+        let mut popup = SelectPopup::new("Test", make_items());
+        popup.handle_key(key(KeyCode::Char('/'))); // enter search
+        popup.handle_key(key(KeyCode::Char('f')));
+        popup.handle_key(key(KeyCode::Char('3')));
+        assert_eq!(popup.items().len(), 1);
+        assert_eq!(popup.items()[0].id, "f3");
+    }
+
+    #[test]
+    fn test_search_case_insensitive() {
+        let mut popup = SelectPopup::new("Test", make_items());
+        popup.handle_key(key(KeyCode::Char('/'))); // enter search
+        popup.handle_key(key(KeyCode::Char('S'))); // uppercase S -> should match "m1.small"
+        popup.handle_key(key(KeyCode::Char('M')));
+        popup.handle_key(key(KeyCode::Char('A')));
+        popup.handle_key(key(KeyCode::Char('L')));
+        popup.handle_key(key(KeyCode::Char('L')));
+        assert_eq!(popup.items().len(), 1);
+        assert_eq!(popup.items()[0].id, "f2");
+    }
+
+    #[test]
+    fn test_search_backspace_refilters() {
+        let mut popup = SelectPopup::new("Test", make_items());
+        popup.handle_key(key(KeyCode::Char('/'))); // enter search
+        popup.handle_key(key(KeyCode::Char('t')));
+        popup.handle_key(key(KeyCode::Char('i')));
+        popup.handle_key(key(KeyCode::Char('n')));
+        popup.handle_key(key(KeyCode::Char('y')));
+        assert_eq!(popup.items().len(), 1);
+        // backspace 4 times -> back to empty query, all items shown
+        popup.handle_key(key(KeyCode::Backspace));
+        popup.handle_key(key(KeyCode::Backspace));
+        popup.handle_key(key(KeyCode::Backspace));
+        popup.handle_key(key(KeyCode::Backspace));
+        assert_eq!(popup.items().len(), 4);
+    }
+
+    #[test]
+    fn test_search_esc_restores_all_items() {
+        let mut popup = SelectPopup::new("Test", make_items());
+        popup.handle_key(key(KeyCode::Char('/'))); // enter search
+        popup.handle_key(key(KeyCode::Char('t')));
+        popup.handle_key(key(KeyCode::Char('i')));
+        assert!(popup.items().len() < 4); // filtered
+        popup.handle_key(key(KeyCode::Esc)); // exit search
+        assert!(!popup.is_search_mode());
+        assert_eq!(popup.items().len(), 4); // restored
+        assert!(popup.is_active()); // still active (not cancelled)
+    }
+
+    #[test]
+    fn test_search_enter_selects_from_filtered() {
+        let mut popup = SelectPopup::new("Test", make_items());
+        popup.handle_key(key(KeyCode::Char('/'))); // enter search
+        popup.handle_key(key(KeyCode::Char('m')));
+        popup.handle_key(key(KeyCode::Char('e')));
+        popup.handle_key(key(KeyCode::Char('d')));
+        // should have filtered to "m1.medium"
+        assert_eq!(popup.items().len(), 1);
+        let result = popup.handle_key(key(KeyCode::Enter));
+        assert!(matches!(result, SelectResult::Selected(id) if id == "f3"));
+    }
+
+    #[test]
+    fn test_search_arrow_keys_navigate_filtered() {
+        let mut popup = SelectPopup::new("Test", make_items());
+        popup.handle_key(key(KeyCode::Char('/'))); // enter search
+        popup.handle_key(key(KeyCode::Char('m'))); // matches all items starting with m1
+        // all 4 items have "m1" in label
+        assert!(popup.items().len() > 1);
+        popup.handle_key(key(KeyCode::Down));
+        assert_eq!(popup.selected_index(), 1);
+        popup.handle_key(key(KeyCode::Up));
+        assert_eq!(popup.selected_index(), 0);
+    }
+
+    #[test]
+    fn test_search_j_k_are_text_input_not_navigation() {
+        let mut popup = SelectPopup::new("Test", make_items());
+        popup.handle_key(key(KeyCode::Char('/'))); // enter search
+        popup.handle_key(key(KeyCode::Char('j'))); // should be text, not nav
+        // 'j' is not in any item label/id, so filter should reduce
+        // But it's treated as text input to search query
+        assert!(popup.is_search_mode());
+        // The query should be "j", not navigation
+    }
+
+    #[test]
+    fn test_search_no_match_shows_empty() {
+        let mut popup = SelectPopup::new("Test", make_items());
+        popup.handle_key(key(KeyCode::Char('/'))); // enter search
+        popup.handle_key(key(KeyCode::Char('z')));
+        popup.handle_key(key(KeyCode::Char('z')));
+        popup.handle_key(key(KeyCode::Char('z')));
+        assert_eq!(popup.items().len(), 0);
+    }
+
+    #[test]
+    fn test_search_enter_on_empty_filtered_cancels() {
+        let mut popup = SelectPopup::new("Test", make_items());
+        popup.handle_key(key(KeyCode::Char('/'))); // enter search
+        popup.handle_key(key(KeyCode::Char('z')));
+        popup.handle_key(key(KeyCode::Char('z')));
+        let result = popup.handle_key(key(KeyCode::Enter));
+        assert!(matches!(result, SelectResult::Cancelled));
+    }
+
+    #[test]
+    fn test_normal_mode_slash_does_not_cancel() {
+        let mut popup = SelectPopup::new("Test", make_items());
+        popup.handle_key(key(KeyCode::Char('/')));
+        assert!(popup.is_active());
+        assert!(popup.is_search_mode());
+    }
+
+    #[test]
+    fn test_search_query_display() {
+        let popup_for_title = SelectPopup::new("Select Flavor", make_items());
+        // Verify search_query accessor
+        assert!(popup_for_title.search_query().is_none());
+
+        let mut popup = SelectPopup::new("Select Flavor", make_items());
+        popup.handle_key(key(KeyCode::Char('/')));
+        assert_eq!(popup.search_query(), Some(""));
+        popup.handle_key(key(KeyCode::Char('a')));
+        assert_eq!(popup.search_query(), Some("a"));
     }
 }

@@ -219,6 +219,21 @@ impl CinderPort for CinderHttpAdapter {
         Err(ApiError::BadRequest("not yet implemented".into()))
     }
 
+    async fn force_detach_volume(&self, volume_id: &str, attachment_id: &str) -> ApiResult<()> {
+        let body = serde_json::json!({
+            "os-force_detach": {
+                "attachment_id": attachment_id,
+                "connector": {}
+            }
+        });
+        let req = self
+            .base
+            .post(&format!("/volumes/{}/action", encode_param(volume_id)))
+            .await?
+            .json(&body);
+        self.base.send_no_content(req).await
+    }
+
     async fn force_set_volume_state(&self, volume_id: &str, state: &str) -> ApiResult<()> {
         let body = serde_json::json!({
             "os-reset_status": { "status": state }
