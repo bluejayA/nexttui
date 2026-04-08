@@ -12,7 +12,7 @@ use crate::models::glance::Image;
 use crate::models::keystone::Project;
 use crate::models::neutron::{FloatingIp, Network, SecurityGroup, SecurityGroupRule};
 use crate::models::nova::{
-    Address, Flavor, FlavorRef, ImageRef, Server,
+    Address, Flavor, FlavorRef, ImageRef, Server, ServerSecurityGroup,
 };
 use crate::registry::{ModuleRegistry, register_all_modules};
 
@@ -76,6 +76,10 @@ fn demo_servers() -> Vec<Server> {
             host_id: None,
             host: Some("compute-01".into()),
             volumes_attached: vec![],
+            security_groups: vec![
+                ServerSecurityGroup { name: "default".into() },
+                ServerSecurityGroup { name: "web-sg".into() },
+            ],
         },
         Server {
             id: "b2c3d4e5-2222-3333-4444-555566667777".into(),
@@ -98,6 +102,10 @@ fn demo_servers() -> Vec<Server> {
             host_id: None,
             host: Some("compute-02".into()),
             volumes_attached: vec![],
+            security_groups: vec![
+                ServerSecurityGroup { name: "default".into() },
+                ServerSecurityGroup { name: "web-sg".into() },
+            ],
         },
         Server {
             id: "c3d4e5f6-3333-4444-5555-666677778888".into(),
@@ -120,6 +128,10 @@ fn demo_servers() -> Vec<Server> {
             host_id: None,
             host: Some("compute-01".into()),
             volumes_attached: vec![],
+            security_groups: vec![
+                ServerSecurityGroup { name: "default".into() },
+                ServerSecurityGroup { name: "db-sg".into() },
+            ],
         },
         Server {
             id: "d4e5f6a7-4444-5555-6666-777788889999".into(),
@@ -142,6 +154,9 @@ fn demo_servers() -> Vec<Server> {
             host_id: None,
             host: Some("compute-03".into()),
             volumes_attached: vec![],
+            security_groups: vec![
+                ServerSecurityGroup { name: "default".into() },
+            ],
         },
         Server {
             id: "e5f6a7b8-5555-6666-7777-888899990000".into(),
@@ -158,6 +173,7 @@ fn demo_servers() -> Vec<Server> {
             host_id: None,
             host: None,
             volumes_attached: vec![],
+            security_groups: vec![],
         },
     ]
 }

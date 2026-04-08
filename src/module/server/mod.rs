@@ -723,6 +723,19 @@ impl ServerModule {
                 }
                 None
             }
+            // Resource navigation shortcuts
+            KeyCode::Char('v') => {
+                return Some(Action::Navigate(crate::models::common::Route::Volumes));
+            }
+            KeyCode::Char('n') => {
+                return Some(Action::Navigate(crate::models::common::Route::Networks));
+            }
+            KeyCode::Char('s') => {
+                return Some(Action::Navigate(crate::models::common::Route::SecurityGroups));
+            }
+            KeyCode::Char('i') => {
+                return Some(Action::Navigate(crate::models::common::Route::Images));
+            }
             // Associate floating IP
             KeyCode::Char('f') => {
                 let items = self.build_available_fip_items();
@@ -1030,15 +1043,15 @@ impl Component for ServerModule {
                 let is_error = server.is_some_and(|s| s.status == "ERROR");
 
                 if is_verify && self.is_admin {
-                    "Esc:Back R:Reboot S:Start X:Stop F:Resize A:AttachVol x:DetachVol f:AssocFIP M:Migrate C:Cold Y:Confirm N:Revert"
+                    "Esc:Back R:Reboot S:Start X:Stop F:Resize A:AttachVol x:DetachVol f:AssocFIP M:Migrate C:Cold Y:Confirm N:Revert | v:Vol n:Net s:SG i:Img"
                 } else if is_verify {
-                    "Esc:Back R:Reboot S:Start X:Stop F:Resize A:AttachVol x:DetachVol f:AssocFIP Y:Confirm N:Revert"
+                    "Esc:Back R:Reboot S:Start X:Stop F:Resize A:AttachVol x:DetachVol f:AssocFIP Y:Confirm N:Revert | v:Vol n:Net s:SG i:Img"
                 } else if is_error && self.is_admin {
-                    "Esc:Back R:Reboot S:Start X:Stop F:Resize A:AttachVol x:DetachVol f:AssocFIP M:Migrate C:Cold E:Evacuate"
+                    "Esc:Back R:Reboot S:Start X:Stop F:Resize A:AttachVol x:DetachVol f:AssocFIP M:Migrate C:Cold E:Evacuate | v:Vol n:Net s:SG i:Img"
                 } else if self.is_admin {
-                    "Esc:Back R:Reboot S:Start X:Stop F:Resize A:AttachVol x:DetachVol f:AssocFIP M:Migrate C:Cold"
+                    "Esc:Back R:Reboot S:Start X:Stop F:Resize A:AttachVol x:DetachVol f:AssocFIP M:Migrate C:Cold | v:Vol n:Net s:SG i:Img"
                 } else {
-                    "Esc:Back R:Reboot S:Start X:Stop F:Resize A:AttachVol x:DetachVol f:AssocFIP"
+                    "Esc:Back R:Reboot S:Start X:Stop F:Resize A:AttachVol x:DetachVol f:AssocFIP | v:Vol n:Net s:SG i:Img"
                 }
             }
             ViewState::Create => "Esc:Cancel Tab:Next Enter:Submit",
@@ -1049,6 +1062,7 @@ impl Component for ServerModule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::common::Route;
     use crate::models::nova::{FlavorRef, ImageRef};
     use std::collections::HashMap;
 
@@ -1078,6 +1092,7 @@ mod tests {
             host_id: None,
             host: None,
             volumes_attached: vec![],
+            security_groups: vec![],
         }
     }
 
@@ -2537,5 +2552,50 @@ mod tests {
         });
         assert!(module.select_popup.is_none());
         assert!(!module.confirm.is_active());
+    }
+
+    // -- Resource navigation from detail view -----------------------------------
+
+    #[test]
+    fn test_detail_navigate_to_volumes() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Enter)); // enter detail
+        let action = module.handle_key(key(KeyCode::Char('v')));
+        assert!(matches!(action, Some(Action::Navigate(Route::Volumes))));
+    }
+
+    #[test]
+    fn test_detail_navigate_to_networks() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Enter));
+        let action = module.handle_key(key(KeyCode::Char('n')));
+        assert!(matches!(action, Some(Action::Navigate(Route::Networks))));
+    }
+
+    #[test]
+    fn test_detail_navigate_to_security_groups() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Enter));
+        let action = module.handle_key(key(KeyCode::Char('s')));
+        assert!(matches!(action, Some(Action::Navigate(Route::SecurityGroups))));
+    }
+
+    #[test]
+    fn test_detail_navigate_to_images() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Enter));
+        let action = module.handle_key(key(KeyCode::Char('i')));
+        assert!(matches!(action, Some(Action::Navigate(Route::Images))));
+    }
+
+    #[test]
+    fn test_detail_help_hint_includes_navigation() {
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Enter));
+        let hint = module.help_hint();
+        assert!(hint.contains("v:Vol"), "help_hint should contain v:Vol");
+        assert!(hint.contains("n:Net"), "help_hint should contain n:Net");
+        assert!(hint.contains("s:SG"), "help_hint should contain s:SG");
+        assert!(hint.contains("i:Img"), "help_hint should contain i:Img");
     }
 }

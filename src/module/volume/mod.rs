@@ -727,6 +727,7 @@ mod tests {
             host_id: None,
             host: None,
             volumes_attached: vec![],
+            security_groups: vec![],
         }
     }
 

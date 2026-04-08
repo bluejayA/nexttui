@@ -316,6 +316,22 @@ pub fn server_detail_data_full(
         }
     }
 
+    // Security Groups
+    if !server.security_groups.is_empty() {
+        let sg_names: Vec<String> = server.security_groups.iter().map(|sg| sg.name.clone()).collect();
+        sections.push(DetailSection {
+            name: "Security Groups".into(),
+            fields: sg_names
+                .iter()
+                .map(|name| DetailField::KeyValue {
+                    key: "SG".into(),
+                    value: name.clone(),
+                    style: None,
+                })
+                .collect(),
+        });
+    }
+
     // Attached Volumes
     if !server.volumes_attached.is_empty() {
         let vol_columns = vec!["Name".into(), "Size".into(), "Status".into(), "Device".into()];
@@ -515,6 +531,7 @@ mod tests {
             host_id: None,
             host: Some("compute-01".into()),
             volumes_attached: vec![],
+            security_groups: vec![],
         }
     }
 
@@ -750,5 +767,39 @@ mod tests {
         } else {
             panic!("Expected KeyValue in banner");
         }
+    }
+
+    #[test]
+    fn test_detail_security_groups_section() {
+        use crate::models::nova::ServerSecurityGroup;
+        let mut server = make_server("ACTIVE");
+        server.security_groups = vec![
+            ServerSecurityGroup { name: "default".into() },
+            ServerSecurityGroup { name: "web-sg".into() },
+        ];
+        let data = server_detail_data(&server);
+        let sg_section = data.sections.iter().find(|s| s.name == "Security Groups");
+        assert!(sg_section.is_some(), "Security Groups section should exist");
+        let fields = &sg_section.unwrap().fields;
+        assert_eq!(fields.len(), 2);
+        if let DetailField::KeyValue { key, value, .. } = &fields[0] {
+            assert_eq!(key, "SG");
+            assert_eq!(value, "default");
+        } else {
+            panic!("Expected KeyValue for SG field");
+        }
+        if let DetailField::KeyValue { value, .. } = &fields[1] {
+            assert_eq!(value, "web-sg");
+        } else {
+            panic!("Expected KeyValue for SG field");
+        }
+    }
+
+    #[test]
+    fn test_detail_no_security_groups_when_empty() {
+        let server = make_server("ACTIVE");
+        let data = server_detail_data(&server);
+        let sg_section = data.sections.iter().find(|s| s.name == "Security Groups");
+        assert!(sg_section.is_none(), "Security Groups section should not exist when empty");
     }
 }
