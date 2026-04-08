@@ -116,7 +116,7 @@ pub fn server_to_row_full(server: &Server, show_tenant: bool, show_host: bool) -
 }
 
 pub fn server_detail_data(server: &Server) -> DetailData {
-    server_detail_data_full(server, None, None, false, &[])
+    server_detail_data_full(server, None, None, false, &[], &[])
 }
 
 pub fn server_detail_data_full(
@@ -125,6 +125,7 @@ pub fn server_detail_data_full(
     flavor: Option<&Flavor>,
     is_resize_pending: bool,
     cached_volumes: &[crate::models::cinder::Volume],
+    cached_floating_ips: &[crate::models::neutron::FloatingIp],
 ) -> DetailData {
     let mut sections = vec![];
 
@@ -267,6 +268,52 @@ pub fn server_detail_data_full(
                 rows: net_rows,
             }],
         });
+    }
+
+    // Floating IPs — match by floating IP address in server.addresses
+    {
+        let mut fip_fields = Vec::new();
+        // Collect floating IPs from addresses
+        let floating_addrs: Vec<&str> = server.addresses.values()
+            .flat_map(|addrs| addrs.iter())
+            .filter(|a| a.ip_type.as_deref() == Some("floating"))
+            .map(|a| a.addr.as_str())
+            .collect();
+
+        // Match against cached FIPs for full info
+        for addr in &floating_addrs {
+            if let Some(fip) = cached_floating_ips.iter().find(|f| f.floating_ip_address == *addr) {
+                fip_fields.push(DetailField::KeyValue {
+                    key: "FIP".into(),
+                    value: format!("{} → {}", fip.floating_ip_address,
+                        fip.fixed_ip_address.as_deref().unwrap_or("-")),
+                    style: Some(RowStyleHint::Active),
+                });
+                fip_fields.push(DetailField::KeyValue {
+                    key: "  ID".into(),
+                    value: fip.id.clone(),
+                    style: None,
+                });
+                fip_fields.push(DetailField::KeyValue {
+                    key: "  Status".into(),
+                    value: fip.status.clone(),
+                    style: None,
+                });
+            } else {
+                // FIP found in addresses but not in cache — show address only
+                fip_fields.push(DetailField::KeyValue {
+                    key: "FIP".into(),
+                    value: addr.to_string(),
+                    style: Some(RowStyleHint::Active),
+                });
+            }
+        }
+        if !fip_fields.is_empty() {
+            sections.push(DetailSection {
+                name: "Floating IPs".into(),
+                fields: fip_fields,
+            });
+        }
     }
 
     // Attached Volumes
@@ -592,14 +639,14 @@ mod tests {
     #[test]
     fn test_detail_verify_resize_banner() {
         let server = make_server("VERIFY_RESIZE");
-        let data = server_detail_data_full(&server, None, None, false, &[]);
+        let data = server_detail_data_full(&server, None, None, false, &[], &[]);
         assert_eq!(data.sections[0].name, "⚠ Migration Pending");
     }
 
     #[test]
     fn test_detail_no_banner_for_active() {
         let server = make_server("ACTIVE");
-        let data = server_detail_data_full(&server, None, None, false, &[]);
+        let data = server_detail_data_full(&server, None, None, false, &[], &[]);
         assert_ne!(data.sections[0].name, "⚠ Migration Pending");
     }
 
@@ -620,7 +667,7 @@ mod tests {
             created_at: None,
             updated_at: None,
         };
-        let data = server_detail_data_full(&server, Some(&mig), None, false, &[]);
+        let data = server_detail_data_full(&server, Some(&mig), None, false, &[], &[]);
         let mig_section = data.sections.iter().find(|s| s.name == "Migration Progress");
         assert!(mig_section.is_some());
         let fields = &mig_section.unwrap().fields;
@@ -631,7 +678,7 @@ mod tests {
     #[test]
     fn test_detail_no_migration_progress_without_data() {
         let server = make_server("ACTIVE");
-        let data = server_detail_data_full(&server, None, None, false, &[]);
+        let data = server_detail_data_full(&server, None, None, false, &[], &[]);
         let mig_section = data.sections.iter().find(|s| s.name == "Migration Progress");
         assert!(mig_section.is_none());
     }
@@ -670,7 +717,7 @@ mod tests {
             created_at: None,
             updated_at: None,
         };
-        let data = server_detail_data_full(&server, Some(&mig), None, false, &[]);
+        let data = server_detail_data_full(&server, Some(&mig), None, false, &[], &[]);
         let mig_section = data.sections.iter().find(|s| s.name == "Migration Progress").unwrap();
         // Status, Source, Dest, Memory = 4 fields (no Disk)
         assert_eq!(mig_section.fields.len(), 4);
@@ -679,7 +726,7 @@ mod tests {
     #[test]
     fn test_detail_verify_resize_banner_migration() {
         let server = make_server("VERIFY_RESIZE");
-        let data = server_detail_data_full(&server, None, None, false, &[]);
+        let data = server_detail_data_full(&server, None, None, false, &[], &[]);
         let banner = &data.sections[0];
         assert_eq!(banner.name, "⚠ Migration Pending");
         if let DetailField::KeyValue { value, style, .. } = &banner.fields[0] {
@@ -693,7 +740,7 @@ mod tests {
     #[test]
     fn test_detail_verify_resize_banner_resize() {
         let server = make_server("VERIFY_RESIZE");
-        let data = server_detail_data_full(&server, None, None, true, &[]);
+        let data = server_detail_data_full(&server, None, None, true, &[], &[]);
         let banner = &data.sections[0];
         assert_eq!(banner.name, "⚠ Resize Pending");
         if let DetailField::KeyValue { value, style, .. } = &banner.fields[0] {
