@@ -37,6 +37,7 @@ pub struct FloatingIpModule {
     cached_networks: Vec<Network>,
     select_popup: Option<SelectPopup>,
     pending_fip_id: Option<String>,
+    pending_ports_server_id: Option<String>,
     loading_ports: bool,
     keymap_hints_shown: HashSet<char>,
     action_tx: mpsc::UnboundedSender<Action>,
@@ -60,6 +61,7 @@ impl FloatingIpModule {
             cached_networks: Vec::new(),
             select_popup: None,
             pending_fip_id: None,
+            pending_ports_server_id: None,
             loading_ports: false,
             keymap_hints_shown: HashSet::new(),
             action_tx,
@@ -328,6 +330,7 @@ impl FloatingIpModule {
     fn handle_server_selected(&mut self, server_id: String) {
         if let Some(fip) = self.selected_fip() {
             self.pending_fip_id = Some(fip.id.clone());
+            self.pending_ports_server_id = Some(server_id.clone());
             self.loading_ports = true;
             let _ = self.action_tx.send(Action::FetchPorts { server_id });
         }
@@ -432,8 +435,11 @@ impl Component for FloatingIpModule {
                     form.set_field_options("External Network", opts);
                 }
             }
-            AppEvent::PortsLoaded { ports, .. } => {
-                self.handle_ports_loaded(ports.clone());
+            AppEvent::PortsLoaded { server_id, ports } => {
+                // Only consume if this response matches our pending request
+                if self.pending_ports_server_id.as_deref() == Some(server_id.as_str()) {
+                    self.handle_ports_loaded(ports.clone());
+                }
             }
             AppEvent::ApiError {
                 operation, message, ..

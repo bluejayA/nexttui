@@ -58,6 +58,7 @@ pub struct ServerModule {
     cached_ports: Vec<Port>,
     cached_networks: Vec<Network>,
     pending_fip_id: Option<String>,
+    pending_ports_server_id: Option<String>,
     loading_ports: bool,
     // Cached dropdown options — populated by handle_event, applied to form on open/load
     cached_flavor_opts: Vec<SelectOption>,
@@ -89,6 +90,7 @@ impl ServerModule {
             cached_ports: Vec::new(),
             cached_networks: Vec::new(),
             pending_fip_id: None,
+            pending_ports_server_id: None,
             loading_ports: false,
             cached_flavor_opts: Vec::new(),
             cached_image_opts: Vec::new(),
@@ -372,6 +374,31 @@ impl ServerModule {
             format!("  Type: {vol_type}"),
             format!("  Device: {}", att.device),
         ];
+
+        // Boot volume safeguard — same logic as VolumeModule
+        let is_boot = vol.bootable == "true" && vol.attachments.len() == 1;
+        if is_boot {
+            if !self.is_admin {
+                return; // non-admin cannot detach boot volume
+            }
+            // Admin: TypeToConfirm with boot warning
+            let mut boot_details = details;
+            boot_details.push("  ⚠ BOOT VOLUME — server will become unbootable!".into());
+            self.confirm.open(
+                ConfirmDialog::type_to_confirm_with_details(
+                    format!("Detach BOOT volume '{name}'? Type name to confirm:"),
+                    name.to_string(),
+                    boot_details,
+                ),
+                PendingAction::DetachVolume {
+                    volume_id,
+                    server_id: att.server_id.clone(),
+                    attachment_id,
+                },
+            );
+            return;
+        }
+
         self.confirm.open(
             ConfirmDialog::yes_no_with_details(
                 format!("Detach {name} from '{server_name}'? Device: {}", att.device),
@@ -391,6 +418,7 @@ impl ServerModule {
             _ => return,
         };
         self.pending_fip_id = Some(fip_id);
+        self.pending_ports_server_id = Some(server_id.clone());
         self.loading_ports = true;
         let _ = self.action_tx.send(Action::FetchPorts { server_id });
     }
@@ -921,8 +949,11 @@ impl Component for ServerModule {
             AppEvent::FloatingIpsLoaded(fips) => {
                 self.cached_floating_ips = fips.clone();
             }
-            AppEvent::PortsLoaded { ports, .. } => {
-                if self.pending_fip_id.is_some() {
+            AppEvent::PortsLoaded { server_id, ports } => {
+                // Only consume if this response matches our pending request
+                if self.pending_fip_id.is_some()
+                    && self.pending_ports_server_id.as_deref() == Some(server_id.as_str())
+                {
                     self.handle_ports_loaded(ports.clone());
                 }
             }
