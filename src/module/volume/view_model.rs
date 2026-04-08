@@ -184,17 +184,17 @@ pub fn volume_detail_data_with_servers(volume: &Volume, cached_servers: &[crate:
 
     // Attachments
     if !volume.attachments.is_empty() {
-        let columns = vec!["Server".into(), "Device".into(), "Attachment ID".into()];
+        let columns = vec!["Server Name".into(), "Server ID".into(), "Device".into(), "Attachment ID".into()];
         let rows: Vec<Vec<String>> = volume
             .attachments
             .iter()
             .map(|a| {
-                let server_label = cached_servers
+                let server_name = cached_servers
                     .iter()
                     .find(|s| s.id == a.server_id)
-                    .map(|s| format!("{} ({})", s.name, &a.server_id[..8.min(a.server_id.len())]))
-                    .unwrap_or_else(|| a.server_id.clone());
-                vec![server_label, a.device.clone(), a.id.clone()]
+                    .map(|s| s.name.clone())
+                    .unwrap_or_else(|| "-".into());
+                vec![server_name, a.server_id.clone(), a.device.clone(), a.id.clone()]
             })
             .collect();
         sections.push(DetailSection {
