@@ -240,11 +240,12 @@ impl VolumeModule {
             KeyCode::Char('d') => {
                 if !self.keymap_hints_shown.contains(&'d') {
                     self.keymap_hints_shown.insert('d');
-                    let _ = self.action_tx.send(Action::ShowToast {
+                    Some(Action::ShowToast {
                         message: "Delete is now Shift+D. Press 'x' to detach.".into(),
-                    });
+                    })
+                } else {
+                    None
                 }
-                None
             }
             KeyCode::Char('a') => {
                 if let Some(vol) = self.selected_volume() {
@@ -818,24 +819,23 @@ mod tests {
 
     #[test]
     fn test_handle_key_d_shows_hint_toast() {
-        let (mut module, mut rx) = setup();
-        module.handle_key(key(KeyCode::Char('d')));
-        // Should send a ShowToast action
-        let action = rx.try_recv().unwrap();
-        assert!(matches!(action, Action::ShowToast { .. }));
+        let (mut module, _rx) = setup();
+        let action = module.handle_key(key(KeyCode::Char('d')));
+        // Should return a ShowToast action
+        assert!(matches!(action, Some(Action::ShowToast { .. })));
         // Confirm dialog should NOT be active
         assert!(!module.confirm.is_active());
     }
 
     #[test]
     fn test_handle_key_d_hint_only_once() {
-        let (mut module, mut rx) = setup();
+        let (mut module, _rx) = setup();
         // First press: hint shown
-        module.handle_key(key(KeyCode::Char('d')));
-        assert!(rx.try_recv().is_ok());
+        let action = module.handle_key(key(KeyCode::Char('d')));
+        assert!(matches!(action, Some(Action::ShowToast { .. })));
         // Second press: no hint
-        module.handle_key(key(KeyCode::Char('d')));
-        assert!(rx.try_recv().is_err());
+        let action = module.handle_key(key(KeyCode::Char('d')));
+        assert!(action.is_none());
     }
 
     #[test]

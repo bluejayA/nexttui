@@ -285,11 +285,12 @@ impl FloatingIpModule {
             KeyCode::Char('d') => {
                 if !self.keymap_hints_shown.contains(&'d') {
                     self.keymap_hints_shown.insert('d');
-                    let _ = self.action_tx.send(Action::ShowToast {
+                    Some(Action::ShowToast {
                         message: "Delete is now Shift+D. Press 'x' to disassociate.".into(),
-                    });
+                    })
+                } else {
+                    None
                 }
-                None
             }
             KeyCode::Char('a') => {
                 if let Some(fip) = self.selected_fip().filter(|f| f.port_id.is_none()) {
@@ -729,14 +730,13 @@ mod tests {
 
     #[test]
     fn test_d_key_shows_hint_toast_once() {
-        let (mut module, mut rx) = setup();
-        module.handle_key(key(KeyCode::Char('d')));
-        let action = rx.try_recv().unwrap();
-        assert!(matches!(action, Action::ShowToast { .. }));
+        let (mut module, _rx) = setup();
+        let action = module.handle_key(key(KeyCode::Char('d')));
+        assert!(matches!(action, Some(Action::ShowToast { .. })));
 
         // Second press: no toast
-        module.handle_key(key(KeyCode::Char('d')));
-        assert!(rx.try_recv().is_err());
+        let action = module.handle_key(key(KeyCode::Char('d')));
+        assert!(action.is_none());
     }
 
     #[test]
