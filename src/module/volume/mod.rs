@@ -90,11 +90,11 @@ impl VolumeModule {
             PendingAction::AttachVolume { volume_id, server_id, device } => {
                 Some(Action::AttachVolume { volume_id, server_id, device })
             }
-            PendingAction::DetachVolume { volume_id, attachment_id } => {
-                Some(Action::DetachVolume { volume_id, attachment_id })
+            PendingAction::DetachVolume { volume_id, server_id, attachment_id } => {
+                Some(Action::DetachVolume { volume_id, server_id, attachment_id })
             }
-            PendingAction::ForceDetachVolume { volume_id, attachment_id } => {
-                Some(Action::ForceDetachVolume { volume_id, attachment_id })
+            PendingAction::ForceDetachVolume { volume_id, server_id, attachment_id } => {
+                Some(Action::ForceDetachVolume { volume_id, server_id, attachment_id })
             }
             PendingAction::ForceResetVolumeState { volume_id } => {
                 Some(Action::ForceResetVolumeState { volume_id, target_state: "available".into() })
@@ -387,6 +387,7 @@ impl VolumeModule {
                 ),
                 PendingAction::DetachVolume {
                     volume_id: vol.id.clone(),
+                    server_id: att.server_id.clone(),
                     attachment_id: attachment_id.to_string(),
                 },
             );
@@ -402,6 +403,7 @@ impl VolumeModule {
             ),
             PendingAction::DetachVolume {
                 volume_id: vol.id.clone(),
+                server_id: att.server_id.clone(),
                 attachment_id: attachment_id.to_string(),
             },
         );
@@ -423,7 +425,11 @@ impl VolumeModule {
                 }
 
                 let name = vol.name.as_deref().unwrap_or("-");
-                let attachment_id = vol.attachments.first()
+                let first_att = vol.attachments.first();
+                let server_id = first_att
+                    .map(|a| a.server_id.clone())
+                    .unwrap_or_default();
+                let attachment_id = first_att
                     .map(|a| a.id.clone())
                     .unwrap_or_default();
                 let details = Self::volume_detail_lines(vol);
@@ -437,6 +443,7 @@ impl VolumeModule {
                     ),
                     PendingAction::ForceDetachVolume {
                         volume_id: vol.id.clone(),
+                        server_id,
                         attachment_id,
                     },
                 );
@@ -1148,7 +1155,7 @@ mod tests {
         assert!(module.confirm.is_active());
         // Y/N confirm
         let action = module.handle_key(key(KeyCode::Char('y')));
-        assert!(matches!(action, Some(Action::DetachVolume { volume_id, attachment_id }) if volume_id == "vol-1" && attachment_id == "att-1"));
+        assert!(matches!(action, Some(Action::DetachVolume { volume_id, attachment_id, .. }) if volume_id == "vol-1" && attachment_id == "att-1"));
     }
 
     // -- Force Detach tests -------------------------------------------------
@@ -1426,6 +1433,6 @@ mod tests {
 
         // Confirm
         let action = module.handle_key(key(KeyCode::Char('y')));
-        assert!(matches!(action, Some(Action::DetachVolume { volume_id, attachment_id }) if volume_id == "vol-1" && attachment_id == "att-1"));
+        assert!(matches!(action, Some(Action::DetachVolume { volume_id, attachment_id, .. }) if volume_id == "vol-1" && attachment_id == "att-1"));
     }
 }

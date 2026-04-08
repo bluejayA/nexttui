@@ -161,6 +161,17 @@ impl super::nova::NovaPort for MockNovaAdapter {
     ) -> ApiResult<ComputeService> {
         Err(ApiError::BadRequest("mock: not implemented".into()))
     }
+    async fn attach_volume(
+        &self,
+        _server_id: &str,
+        _volume_id: &str,
+        _device: Option<&str>,
+    ) -> ApiResult<()> {
+        Ok(())
+    }
+    async fn detach_volume(&self, _server_id: &str, _volume_id: &str) -> ApiResult<()> {
+        Ok(())
+    }
     async fn list_hypervisors(&self) -> ApiResult<Vec<Hypervisor>> {
         Ok(vec![])
     }

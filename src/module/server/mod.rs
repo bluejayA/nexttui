@@ -158,8 +158,8 @@ impl ServerModule {
             PendingAction::AttachVolume { volume_id, server_id, device } => {
                 Some(Action::AttachVolume { volume_id, server_id, device })
             }
-            PendingAction::DetachVolume { volume_id, attachment_id } => {
-                Some(Action::DetachVolume { volume_id, attachment_id })
+            PendingAction::DetachVolume { volume_id, server_id, attachment_id } => {
+                Some(Action::DetachVolume { volume_id, server_id, attachment_id })
             }
             PendingAction::AssociateFloatingIp { fip_id, port_id } => {
                 Some(Action::AssociateFloatingIp { fip_id, port_id })
@@ -379,6 +379,7 @@ impl ServerModule {
             ),
             PendingAction::DetachVolume {
                 volume_id,
+                server_id: att.server_id.clone(),
                 attachment_id,
             },
         );
@@ -2174,7 +2175,7 @@ mod tests {
         module.handle_key(key(KeyCode::Enter)); // detail
         module.handle_key(key(KeyCode::Char('x'))); // detach
         let action = module.handle_key(key(KeyCode::Char('y'))); // confirm
-        assert!(matches!(action, Some(Action::DetachVolume { volume_id, attachment_id })
+        assert!(matches!(action, Some(Action::DetachVolume { volume_id, attachment_id, .. })
             if volume_id == "v3" && attachment_id == "att-3"));
     }
 
@@ -2186,7 +2187,7 @@ mod tests {
         module.handle_key(key(KeyCode::Enter)); // select
         assert!(module.confirm.is_active());
         let action = module.handle_key(key(KeyCode::Char('y'))); // confirm
-        assert!(matches!(action, Some(Action::DetachVolume { volume_id, attachment_id })
+        assert!(matches!(action, Some(Action::DetachVolume { volume_id, attachment_id, .. })
             if volume_id == "v4" && attachment_id == "att-4"));
     }
 
@@ -2407,9 +2408,10 @@ mod tests {
     fn test_resolve_detach_volume() {
         let action = ServerModule::resolve_action(PendingAction::DetachVolume {
             volume_id: "v1".into(),
+            server_id: "s1".into(),
             attachment_id: "att-1".into(),
         });
-        assert!(matches!(action, Some(Action::DetachVolume { volume_id, attachment_id })
+        assert!(matches!(action, Some(Action::DetachVolume { volume_id, attachment_id, .. })
             if volume_id == "v1" && attachment_id == "att-1"));
     }
 

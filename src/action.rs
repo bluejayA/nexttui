@@ -82,8 +82,8 @@ pub enum Action {
 
     // Volume Attach/Detach
     AttachVolume { volume_id: String, server_id: String, device: Option<String> },
-    DetachVolume { volume_id: String, attachment_id: String },
-    ForceDetachVolume { volume_id: String, attachment_id: String },
+    DetachVolume { volume_id: String, server_id: String, attachment_id: String },
+    ForceDetachVolume { volume_id: String, server_id: String, attachment_id: String },
     ForceResetVolumeState { volume_id: String, target_state: String },
 
     // Floating IP Associate/Disassociate
@@ -164,8 +164,8 @@ mod tests {
     fn test_volume_fip_action_variants_exist() {
         let actions: Vec<Action> = vec![
             Action::AttachVolume { volume_id: "v1".into(), server_id: "s1".into(), device: Some("/dev/vdb".into()) },
-            Action::DetachVolume { volume_id: "v1".into(), attachment_id: "att-1".into() },
-            Action::ForceDetachVolume { volume_id: "v1".into(), attachment_id: "att-1".into() },
+            Action::DetachVolume { volume_id: "v1".into(), server_id: "s1".into(), attachment_id: "att-1".into() },
+            Action::ForceDetachVolume { volume_id: "v1".into(), server_id: "s1".into(), attachment_id: "att-1".into() },
             Action::ForceResetVolumeState { volume_id: "v1".into(), target_state: "available".into() },
             Action::AssociateFloatingIp { fip_id: "fip-1".into(), port_id: "port-1".into() },
             Action::DisassociateFloatingIp { fip_id: "fip-1".into() },

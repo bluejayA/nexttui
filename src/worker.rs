@@ -640,20 +640,20 @@ async fn handle_action(registry: &AdapterRegistry, all_tenants: &AtomicBool, act
             }
         }
 
-        // -- Cinder: Volume Attach/Detach -----------------------------------
+        // -- Nova: Volume Attach/Detach (via Nova os-volume_attachments API) --
         Action::AttachVolume { volume_id, server_id, device } => {
-            match registry.cinder.attach_volume(&volume_id, &server_id, device.as_deref()).await {
+            match registry.nova.attach_volume(&server_id, &volume_id, device.as_deref()).await {
                 Ok(()) => Some(AppEvent::VolumeAttached { volume_id, server_id }),
                 Err(e) => Some(api_error("AttachVolume", e)),
             }
         }
-        Action::DetachVolume { volume_id, attachment_id } => {
-            match registry.cinder.detach_volume(&volume_id, &attachment_id).await {
+        Action::DetachVolume { volume_id, server_id, .. } => {
+            match registry.nova.detach_volume(&server_id, &volume_id).await {
                 Ok(()) => Some(AppEvent::VolumeDetached { volume_id }),
                 Err(e) => Some(api_error("DetachVolume", e)),
             }
         }
-        Action::ForceDetachVolume { volume_id, attachment_id } => {
+        Action::ForceDetachVolume { volume_id, attachment_id, .. } => {
             match registry.cinder.force_detach_volume(&volume_id, &attachment_id).await {
                 Ok(()) => Some(AppEvent::VolumeForceDetached { volume_id }),
                 Err(e) => Some(api_error("ForceDetachVolume", e)),

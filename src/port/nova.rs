@@ -77,6 +77,15 @@ pub trait NovaPort: Send + Sync {
         reason: Option<&str>,
     ) -> ApiResult<ComputeService>;
 
+    // Volume Attachments (Nova API: /servers/{id}/os-volume_attachments)
+    async fn attach_volume(
+        &self,
+        server_id: &str,
+        volume_id: &str,
+        device: Option<&str>,
+    ) -> ApiResult<()>;
+    async fn detach_volume(&self, server_id: &str, volume_id: &str) -> ApiResult<()>;
+
     // Hypervisors
     async fn list_hypervisors(&self) -> ApiResult<Vec<Hypervisor>>;
     async fn get_hypervisor(&self, hypervisor_id: &str) -> ApiResult<Hypervisor>;
