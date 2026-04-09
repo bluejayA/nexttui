@@ -568,20 +568,14 @@ impl Component for UsageModule {
     }
 
     fn render(&self, frame: &mut Frame, area: Rect) {
-        // Dynamically allocate hypervisor section height
-        let hv_height = if self.hypervisors.is_empty() {
-            4
-        } else {
-            // 1 line per host + 2 border + 2 summary border overhead
-            (self.hypervisors.len() as u16).saturating_add(4).min(area.height / 3)
-        };
-
+        let remaining = area.height.saturating_sub(7); // after Infrastructure Summary
+        let half = remaining / 2;
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(7),       // Infrastructure Summary (mini boxes need 5 inner + 2 border)
-                Constraint::Min(8),          // Project Usage
-                Constraint::Length(hv_height), // Hypervisor Load
+                Constraint::Length(7),        // Infrastructure Summary (fixed)
+                Constraint::Length(half),      // Project Usage (50% of remaining)
+                Constraint::Min(half),        // Hypervisor Load (50% of remaining)
             ])
             .split(area);
 
