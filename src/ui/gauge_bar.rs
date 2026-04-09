@@ -53,8 +53,8 @@ impl GaugeBar {
         let empty = self.bar_width.saturating_sub(filled);
 
         let bar_color = self.color();
-        let filled_str: String = "█".repeat(filled as usize);
-        let empty_str: String = "░".repeat(empty as usize);
+        let filled_str: String = "▓".repeat(filled as usize);
+        let empty_str: String = "·".repeat(empty as usize);
 
         let unit_sep = if self.unit.is_empty() { "" } else { " " };
         let info = format!(
