@@ -354,61 +354,140 @@ impl UsageModule {
             return;
         }
 
-        let hv_count = self.hypervisors.len();
-        let constraints: Vec<Constraint> = (0..hv_count)
-            .map(|_| Constraint::Ratio(1, hv_count as u32))
-            .collect();
-
-        let cols = Layout::default()
+        // B-2 layout: left = host list with gauges, right = summary panel
+        let lr = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints(constraints)
+            .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
             .split(inner);
 
-        for (i, hv) in self.hypervisors.iter().enumerate() {
-            let hostname = &hv.hypervisor_hostname;
-            let vcpu_used = u64::from(hv.vcpus_used);
-            let vcpu_total = u64::from(hv.vcpus);
-            let ram_used = u64::from(hv.memory_mb_used) / 1024;
-            let ram_total = u64::from(hv.memory_mb) / 1024;
-            let vms = hv.running_vms;
+        // --- Left: host list ---
+        let bar_w = lr[0].width.saturating_sub(4) / 2; // split remaining between vCPU and RAM bars
+        let bar_w = bar_w.min(15);
 
-            let state_color = if hv.state == "up" && hv.status == "enabled" {
-                Color::Green
-            } else {
-                Color::Red
-            };
+        let mut total_vcpus: u64 = 0;
+        let mut used_vcpus: u64 = 0;
+        let mut total_ram_gb: u64 = 0;
+        let mut used_ram_gb: u64 = 0;
+        let mut hosts_up: u32 = 0;
+        let mut hosts_down: u32 = 0;
+        let mut high_cpu_hosts: Vec<String> = Vec::new();
 
-            let hv_block = Block::default()
-                .title(format!(" {hostname} "))
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(state_color));
+        let lines: Vec<Line> = self
+            .hypervisors
+            .iter()
+            .map(|hv| {
+                let vcpu_u = u64::from(hv.vcpus_used);
+                let vcpu_t = u64::from(hv.vcpus);
+                let ram_u = u64::from(hv.memory_mb_used) / 1024;
+                let ram_t = u64::from(hv.memory_mb) / 1024;
+                let vms = hv.running_vms;
 
-            let hv_inner = hv_block.inner(cols[i]);
-            frame.render_widget(hv_block, cols[i]);
+                total_vcpus += vcpu_t;
+                used_vcpus += vcpu_u;
+                total_ram_gb += ram_t;
+                used_ram_gb += ram_u;
 
-            if hv_inner.height < 3 || hv_inner.width < 6 {
-                continue;
+                let is_up = hv.state == "up" && hv.status == "enabled";
+                if is_up { hosts_up += 1; } else { hosts_down += 1; }
+
+                let cpu_pct = if vcpu_t > 0 { (vcpu_u as f64 / vcpu_t as f64 * 100.0) as u16 } else { 0 };
+                if cpu_pct > 90 {
+                    high_cpu_hosts.push(hv.hypervisor_hostname.clone());
+                }
+
+                let cpu_gauge = GaugeBar::new("", vcpu_u, vcpu_t).with_bar_width(bar_w);
+                let ram_gauge = GaugeBar::new("", ram_u, ram_t).with_bar_width(bar_w);
+                let cpu_color = cpu_gauge.color();
+                let ram_color = ram_gauge.color();
+
+                let state_icon = if is_up { "●" } else { "✗" };
+                let state_color = if is_up { Color::Green } else { Color::Red };
+
+                let hostname = if hv.hypervisor_hostname.len() > 12 {
+                    &hv.hypervisor_hostname[..12]
+                } else {
+                    &hv.hypervisor_hostname
+                };
+
+                let cpu_filled = ((bar_w as f64) * cpu_gauge.ratio()) as u16;
+                let cpu_empty = bar_w.saturating_sub(cpu_filled);
+                let ram_filled = ((bar_w as f64) * ram_gauge.ratio()) as u16;
+                let ram_empty = bar_w.saturating_sub(ram_filled);
+
+                Line::from(vec![
+                    Span::styled(format!(" {state_icon} "), Style::default().fg(state_color)),
+                    Span::styled(format!("{:<12}", hostname), Style::default().fg(Color::White)),
+                    Span::raw(" C["),
+                    Span::styled("▓".repeat(cpu_filled as usize), Style::default().fg(cpu_color)),
+                    Span::styled("·".repeat(cpu_empty as usize), Style::default().fg(Color::DarkGray)),
+                    Span::raw("]"),
+                    Span::styled(format!("{:>3}/{:<3}", vcpu_u, vcpu_t), Style::default().fg(Color::White)),
+                    Span::raw(" R["),
+                    Span::styled("▓".repeat(ram_filled as usize), Style::default().fg(ram_color)),
+                    Span::styled("·".repeat(ram_empty as usize), Style::default().fg(Color::DarkGray)),
+                    Span::raw("]"),
+                    Span::styled(format!("{:>3}G", ram_u), Style::default().fg(Color::White)),
+                    Span::styled(format!(" V:{vms}"), Style::default().fg(Color::DarkGray)),
+                ])
+            })
+            .collect();
+
+        let paragraph = Paragraph::new(lines);
+        frame.render_widget(paragraph, lr[0]);
+
+        // --- Right: summary panel ---
+        let summary_block = Block::default()
+            .title(" Summary ")
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::DarkGray));
+
+        let summary_inner = summary_block.inner(lr[1]);
+        frame.render_widget(summary_block, lr[1]);
+
+        let total_hosts = hosts_up + hosts_down;
+        let cpu_pct = if total_vcpus > 0 { (used_vcpus as f64 / total_vcpus as f64 * 100.0) as u16 } else { 0 };
+        let ram_pct = if total_ram_gb > 0 { (used_ram_gb as f64 / total_ram_gb as f64 * 100.0) as u16 } else { 0 };
+
+        let mut summary_lines = vec![
+            Line::from(vec![
+                Span::styled(" Hosts: ", Style::default().fg(Color::White)),
+                Span::styled(format!("{total_hosts}"), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                Span::styled(format!(" ({hosts_up} up"), Style::default().fg(Color::Green)),
+                if hosts_down > 0 {
+                    Span::styled(format!(", {hosts_down} down"), Style::default().fg(Color::Red))
+                } else {
+                    Span::raw("")
+                },
+                Span::raw(")"),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled(" Total vCPU: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{used_vcpus}/{total_vcpus} ({cpu_pct}%)"), Style::default().fg(Color::White)),
+            ]),
+            Line::from(vec![
+                Span::styled(" Total RAM:  ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{used_ram_gb}/{total_ram_gb} GB ({ram_pct}%)"), Style::default().fg(Color::White)),
+            ]),
+        ];
+
+        if !high_cpu_hosts.is_empty() {
+            summary_lines.push(Line::from(""));
+            summary_lines.push(Line::from(Span::styled(
+                format!(" ⚠ {} hosts > 90% vCPU", high_cpu_hosts.len()),
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            )));
+            for h in high_cpu_hosts.iter().take(5) {
+                summary_lines.push(Line::from(Span::styled(
+                    format!("   {h}"),
+                    Style::default().fg(Color::Red),
+                )));
             }
-
-            let bar_w = hv_inner.width.saturating_sub(2);
-
-            let cpu_gauge = GaugeBar::new("", vcpu_used, vcpu_total).with_bar_width(bar_w);
-            let cpu_bar: Vec<Span> = cpu_gauge.render_line().spans.into_iter().skip(1).collect();
-
-            let ram_gauge = GaugeBar::new("", ram_used, ram_total).with_unit("GB").with_bar_width(bar_w);
-            let ram_bar: Vec<Span> = ram_gauge.render_line().spans.into_iter().skip(1).collect();
-
-            let lines = vec![
-                Line::from(Span::styled(format!(" vCPU {vcpu_used}/{vcpu_total}  VMs: {vms}"), Style::default().fg(Color::White))),
-                Line::from(cpu_bar),
-                Line::from(Span::styled(format!(" RAM {ram_used}/{ram_total} GB"), Style::default().fg(Color::White))),
-                Line::from(ram_bar),
-            ];
-
-            let paragraph = Paragraph::new(lines);
-            frame.render_widget(paragraph, hv_inner);
         }
+
+        let summary_paragraph = Paragraph::new(summary_lines);
+        frame.render_widget(summary_paragraph, summary_inner);
     }
 }
 
@@ -493,8 +572,8 @@ impl Component for UsageModule {
         let hv_height = if self.hypervisors.is_empty() {
             4
         } else {
-            // Mini boxes: 4 inner lines + 2 border = 6, plus outer block border 2
-            8_u16.min(area.height / 3)
+            // 1 line per host + 2 border + 2 summary border overhead
+            (self.hypervisors.len() as u16).saturating_add(4).min(area.height / 3)
         };
 
         let chunks = Layout::default()
