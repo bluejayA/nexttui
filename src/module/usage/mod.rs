@@ -198,19 +198,65 @@ impl UsageModule {
             total_vms += u64::from(hv.running_vms);
         }
 
-        let lines = vec![
-            GaugeBar::new("vCPU", used_vcpus, total_vcpus).render_line(),
-            GaugeBar::new("RAM", used_ram, total_ram)
-                .with_unit("MB")
-                .render_line(),
-            GaugeBar::new("Disk", used_disk, total_disk)
-                .with_unit("GB")
-                .render_line(),
-            GaugeBar::new("VMs", total_vms, total_vms).render_line(),
-        ];
+        // 4x1 grid: vCPU | RAM | Disk | VMs side by side
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
+            ])
+            .split(inner);
 
-        let paragraph = Paragraph::new(lines);
-        frame.render_widget(paragraph, inner);
+        self.render_mini_gauge(frame, cols[0], "vCPU", used_vcpus, total_vcpus, "");
+        self.render_mini_gauge(frame, cols[1], "RAM", used_ram / 1024, total_ram / 1024, "GB");
+        self.render_mini_gauge(frame, cols[2], "Disk", used_disk, total_disk, "GB");
+        self.render_mini_gauge(frame, cols[3], "VMs", total_vms, total_vms.max(1), "");
+    }
+
+    fn render_mini_gauge(&self, frame: &mut Frame, area: Rect, title: &str, used: u64, total: u64, unit: &str) {
+        let pct = if total > 0 { (used as f64 / total as f64 * 100.0) as u16 } else { 0 };
+        let color = match pct {
+            0..=70 => Color::Green,
+            71..=90 => Color::Yellow,
+            _ => Color::Red,
+        };
+
+        let mini_block = Block::default()
+            .title(format!(" {title} "))
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(color));
+
+        let mini_inner = mini_block.inner(area);
+        frame.render_widget(mini_block, area);
+
+        if mini_inner.height < 3 || mini_inner.width < 6 {
+            return;
+        }
+
+        let unit_str = if unit.is_empty() { String::new() } else { format!(" {unit}") };
+        let info_line = Line::from(vec![
+            Span::styled(format!(" Used: {used}{unit_str}"), Style::default().fg(Color::White)),
+            Span::styled(format!("  Total: {total}{unit_str}"), Style::default().fg(Color::DarkGray)),
+        ]);
+
+        let bar_width = mini_inner.width.saturating_sub(2) as u16;
+        let gauge = GaugeBar::new("", used, total)
+            .with_bar_width(bar_width);
+        let bar_line = gauge.render_line();
+        // Remove the label span (first span is empty label)
+        let bar_spans: Vec<Span> = bar_line.spans.into_iter().skip(1).collect();
+        let bar_only = Line::from(bar_spans);
+
+        let pct_line = Line::from(Span::styled(
+            format!(" {pct}%"),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ));
+
+        let paragraph = Paragraph::new(vec![info_line, bar_only, pct_line]);
+        frame.render_widget(paragraph, mini_inner);
     }
 
     fn render_project_usage(&self, frame: &mut Frame, area: Rect) {
@@ -308,40 +354,61 @@ impl UsageModule {
             return;
         }
 
-        let lines: Vec<Line> = self
-            .hypervisors
-            .iter()
-            .flat_map(|hv| {
-                let hostname = &hv.hypervisor_hostname;
-                let label_width = 20;
-                let padded = format!("{:<width$}", hostname, width = label_width);
-                let host_line = Line::from(Span::styled(
-                    padded,
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
-                ));
-                let cpu_line = GaugeBar::new(
-                    "  vCPU",
-                    u64::from(hv.vcpus_used),
-                    u64::from(hv.vcpus),
-                )
-                .with_bar_width(16)
-                .render_line();
-                let ram_line = GaugeBar::new(
-                    "  RAM",
-                    u64::from(hv.memory_mb_used),
-                    u64::from(hv.memory_mb),
-                )
-                .with_unit("MB")
-                .with_bar_width(16)
-                .render_line();
-                vec![host_line, cpu_line, ram_line]
-            })
+        let hv_count = self.hypervisors.len();
+        let constraints: Vec<Constraint> = (0..hv_count)
+            .map(|_| Constraint::Ratio(1, hv_count as u32))
             .collect();
 
-        let paragraph = Paragraph::new(lines);
-        frame.render_widget(paragraph, inner);
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints(constraints)
+            .split(inner);
+
+        for (i, hv) in self.hypervisors.iter().enumerate() {
+            let hostname = &hv.hypervisor_hostname;
+            let vcpu_used = u64::from(hv.vcpus_used);
+            let vcpu_total = u64::from(hv.vcpus);
+            let ram_used = u64::from(hv.memory_mb_used) / 1024;
+            let ram_total = u64::from(hv.memory_mb) / 1024;
+            let vms = hv.running_vms;
+
+            let state_color = if hv.state == "up" && hv.status == "enabled" {
+                Color::Green
+            } else {
+                Color::Red
+            };
+
+            let hv_block = Block::default()
+                .title(format!(" {hostname} "))
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(state_color));
+
+            let hv_inner = hv_block.inner(cols[i]);
+            frame.render_widget(hv_block, cols[i]);
+
+            if hv_inner.height < 3 || hv_inner.width < 6 {
+                continue;
+            }
+
+            let bar_w = hv_inner.width.saturating_sub(2);
+
+            let cpu_gauge = GaugeBar::new("", vcpu_used, vcpu_total).with_bar_width(bar_w);
+            let cpu_bar: Vec<Span> = cpu_gauge.render_line().spans.into_iter().skip(1).collect();
+
+            let ram_gauge = GaugeBar::new("", ram_used, ram_total).with_unit("GB").with_bar_width(bar_w);
+            let ram_bar: Vec<Span> = ram_gauge.render_line().spans.into_iter().skip(1).collect();
+
+            let lines = vec![
+                Line::from(Span::styled(format!(" vCPU {vcpu_used}/{vcpu_total}  VMs: {vms}"), Style::default().fg(Color::White))),
+                Line::from(cpu_bar),
+                Line::from(Span::styled(format!(" RAM {ram_used}/{ram_total} GB"), Style::default().fg(Color::White))),
+                Line::from(ram_bar),
+            ];
+
+            let paragraph = Paragraph::new(lines);
+            frame.render_widget(paragraph, hv_inner);
+        }
     }
 }
 
@@ -426,14 +493,14 @@ impl Component for UsageModule {
         let hv_height = if self.hypervisors.is_empty() {
             4
         } else {
-            // 3 lines per hypervisor + 2 border
-            (self.hypervisors.len() as u16 * 3).saturating_add(2).min(area.height / 3)
+            // Mini boxes: 4 inner lines + 2 border = 6, plus outer block border 2
+            8_u16.min(area.height / 3)
         };
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(6),       // Infrastructure Summary
+                Constraint::Length(7),       // Infrastructure Summary (mini boxes need 5 inner + 2 border)
                 Constraint::Min(8),          // Project Usage
                 Constraint::Length(hv_height), // Hypervisor Load
             ])
