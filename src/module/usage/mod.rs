@@ -353,27 +353,35 @@ impl Component for UsageModule {
             self.fetch_usage();
             let _ = self.action_tx.send(Action::FetchHypervisors);
             let _ = self.action_tx.send(Action::FetchProjects);
+            // Consume the first key to avoid stale fetch race
+            return None;
         }
 
         match key.code {
-            KeyCode::Char('h') | KeyCode::Left => {
-                // Left arrow without modifiers = FocusSidebar; 'h' = date prev
-                if key.code == KeyCode::Left {
-                    return Some(Action::FocusSidebar);
-                }
+            KeyCode::Left => {
+                return Some(Action::FocusSidebar);
+            }
+            KeyCode::Char('[') => {
+                // '[' for previous period (avoids 'h' conflict with Host Ops)
                 self.date_range = self.date_range.prev();
+                self.scroll_offset = 0;
                 self.loading = true;
                 self.fetch_usage();
                 None
             }
-            KeyCode::Char('l') => {
+            KeyCode::Char(']') => {
+                // ']' for next period
                 self.date_range = self.date_range.next();
+                self.scroll_offset = 0;
                 self.loading = true;
                 self.fetch_usage();
                 None
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                self.scroll_offset = self.scroll_offset.saturating_add(1);
+                let max_offset = self.tenant_usages.len().saturating_sub(1);
+                if self.scroll_offset < max_offset {
+                    self.scroll_offset = self.scroll_offset.saturating_add(1);
+                }
                 None
             }
             KeyCode::Char('k') | KeyCode::Up => {
@@ -437,7 +445,7 @@ impl Component for UsageModule {
     }
 
     fn help_hint(&self) -> &str {
-        "h/l:Period  j/k:Scroll  r:Refresh"
+        "[/]:Period  j/k:Scroll  r:Refresh"
     }
 
     fn refresh_action(&self) -> Option<Action> {
@@ -459,6 +467,18 @@ mod tests {
 
     fn make_module() -> UsageModule {
         UsageModule::new(make_tx())
+    }
+
+    /// Creates a module that has already consumed the mount key,
+    /// so subsequent handle_key calls behave normally.
+    fn make_mounted_module() -> UsageModule {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut m = UsageModule::new(tx);
+        // Trigger mount with a dummy key (consumed, returns None)
+        m.handle_key(key(KeyCode::Char('x')));
+        // Drain FetchUsage, FetchHypervisors, FetchProjects
+        while rx.try_recv().is_ok() {}
+        m
     }
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -679,31 +699,40 @@ mod tests {
     // === handle_key tests ===
 
     #[test]
-    fn test_key_h_changes_date_range() {
+    fn test_key_bracket_changes_date_range() {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let mut m = UsageModule::new(tx);
         assert_eq!(m.date_range(), DateRangePreset::ThisMonth);
 
-        let result = m.handle_key(key(KeyCode::Char('h')));
-        assert!(result.is_none()); // No direct action returned
+        // First key triggers mount (consumed)
+        m.handle_key(key(KeyCode::Char('r')));
+        // Drain mount fetch actions
+        while rx.try_recv().is_ok() {}
+
+        // Now '[' changes date range
+        let result = m.handle_key(key(KeyCode::Char('[')));
+        assert!(result.is_none());
         assert_eq!(m.date_range(), DateRangePreset::Last7Days);
         assert!(m.loading);
 
-        // Should have sent FetchUsage via action_tx
         let sent = rx.try_recv();
         assert!(sent.is_ok());
         match sent {
-            Ok(Action::FetchUsage { .. }) => {} // expected
+            Ok(Action::FetchUsage { .. }) => {}
             other => panic!("expected FetchUsage, got {other:?}"),
         }
     }
 
     #[test]
-    fn test_key_l_changes_date_range() {
+    fn test_key_bracket_right_changes_date_range() {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let mut m = UsageModule::new(tx);
 
-        let result = m.handle_key(key(KeyCode::Char('l')));
+        // Mount
+        m.handle_key(key(KeyCode::Char('r')));
+        while rx.try_recv().is_ok() {}
+
+        let result = m.handle_key(key(KeyCode::Char(']')));
         assert!(result.is_none());
         assert_eq!(m.date_range(), DateRangePreset::LastMonth);
         assert!(m.loading);
@@ -714,17 +743,17 @@ mod tests {
 
     #[test]
     fn test_key_j_scrolls_down() {
-        let mut m = make_module();
+        let mut m = make_mounted_module();
+        // Need usages to allow scrolling past 0
+        m.tenant_usages = sample_usages();
         assert_eq!(m.scroll_offset(), 0);
         m.handle_key(key(KeyCode::Char('j')));
         assert_eq!(m.scroll_offset(), 1);
-        m.handle_key(key(KeyCode::Char('j')));
-        assert_eq!(m.scroll_offset(), 2);
     }
 
     #[test]
     fn test_key_k_scrolls_up() {
-        let mut m = make_module();
+        let mut m = make_mounted_module();
         m.scroll_offset = 3;
         m.handle_key(key(KeyCode::Char('k')));
         assert_eq!(m.scroll_offset(), 2);
@@ -752,28 +781,29 @@ mod tests {
 
     #[test]
     fn test_key_left_focuses_sidebar() {
-        let mut m = make_module();
+        let mut m = make_mounted_module();
         let result = m.handle_key(key(KeyCode::Left));
         assert!(matches!(result, Some(Action::FocusSidebar)));
     }
 
     #[test]
     fn test_key_esc_returns_back() {
-        let mut m = make_module();
+        let mut m = make_mounted_module();
         let result = m.handle_key(key(KeyCode::Esc));
         assert!(matches!(result, Some(Action::Back)));
     }
 
     #[test]
     fn test_key_down_scrolls() {
-        let mut m = make_module();
+        let mut m = make_mounted_module();
+        m.tenant_usages = sample_usages();
         m.handle_key(key(KeyCode::Down));
         assert_eq!(m.scroll_offset(), 1);
     }
 
     #[test]
     fn test_key_up_scrolls() {
-        let mut m = make_module();
+        let mut m = make_mounted_module();
         m.scroll_offset = 5;
         m.handle_key(key(KeyCode::Up));
         assert_eq!(m.scroll_offset(), 4);
@@ -791,7 +821,7 @@ mod tests {
     #[test]
     fn test_help_hint() {
         let m = make_module();
-        assert_eq!(m.help_hint(), "h/l:Period  j/k:Scroll  r:Refresh");
+        assert_eq!(m.help_hint(), "[/]:Period  j/k:Scroll  r:Refresh");
     }
 
     // === refresh_action ===
@@ -851,21 +881,21 @@ mod tests {
     // === Date range transitions + fetch ===
 
     #[test]
-    fn test_h_l_cycle_returns_to_original() {
-        let mut m = make_module();
-        // h → Last7Days, h → LastMonth, h → ThisMonth
-        m.handle_key(key(KeyCode::Char('h')));
-        m.handle_key(key(KeyCode::Char('h')));
-        m.handle_key(key(KeyCode::Char('h')));
+    fn test_bracket_left_cycle_returns_to_original() {
+        let mut m = make_mounted_module();
+        // '[' → Last7Days, '[' → LastMonth, '[' → ThisMonth
+        m.handle_key(key(KeyCode::Char('[')));
+        m.handle_key(key(KeyCode::Char('[')));
+        m.handle_key(key(KeyCode::Char('[')));
         assert_eq!(m.date_range(), DateRangePreset::ThisMonth);
     }
 
     #[test]
-    fn test_l_h_reverse() {
-        let mut m = make_module();
-        m.handle_key(key(KeyCode::Char('l')));
+    fn test_bracket_right_left_reverse() {
+        let mut m = make_mounted_module();
+        m.handle_key(key(KeyCode::Char(']')));
         assert_eq!(m.date_range(), DateRangePreset::LastMonth);
-        m.handle_key(key(KeyCode::Char('h')));
+        m.handle_key(key(KeyCode::Char('[')));
         assert_eq!(m.date_range(), DateRangePreset::ThisMonth);
     }
 

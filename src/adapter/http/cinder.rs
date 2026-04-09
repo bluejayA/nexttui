@@ -354,7 +354,7 @@ impl CinderPort for CinderHttpAdapter {
         let req = self
             .base
             .get(&format!(
-                "/os-quota-sets/{}?usage=true",
+                "/os-quota-sets/{}",
                 encode_param(project_id)
             ))
             .await?;
