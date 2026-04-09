@@ -5,6 +5,7 @@ use crate::models::{
     neutron::{FloatingIp, Network, NetworkAgent, Port, SecurityGroup},
     nova::{Aggregate, ComputeService, Flavor, Hypervisor, Server, ServerMigration},
 };
+use crate::port::types::TenantUsage;
 
 #[derive(Debug)]
 pub enum AppEvent {
@@ -23,6 +24,9 @@ pub enum AppEvent {
     ComputeServicesLoaded(Vec<ComputeService>),
     HypervisorsLoaded(Vec<Hypervisor>),
     AgentsLoaded(Vec<NetworkAgent>),
+
+    // Usage
+    UsageLoaded(Vec<TenantUsage>),
 
     // CUD results
     ServerCreated(Server),
@@ -265,6 +269,27 @@ mod tests {
             },
         ];
         assert_eq!(events.len(), 7);
+    }
+
+    #[test]
+    fn test_usage_loaded_event() {
+        use crate::port::types::TenantUsage;
+        let usage = TenantUsage {
+            tenant_id: "proj-1".into(),
+            total_vcpus_usage: 4.0,
+            total_memory_mb_usage: 8192.0,
+            total_local_gb_usage: 100.0,
+            total_hours: 720.0,
+            server_usages: vec![],
+        };
+        let event = AppEvent::UsageLoaded(vec![usage]);
+        match event {
+            AppEvent::UsageLoaded(usages) => {
+                assert_eq!(usages.len(), 1);
+                assert_eq!(usages[0].tenant_id, "proj-1");
+            }
+            _ => panic!("expected UsageLoaded"),
+        }
     }
 
     #[test]

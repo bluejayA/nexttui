@@ -98,6 +98,13 @@ pub trait NovaPort: Send + Sync {
         end: DateTime<Utc>,
     ) -> ApiResult<ProjectUsage>;
 
+    // Tenant Usage (all tenants)
+    async fn list_all_tenant_usage(
+        &self,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> ApiResult<Vec<TenantUsage>>;
+
     // Quota
     async fn get_compute_quota(&self, project_id: &str) -> ApiResult<ComputeQuota>;
     async fn update_compute_quota(

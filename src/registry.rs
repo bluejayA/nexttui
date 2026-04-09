@@ -90,7 +90,7 @@ pub fn register_all_modules(
         security_group::SecurityGroupModule, floating_ip::FloatingIpModule,
         volume::VolumeModule, snapshot::SnapshotModule, image::ImageModule,
         project::ProjectModule, user::UserModule,
-        host::HostModule,
+        host::HostModule, usage::UsageModule,
     };
 
     let entries = vec![
@@ -171,6 +171,13 @@ pub fn register_all_modules(
             related_routes: &[],
             display_name: "Host Ops",
         },
+        ModuleEntry {
+            sidebar: SidebarItem { label: "Usage".into(), route: Route::Usage, shortcut: "u".into(), admin_only: true },
+            component: Box::new(UsageModule::new(action_tx.clone())),
+            initial_action: None,
+            related_routes: &[],
+            display_name: "Usage",
+        },
     ];
 
     for entry in entries {
@@ -183,7 +190,6 @@ pub fn register_all_modules(
     registry.add_route_label(Route::ComputeServices, "Compute Services");
     registry.add_route_label(Route::Hypervisors, "Hypervisors");
     registry.add_route_label(Route::Agents, "Agents");
-    registry.add_route_label(Route::Usage, "Usage");
 }
 
 #[cfg(test)]

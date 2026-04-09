@@ -91,6 +91,21 @@ struct NovaComputeServiceWrapper {
 }
 
 #[derive(Deserialize)]
+struct TenantUsagesResponse {
+    tenant_usages: Vec<TenantUsage>,
+}
+
+#[derive(Deserialize)]
+struct TenantUsageDetailResponse {
+    tenant_usage: ProjectUsage,
+}
+
+#[derive(Deserialize)]
+struct QuotaSetResponse {
+    quota_set: ComputeQuota,
+}
+
+#[derive(Deserialize)]
 struct NovaMigrationWrapper {
     migration: ServerMigration,
 }
@@ -623,21 +638,57 @@ impl NovaPort for NovaHttpAdapter {
         Ok(resp.hypervisor)
     }
 
-    // -- Usage (stub — Unit 14) --
+    // -- Usage --
+
+    async fn list_all_tenant_usage(
+        &self,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> ApiResult<Vec<TenantUsage>> {
+        let start_str = start.format("%Y-%m-%dT%H:%M:%S").to_string();
+        let end_str = end.format("%Y-%m-%dT%H:%M:%S").to_string();
+        let req = self
+            .base
+            .get(&format!(
+                "/os-simple-tenant-usage?start={}&end={}",
+                encode_param(&start_str),
+                encode_param(&end_str)
+            ))
+            .await?;
+        let resp: TenantUsagesResponse = self.base.send_json(req).await?;
+        Ok(resp.tenant_usages)
+    }
 
     async fn get_project_usage(
         &self,
-        _project_id: &str,
-        _start: DateTime<Utc>,
-        _end: DateTime<Utc>,
+        project_id: &str,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
     ) -> ApiResult<ProjectUsage> {
-        Err(ApiError::BadRequest("not yet implemented".into()))
+        let start_str = start.format("%Y-%m-%dT%H:%M:%S").to_string();
+        let end_str = end.format("%Y-%m-%dT%H:%M:%S").to_string();
+        let req = self
+            .base
+            .get(&format!(
+                "/os-simple-tenant-usage/{}?start={}&end={}&detailed=0",
+                encode_param(project_id),
+                encode_param(&start_str),
+                encode_param(&end_str)
+            ))
+            .await?;
+        let resp: TenantUsageDetailResponse = self.base.send_json(req).await?;
+        Ok(resp.tenant_usage)
     }
 
-    // -- Quota (stub — Unit 12) --
+    // -- Quota --
 
-    async fn get_compute_quota(&self, _project_id: &str) -> ApiResult<ComputeQuota> {
-        Err(ApiError::BadRequest("not yet implemented".into()))
+    async fn get_compute_quota(&self, project_id: &str) -> ApiResult<ComputeQuota> {
+        let req = self
+            .base
+            .get(&format!("/os-quota-sets/{}", encode_param(project_id)))
+            .await?;
+        let resp: QuotaSetResponse = self.base.send_json(req).await?;
+        Ok(resp.quota_set)
     }
 
     async fn update_compute_quota(

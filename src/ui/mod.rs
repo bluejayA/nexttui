@@ -12,3 +12,4 @@ pub mod status_bar;
 pub mod theme;
 pub mod refresh;
 pub mod toast;
+pub mod gauge_bar;

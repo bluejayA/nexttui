@@ -178,6 +178,13 @@ impl super::nova::NovaPort for MockNovaAdapter {
     async fn get_hypervisor(&self, _hypervisor_id: &str) -> ApiResult<Hypervisor> {
         Err(ApiError::BadRequest("mock: not implemented".into()))
     }
+    async fn list_all_tenant_usage(
+        &self,
+        _start: DateTime<Utc>,
+        _end: DateTime<Utc>,
+    ) -> ApiResult<Vec<TenantUsage>> {
+        Ok(vec![])
+    }
     async fn get_project_usage(
         &self,
         _project_id: &str,
@@ -563,6 +570,16 @@ mod tests {
             .await;
         assert!(result.is_ok());
         assert!(result.unwrap().items.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_mock_nova_list_all_tenant_usage() {
+        let mock = MockNovaAdapter;
+        let start = chrono::Utc::now();
+        let end = chrono::Utc::now();
+        let result = mock.list_all_tenant_usage(start, end).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
     }
 
     #[tokio::test]
