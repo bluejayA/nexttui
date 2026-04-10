@@ -169,6 +169,7 @@ mod tests {
     #[test]
     fn test_toast_color_uses_theme() {
         use crate::ui::theme::Theme;
+        Theme::init_with_no_color(crate::config::ThemeVariant::Dark, false);
         let success = ToastMessage::success("ok");
         assert_eq!(success.style(), Theme::done());
         let error = ToastMessage::error("fail");

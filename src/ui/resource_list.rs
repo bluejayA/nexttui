@@ -397,18 +397,21 @@ mod tests {
 
     #[test]
     fn test_row_style_active_uses_theme_done() {
+        super::Theme::init_with_no_color(crate::config::ThemeVariant::Dark, false);
         let style = RowStyleHint::Active.style();
         assert_eq!(style.fg, Some(Color::LightGreen)); // Theme::done()
     }
 
     #[test]
     fn test_row_style_error_uses_theme_error() {
+        super::Theme::init_with_no_color(crate::config::ThemeVariant::Dark, false);
         let style = RowStyleHint::Error.style();
         assert_eq!(style.fg, Some(Color::LightRed)); // Theme::error()
     }
 
     #[test]
     fn test_selection_preserves_semantic_color() {
+        super::Theme::init_with_no_color(crate::config::ThemeVariant::Dark, false);
         // Theme::highlight() adds bg + Bold — patch preserves base fg
         let base = RowStyleHint::Active.style(); // LightGreen
         let selected = base.patch(super::Theme::highlight());

@@ -60,6 +60,7 @@ pub struct App {
 impl App {
     pub fn new(config: Config, action_tx: mpsc::UnboundedSender<Action>) -> Self {
         let tick_rate = std::time::Duration::from_millis(config.app_config().tick_rate_ms);
+        crate::ui::theme::Theme::init(config.app_config().theme);
         let audit_logger = Self::init_audit_logger();
         Self {
             should_quit: false,
@@ -94,6 +95,7 @@ impl App {
     ) -> (Self, Vec<Action>) {
         let parts = registry.into_parts();
         let tick_rate = std::time::Duration::from_millis(config.app_config().tick_rate_ms);
+        crate::ui::theme::Theme::init(config.app_config().theme);
         let audit_logger = Self::init_audit_logger();
         let mut app = Self {
             should_quit: false,

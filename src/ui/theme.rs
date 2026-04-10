@@ -1,69 +1,156 @@
+use std::sync::atomic::{AtomicU8, Ordering};
+
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+
+use crate::config::ThemeVariant;
+
+// Packed into a single u8: bit 0 = variant (0=Dark, 1=Light), bit 1 = no_color
+static THEME_STATE: AtomicU8 = AtomicU8::new(0); // default: Dark, color enabled
+
+fn variant() -> ThemeVariant {
+    if THEME_STATE.load(Ordering::Relaxed) & 0x01 == 0 {
+        ThemeVariant::Dark
+    } else {
+        ThemeVariant::Light
+    }
+}
+
+fn no_color() -> bool {
+    THEME_STATE.load(Ordering::Relaxed) & 0x02 != 0
+}
+
+/// Build a style, stripping colors when NO_COLOR is active.
+fn styled(fg: Option<Color>, bg: Option<Color>, modifiers: Modifier) -> Style {
+    if no_color() {
+        Style::default().add_modifier(modifiers)
+    } else {
+        let mut s = Style::default().add_modifier(modifiers);
+        if let Some(c) = fg {
+            s = s.fg(c);
+        }
+        if let Some(c) = bg {
+            s = s.bg(c);
+        }
+        s
+    }
+}
 
 pub struct Theme;
 
 impl Theme {
+    /// Initialize the global theme. Call once at app startup.
+    /// Detects `NO_COLOR` environment variable automatically.
+    pub fn init(v: ThemeVariant) {
+        let nc = std::env::var("NO_COLOR").is_ok();
+        Self::init_with_no_color(v, nc);
+    }
+
+    /// Initialize with explicit no_color flag (for testing).
+    pub fn init_with_no_color(v: ThemeVariant, nc: bool) {
+        let mut bits: u8 = 0;
+        if matches!(v, ThemeVariant::Light) {
+            bits |= 0x01;
+        }
+        if nc {
+            bits |= 0x02;
+        }
+        THEME_STATE.store(bits, Ordering::Relaxed);
+    }
+
     pub fn active() -> Style {
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        match variant() {
+            ThemeVariant::Dark => styled(Some(Color::Yellow), None, Modifier::BOLD),
+            ThemeVariant::Light => styled(Some(Color::Rgb(180, 120, 0)), None, Modifier::BOLD),
+        }
     }
 
-    /// ACTIVE servers / success states — bright green on dark bg
+    /// ACTIVE servers / success states
     pub fn done() -> Style {
-        Style::default().fg(Color::LightGreen)
+        match variant() {
+            ThemeVariant::Dark => styled(Some(Color::LightGreen), None, Modifier::empty()),
+            ThemeVariant::Light => styled(Some(Color::Rgb(0, 130, 0)), None, Modifier::empty()),
+        }
     }
 
-    /// ERROR states — bright red for visibility on dark bg
+    /// ERROR states
     pub fn error() -> Style {
-        Style::default().fg(Color::LightRed)
+        match variant() {
+            ThemeVariant::Dark => styled(Some(Color::LightRed), None, Modifier::empty()),
+            ThemeVariant::Light => styled(Some(Color::Rgb(180, 0, 0)), None, Modifier::empty()),
+        }
     }
 
-    /// SHUTOFF / stopped — mid-gray, not too dark to vanish on black bg
+    /// SHUTOFF / stopped
     pub fn waiting() -> Style {
-        Style::default().fg(Color::Gray)
+        match variant() {
+            ThemeVariant::Dark => styled(Some(Color::Gray), None, Modifier::empty()),
+            ThemeVariant::Light => styled(Some(Color::DarkGray), None, Modifier::empty()),
+        }
     }
 
     pub fn warning() -> Style {
-        Style::default().fg(Color::Yellow)
+        match variant() {
+            ThemeVariant::Dark => styled(Some(Color::Yellow), None, Modifier::empty()),
+            ThemeVariant::Light => styled(Some(Color::Rgb(180, 120, 0)), None, Modifier::empty()),
+        }
     }
 
     pub fn focus_border() -> Style {
-        Style::default().fg(Color::Cyan)
+        match variant() {
+            ThemeVariant::Dark => styled(Some(Color::Cyan), None, Modifier::empty()),
+            ThemeVariant::Light => styled(Some(Color::Blue), None, Modifier::empty()),
+        }
     }
 
     pub fn unfocus_border() -> Style {
-        Style::default().fg(Color::DarkGray)
+        match variant() {
+            ThemeVariant::Dark => styled(Some(Color::DarkGray), None, Modifier::empty()),
+            ThemeVariant::Light => styled(Some(Color::Gray), None, Modifier::empty()),
+        }
     }
 
-    /// Selected row highlight — subtle blue-tinted bg to stand out on black
+    /// Selected row highlight
     pub fn highlight() -> Style {
-        Style::default()
-            .bg(Color::Rgb(50, 50, 76))
-            .add_modifier(Modifier::BOLD)
+        match variant() {
+            ThemeVariant::Dark => styled(None, Some(Color::Rgb(50, 50, 76)), Modifier::BOLD),
+            ThemeVariant::Light => styled(None, Some(Color::Rgb(210, 220, 240)), Modifier::BOLD),
+        }
     }
 
     pub fn disabled() -> Style {
-        Style::default()
-            .fg(Color::Gray)
-            .add_modifier(Modifier::DIM)
+        match variant() {
+            ThemeVariant::Dark => styled(Some(Color::Gray), None, Modifier::DIM),
+            ThemeVariant::Light => styled(Some(Color::Gray), None, Modifier::DIM),
+        }
     }
 
     pub fn link() -> Style {
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::UNDERLINED)
+        match variant() {
+            ThemeVariant::Dark => styled(Some(Color::Cyan), None, Modifier::UNDERLINED),
+            ThemeVariant::Light => styled(Some(Color::Blue), None, Modifier::UNDERLINED),
+        }
     }
 
     pub fn timestamp() -> Style {
-        Style::default().fg(Color::Cyan)
+        match variant() {
+            ThemeVariant::Dark => styled(Some(Color::Cyan), None, Modifier::empty()),
+            ThemeVariant::Light => styled(Some(Color::Blue), None, Modifier::empty()),
+        }
     }
 
     pub fn evacuating() -> Style {
-        Style::default().fg(Color::Yellow)
+        match variant() {
+            ThemeVariant::Dark => styled(Some(Color::Yellow), None, Modifier::empty()),
+            ThemeVariant::Light => styled(Some(Color::Rgb(180, 120, 0)), None, Modifier::empty()),
+        }
     }
 
     pub fn evac_success() -> Style {
-        Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)
+        match variant() {
+            ThemeVariant::Dark => styled(Some(Color::LightGreen), None, Modifier::BOLD),
+            ThemeVariant::Light => styled(Some(Color::Rgb(0, 130, 0)), None, Modifier::BOLD),
+        }
     }
 }
 
@@ -128,7 +215,7 @@ pub fn panel_title_line(name: &str, focused: bool, all_tenants: bool) -> Line<'s
     if all_tenants {
         Line::from(vec![
             Span::raw(format!("[ {name} | ")),
-            Span::styled("ALL", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled("ALL", Theme::active()),
             Span::raw(" ]"),
         ])
     } else {
@@ -138,14 +225,9 @@ pub fn panel_title_line(name: &str, focused: bool, all_tenants: bool) -> Line<'s
 
 pub fn key_hint<'a>(key: &'a str, desc: &'a str) -> Vec<Span<'a>> {
     vec![
-        Span::styled(
-            key,
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
+        Span::styled(key, Theme::focus_border().add_modifier(Modifier::BOLD)),
         Span::raw(" "),
-        Span::styled(desc, Style::default().add_modifier(Modifier::DIM)),
+        Span::styled(desc, Theme::disabled()),
     ]
 }
 
@@ -155,8 +237,14 @@ mod tests {
 
     // === Step 1: Theme 시맨틱 스타일 ===
 
+    /// Reset theme to Dark with colors for test isolation.
+    fn reset_dark() {
+        Theme::init_with_no_color(crate::config::ThemeVariant::Dark, false);
+    }
+
     #[test]
     fn test_theme_active_is_yellow_bold() {
+        reset_dark();
         let style = Theme::active();
         assert_eq!(style.fg, Some(Color::Yellow));
         assert!(style.add_modifier.contains(Modifier::BOLD));
@@ -164,18 +252,21 @@ mod tests {
 
     #[test]
     fn test_theme_done_is_green() {
+        reset_dark();
         let style = Theme::done();
         assert_eq!(style.fg, Some(Color::LightGreen));
     }
 
     #[test]
     fn test_theme_error_is_red() {
+        reset_dark();
         let style = Theme::error();
         assert_eq!(style.fg, Some(Color::LightRed));
     }
 
     #[test]
     fn test_theme_highlight_is_bold_only() {
+        reset_dark();
         let style = Theme::highlight();
         assert_eq!(style.fg, None);
         assert!(style.add_modifier.contains(Modifier::BOLD));
@@ -183,6 +274,7 @@ mod tests {
 
     #[test]
     fn test_theme_active_vs_warning() {
+        reset_dark();
         let active = Theme::active();
         let warning = Theme::warning();
         assert!(active.add_modifier.contains(Modifier::BOLD));
@@ -236,6 +328,7 @@ mod tests {
 
     #[test]
     fn test_panel_title_line_focused_all_tenants() {
+        reset_dark();
         let line = panel_title_line("Servers", true, true);
         assert_eq!(line.spans.len(), 3);
         assert_eq!(line.spans[0].content.as_ref(), "[ Servers | ");
@@ -261,10 +354,12 @@ mod tests {
     }
 
     #[test]
-    fn test_key_hint_key_is_cyan_bold() {
+    fn test_key_hint_key_uses_focus_border_bold() {
+        reset_dark();
         let spans = key_hint("Tab", "패널");
         let key_span = &spans[0];
-        assert_eq!(key_span.style.fg, Some(Color::Cyan));
+        let expected = Theme::focus_border().add_modifier(Modifier::BOLD);
+        assert_eq!(key_span.style.fg, expected.fg);
         assert!(key_span.style.add_modifier.contains(Modifier::BOLD));
     }
 
@@ -272,5 +367,38 @@ mod tests {
     fn test_key_hint_has_separator_space() {
         let spans = key_hint("Tab", "패널");
         assert_eq!(spans[1].content.as_ref(), " ");
+    }
+
+    // === Theme variant + NO_COLOR ===
+
+    #[test]
+    fn test_theme_init_dark_active_is_yellow() {
+        Theme::init(crate::config::ThemeVariant::Dark);
+        let style = Theme::active();
+        assert_eq!(style.fg, Some(Color::Yellow));
+        assert!(style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn test_theme_init_light_done_differs_from_dark() {
+        Theme::init(crate::config::ThemeVariant::Light);
+        let light_done = Theme::done();
+        // Light done should use a darker green for bright backgrounds
+        assert_ne!(light_done.fg, Some(Color::LightGreen));
+    }
+
+    #[test]
+    fn test_no_color_strips_fg_bg() {
+        Theme::init_with_no_color(crate::config::ThemeVariant::Dark, true);
+        let style = Theme::active();
+        assert_eq!(style.fg, None);
+        assert!(style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn test_no_color_overrides_variant() {
+        Theme::init_with_no_color(crate::config::ThemeVariant::Light, true);
+        let style = Theme::done();
+        assert_eq!(style.fg, None);
     }
 }
