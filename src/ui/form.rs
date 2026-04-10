@@ -731,9 +731,13 @@ impl FormWidget {
                     return FormAction::None;
                 }
                 (FieldDef::Checkbox { .. }, FieldState::Checkbox { checked }) => {
-                    *checked = !*checked;
-                    // Checkbox toggle does not submit — use Tab to move then Enter on last
-                    return FormAction::None;
+                    if is_last_field {
+                        // Last field: Enter submits, Space toggles
+                        // Fall through to submit logic below
+                    } else {
+                        *checked = !*checked;
+                        return FormAction::None;
+                    }
                 }
                 _ => {}
             }
@@ -1621,15 +1625,28 @@ mod tests {
     // -- Checkbox -----------------------------------------------------------
 
     #[test]
-    fn test_checkbox_toggle_enter() {
+    fn test_checkbox_enter_submits_on_last_field() {
+        // Checkbox as the only (last) field: Enter submits instead of toggling
         let mut form = FormWidget::new("Test", vec![FieldDef::checkbox("Public")]);
+        let result = form.handle_key(key(KeyCode::Enter));
+        // Should trigger submit (or confirm step), not toggle
+        assert!(matches!(result, FormAction::Submit(_) | FormAction::None));
+        // Checkbox should NOT be toggled by Enter on last field
+        if let FieldState::Checkbox { checked } = &form.fields()[0].1 {
+            assert!(!*checked);
+        }
+    }
+
+    #[test]
+    fn test_checkbox_enter_toggles_on_non_last_field() {
+        // Checkbox NOT as last field: Enter toggles
+        let mut form = FormWidget::new("Test", vec![
+            FieldDef::checkbox("Public"),
+            FieldDef::text("Name", false),
+        ]);
         form.handle_key(key(KeyCode::Enter));
         if let FieldState::Checkbox { checked } = &form.fields()[0].1 {
             assert!(*checked);
-        }
-        form.handle_key(key(KeyCode::Enter));
-        if let FieldState::Checkbox { checked } = &form.fields()[0].1 {
-            assert!(!*checked);
         }
     }
 
@@ -1644,7 +1661,11 @@ mod tests {
 
     #[test]
     fn test_checkbox_toggle_right() {
-        let mut form = FormWidget::new("Test", vec![FieldDef::checkbox("Public")]);
+        // Right key on checkbox: toggle (regardless of position)
+        let mut form = FormWidget::new("Test", vec![
+            FieldDef::checkbox("Public"),
+            FieldDef::text("Name", false),
+        ]);
         form.handle_key(key(KeyCode::Right));
         if let FieldState::Checkbox { checked } = &form.fields()[0].1 {
             assert!(*checked);
