@@ -94,7 +94,7 @@ pub fn project_create_defs() -> Vec<FieldDef> {
     vec![
         FieldDef::text("Name", true),
         FieldDef::text("Description", false),
-        FieldDef::text("Domain ID", true),
+        FieldDef::dropdown("Domain", vec![], true),
         FieldDef::checkbox("Enabled"),
     ]
 }
@@ -153,8 +153,9 @@ mod tests {
         assert!(defs[0].validations().contains(&Validation::Required));
         assert_eq!(defs[1].name(), "Description");
         assert!(!defs[1].validations().contains(&Validation::Required));
-        assert_eq!(defs[2].name(), "Domain ID");
+        assert_eq!(defs[2].name(), "Domain");
         assert!(defs[2].validations().contains(&Validation::Required));
+        assert!(matches!(defs[2], FieldDef::Dropdown { .. }));
         assert_eq!(defs[3].name(), "Enabled");
         assert!(matches!(defs[3], FieldDef::Checkbox { .. }));
     }
