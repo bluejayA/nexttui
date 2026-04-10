@@ -4,13 +4,13 @@
 [![Rust](https://img.shields.io/badge/Rust-2024-orange.svg)](https://www.rust-lang.org/)
 [![ratatui](https://img.shields.io/badge/ratatui-0.30-blue.svg)](https://ratatui.rs)
 
-A terminal UI (TUI) for OpenStack cloud administration. Built with Rust and [ratatui](https://ratatui.rs).
+OpenStack 클라우드 관리를 위한 터미널 UI (TUI). Rust + [ratatui](https://ratatui.rs) 기반.
 
-Designed for **cloud infrastructure operators** who manage servers, networks, volumes, and floating IPs across OpenStack environments — directly from the terminal.
+퍼블릭 클라우드 **인프라 운영자**가 서버, 네트워크, 볼륨, Floating IP 등 OpenStack 리소스를 터미널에서 빠르게 조회하고 관리할 수 있는 Admin TUI 도구입니다.
 
-> **한국어**: OpenStack 관리용 터미널 UI. 퍼블릭 클라우드 인프라 운영자가 서버, 네트워크, 볼륨, Floating IP 등을 빠르게 조회하고 관리할 수 있는 Admin TUI 도구입니다.
+> **English**: [README.en.md](README.en.md)
 
-## Screenshots
+## 스크린샷
 
 ### Server List View
 ![Server List](docs/screenshots/server-list.png)
@@ -27,63 +27,63 @@ Designed for **cloud infrastructure operators** who manage servers, networks, vo
 ### Usage Monitoring
 ![Usage](docs/screenshots/usage.png)
 
-## Features
+## 주요 기능
 
-### Resource Management
-- **17 domain modules**: Servers, Flavors, Networks, Security Groups, Floating IPs, Volumes, Snapshots, Images, Projects, Users, Aggregates, Compute Services, Hypervisors, Network Agents, Host Operations, Migration, Usage
-- **Create/Delete forms**: Required field validation, confirmation dialogs, Toast notifications
-- **Hierarchical navigation**: Sidebar ↔ List ↔ Detail with consistent arrow key flow
+### 리소스 조회/관리
+- **17개 도메인 모듈**: Servers, Flavors, Networks, Security Groups, Floating IPs, Volumes, Snapshots, Images, Projects, Users, Aggregates, Compute Services, Hypervisors, Network Agents, Host Operations, Migration, Usage
+- **생성/삭제 폼**: 필수 필드(`*`) 검증, 확인 다이얼로그, Toast 알림
+- **계층 네비게이션**: Sidebar ↔ List ↔ Detail, 일관된 방향키 흐름
 
-### Operations
-- **Volume Attach/Detach**: Bidirectional entry (volume → server, server → volume)
-- **Floating IP Associate/Disassociate**: Auto port selection, service disruption warnings
-- **Force Detach / State Reset**: Admin-only with TypeToConfirm safety
-- **Server Resize / Migration / Evacuate**: Host failure recovery workflows
-- **Risk-based confirmation**: Y/N (normal) → TypeToConfirm (risky) → name input (critical)
+### 운영 액션
+- **Volume Attach/Detach**: 양방향 진입 (볼륨 → 서버 선택 / 서버 → 볼륨 선택)
+- **FloatingIP Associate/Disassociate**: 포트 자동 선택, 서비스 중단 경고
+- **Force Detach / State Reset**: Admin 전용, TypeToConfirm 안전장치
+- **Server Resize / Migration / Evacuate**: 호스트 장애 대응 워크플로우
+- **위험도 등급별 확인**: Y/N (일반) → TypeToConfirm (위험) → 이름 입력 (고위험)
 
-### Dashboard & Monitoring
-- **Usage Module**: btop-style resource dashboard (Infrastructure Summary + Project Usage + Hypervisor Allocation)
-- **Gauge bars**: Color thresholds (Green 0–70% / Yellow 71–90% / Red 91–100%)
-- **Activity Log**: CUD operation history popup (`!` key), StatusBar error badge
+### 대시보드 & 모니터링
+- **Usage Module**: btop 스타일 사용량 대시보드 (Infrastructure Summary + Project Usage + Hypervisor Allocation)
+- **게이지 바**: 임계치 색상 (Green 0~70% / Yellow 71~90% / Red 91~100%)
+- **Activity Log**: CUD 작업 이력 팝업 (`!` 키), StatusBar 에러 뱃지
 
-### Safety
-- **RBAC 3-tier**: Reader / Member(Operator) / Admin permission model
-- **CrossTenantGuard**: Block CUD in all_tenants mode + break-glass (`Ctrl+T`)
-- **TransitionGuard**: Disable keys during resource state transitions
-- **Boot volume protection**: Non-admin blocked, admin requires TypeToConfirm
-- **Audit log**: `~/.config/nexttui/audit.log` JSON Lines with 10MB rotation
+### 안전장치
+- **RBAC 3단계**: Reader / Member(Operator) / Admin 권한 분리
+- **CrossTenantGuard**: all_tenants 모드에서 CUD 기본 차단 + break-glass (`Ctrl+T`)
+- **TransitionGuard**: 전이 상태(attaching/detaching) 키 비활성화
+- **부트볼륨 보호**: 비admin 거부, admin TypeToConfirm 2단계
+- **감사 로그**: `~/.config/nexttui/audit.log` JSON Lines 기록 (10MB rotation)
 
 ### UI/UX
-- **Theme system**: Focus highlight, status icons, rounded borders
-- **SelectPopup inline search**: `/` key to filter server/volume lists
-- **ConfirmDialog context**: Volume name, size, type, project shown in dialogs
-- **Resource connectivity**: Connected resources shown by name across all views
-- **Navigation shortcuts**: `v`(Volumes) `n`(Networks) `s`(SG) `i`(Images) from server detail
+- **Theme 시스템**: 포커스 하이라이트, 상태 아이콘, Rounded 보더
+- **SelectPopup 인라인 검색**: `/` 키로 서버/볼륨 목록 필터링
+- **ConfirmDialog 상세 정보**: 볼륨명/크기/타입/프로젝트 등 의사결정 컨텍스트 표시
+- **리소스 연결성**: 서로 연결된 리소스는 모든 화면에서 이름으로 양방향 표시
+- **서버 상세 네비게이션**: `v`(Volumes) `n`(Networks) `s`(SG) `i`(Images) 점프
 
-## Requirements
+## 요구 사항
 
 - Rust (edition 2024)
-- OpenStack environment + `clouds.yaml`
+- OpenStack 환경 + `clouds.yaml` 설정
 
-## Installation
+## 설치 및 실행
 
 ```bash
-# Build
+# 빌드
 cargo build --release
 
-# Run (requires clouds.yaml)
+# 실행 (clouds.yaml 필요)
 cargo run -- --cloud mycloud
 
-# Demo mode (no API needed)
+# Demo 모드 (API 없이)
 cargo run -- --demo
 ```
 
-## Configuration
+## clouds.yaml 설정
 
-Place `clouds.yaml` in one of:
+아래 경로 중 하나에 `clouds.yaml`을 배치합니다:
 
-1. `$OS_CLIENT_CONFIG_FILE` environment variable
-2. `./clouds.yaml` (current directory)
+1. `$OS_CLIENT_CONFIG_FILE` 환경변수
+2. `./clouds.yaml` (현재 디렉토리)
 3. `~/.config/openstack/clouds.yaml`
 4. `/etc/openstack/clouds.yaml`
 
@@ -100,92 +100,92 @@ clouds:
     region_name: RegionOne
 ```
 
-## Key Bindings
+## 키 바인딩
 
-### General
-| Key | Action |
-|-----|--------|
-| `↑↓` / `j/k` | Navigate list |
-| `Enter` / `→` | Detail view / Select |
-| `←` / `Esc` | Back |
-| `Tab` | Toggle Sidebar ↔ Content focus |
-| `1-9, 0` | Jump to sidebar module |
-| `c` | Open create form |
-| `D` (Shift+D) | Delete |
-| `r` | Refresh |
-| `!` | Activity Log popup |
-| `q` | Quit |
+### 공통
+| 키 | 동작 |
+|----|------|
+| `↑↓` / `j/k` | 목록 이동 |
+| `Enter` / `→` | 상세 보기 / 선택 |
+| `←` / `Esc` | 뒤로 |
+| `Tab` | Sidebar ↔ Content 포커스 전환 |
+| `1-9, 0` | Sidebar 모듈 직접 이동 |
+| `c` | 생성 폼 열기 |
+| `D` (Shift+D) | 삭제 |
+| `r` | 새로고침 |
+| `!` | Activity Log 팝업 |
+| `q` | 종료 |
 
 ### Volume / Floating IP
-| Key | Action |
-|-----|--------|
+| 키 | 동작 |
+|----|------|
 | `a` | Attach / Associate |
 | `x` | Detach / Disassociate |
 | `F` (Shift+F) | Force Detach (Admin) |
 | `R` (Shift+R) | Force State Reset (Admin) |
 
-### Server Detail
-| Key | Action |
-|-----|--------|
-| `A` (Shift+A) | Attach Volume |
-| `x` | Detach Volume |
-| `f` | Associate Floating IP |
-| `v` / `n` / `s` / `i` | Navigate to Volumes/Networks/SG/Images |
+### Server 상세
+| 키 | 동작 |
+|----|------|
+| `A` (Shift+A) | 볼륨 Attach |
+| `x` | 볼륨 Detach |
+| `f` | Floating IP Associate |
+| `v` / `n` / `s` / `i` | Volumes/Networks/SG/Images 모듈로 이동 |
 
 ### Usage
-| Key | Action |
-|-----|--------|
-| `[` / `]` | Cycle period (This Month / Last Month / Last 7 Days) |
-| `j` / `k` | Scroll |
-| `r` | Refresh |
+| 키 | 동작 |
+|----|------|
+| `[` / `]` | 기간 전환 (This Month / Last Month / Last 7 Days) |
+| `j` / `k` | 스크롤 |
+| `r` | 새로고침 |
 
-## Architecture
+## 아키텍처
 
 ```
 src/
-├── app.rs          # App root (FocusPane, InputMode, AuditLogger)
-├── registry.rs     # ModuleRegistry (auto module registration)
+├── app.rs          # App 루트 (FocusPane, InputMode, AuditLogger)
+├── registry.rs     # ModuleRegistry (모듈 자동 등록)
 ├── component.rs    # Component trait
 ├── worker.rs       # Background worker (Action → API → AppEvent)
-├── event_loop.rs   # tokio::select (key/tick/background events)
+├── event_loop.rs   # tokio::select (key/tick/background 이벤트)
 ├── adapter/        # HTTP adapters (Nova, Neutron, Cinder, Glance, Keystone)
-├── port/           # Port traits (API abstraction)
-├── module/         # 17 domain modules
+├── port/           # Port traits (API 추상화)
+├── module/         # 17개 도메인 모듈
 │   ├── server/     # ServerModule + ServerViewContext
 │   ├── volume/     # VolumeModule (attach/detach)
 │   ├── floating_ip/# FloatingIpModule (associate/disassociate)
-│   ├── host/       # HostModule (evacuate, composite layout)
-│   ├── usage/      # UsageModule (btop-style dashboard)
+│   ├── host/       # HostModule (evacuate, composite 레이아웃)
+│   ├── usage/      # UsageModule (btop 스타일 대시보드)
 │   └── ...
-├── ui/             # UI widgets
-│   ├── select_popup.rs  # SelectPopup (inline search)
+├── ui/             # UI 위젯
+│   ├── select_popup.rs  # SelectPopup (인라인 검색)
 │   ├── confirm.rs       # ConfirmDialog (YesNo / TypeToConfirm)
-│   ├── gauge_bar.rs     # GaugeBar (btop-style)
-│   ├── toast.rs         # Toast notifications
+│   ├── gauge_bar.rs     # GaugeBar (btop 스타일)
+│   ├── toast.rs         # Toast 알림
 │   └── ...
-├── models/         # OpenStack API response models
+├── models/         # OpenStack API 응답 모델
 └── infra/          # RBAC, Cache, Config, AuditLogger, CrossTenantGuard
 ```
 
-**Pattern**: Component-Based + TEA hybrid (Action → Worker → AppEvent → State) + Port/Adapter + ViewContext
+**패턴**: Component-Based + TEA 하이브리드 (Action → Worker → AppEvent → State) + Port/Adapter + ViewContext
 
-## Testing
+## 테스트
 
 ```bash
 cargo test          # 1108 tests
 cargo clippy        # lint
 ```
 
-## Contributing
+## 기여하기
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+기여를 환영합니다! Pull Request를 자유롭게 제출해주세요.
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'feat: add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+1. 레포지토리 Fork
+2. Feature 브랜치 생성 (`git checkout -b feature/amazing-feature`)
+3. 변경사항 커밋 (`git commit -m 'feat: add amazing feature'`)
+4. 브랜치 Push (`git push origin feature/amazing-feature`)
+5. Pull Request 생성
 
-## License
+## 라이선스
 
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+이 프로젝트는 MIT 라이선스로 배포됩니다. 자세한 내용은 [LICENSE](LICENSE) 파일을 참조하세요.
