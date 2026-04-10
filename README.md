@@ -40,76 +40,20 @@ OpenStack 관리용 터미널 UI (TUI). Rust + [ratatui](https://ratatui.rs) 기
 
 ## 스크린샷
 
-### Server List (기본 화면)
-```
-╭─ nexttui ─────── admin@mycloud ──────────────────────────── ⚠2 ─╮
-│ Modules          │ ╭─ Servers ──────────────────────────────────╮ │
-│                  │ │    Name          Status    IP          Vol │ │
-│ 1 Servers      ◀ │ │ ●  web-prod-01   ACTIVE   10.0.1.10    2 │ │
-│ 2 Flavors        │ │ ●  web-prod-02   ACTIVE   10.0.1.11    1 │ │
-│ 3 Networks       │ │ ●  db-prod-01    ACTIVE   10.0.2.20    3 │ │
-│ 4 Security Grps  │ │ ○  test-vm-01    SHUTOFF  10.0.3.30    - │ │
-│ 5 Floating IPs   │ │ ✗  broken-vm     ERROR    10.0.4.40    1 │ │
-│ 6 Volumes        │ │                                           │ │
-│ 7 Snapshots      │ ╰───────────────────────────────────────────╯ │
-│ 8 Images         │                                               │
-│ 9 Projects       │                                               │
-│ 0 Users          │                                               │
-│ h Host Ops       │                                               │
-│ u Usage          │                                               │
-│                  │                                               │
-├──────────────────┴───────────────────────────────────────────────┤
-│ c:Create D:Delete a:Attach x:Detach r:Refresh                   │
-╰──────────────────────────────────────────────────────────────────╯
-```
+### Server List View
+![Server List](docs/screenshots/server-list.png)
 
-### Host Operations (장애 대응)
-```
-╭─ nexttui ─────── admin@mycloud ──────────────────────────────────╮
-│ ╭─ Host Ops ─────────────────────────────────────────────────╮   │
-│ │ ╭─ Hosts ──────────────────────╮╭─ Instances on cp-01 ───╮│   │
-│ │ │   Host          State  VMs   ││   Name        Status    ││   │
-│ │ │ ● compute-01    up     5     ││ ☐ web-prod-01  ACTIVE   ││   │
-│ │ │ ● compute-02    up     3     ││ ☐ web-prod-02  ACTIVE   ││   │
-│ │ │ ✗ compute-03    down   0     ││ ☐ db-prod-01   ACTIVE   ││   │
-│ │ │                              ││                         ││   │
-│ │ ╰──────────────────────────────╯╰─────────────────────────╯│   │
-│ │ ╭─ Evacuate Task ─────────────────────────────────────────╮│   │
-│ │ │ Status: Idle                                            ││   │
-│ │ ╰─────────────────────────────────────────────────────────╯│   │
-│ │ ╭─ Log ───────────────────────────────────────────────────╮│   │
-│ │ │                                                         ││   │
-│ │ ╰─────────────────────────────────────────────────────────╯│   │
-│ ╰────────────────────────────────────────────────────────────╯   │
-├──────────────────────────────────────────────────────────────────┤
-│ e:Evacuate d:Disable Space:Select Tab:Back                       │
-╰──────────────────────────────────────────────────────────────────╯
-```
+### Server Detail View
+![Server Detail](docs/screenshots/server-detail.png)
 
-### Usage Dashboard (리소스 사용량)
-```
-╭─ nexttui ─────── admin@mycloud ──────────────────────────────────╮
-│ ╭─ Infrastructure Summary ───────────────────────────────────╮   │
-│ │ ╭─ vCPU ────────╮╭─ RAM ─────────╮╭─ Disk ────────╮╭─ VMs ╮│  │
-│ │ │ Used: 28      ││ Used: 96 GB   ││ Used: 400 GB  ││ 120  ││  │
-│ │ │ [▓▓▓▓▓▓···]   ││ [▓▓▓▓▓▓▓▓··]  ││ [▓▓▓·········]││      ││  │
-│ │ │ 44%           ││ 75%           ││ 25%           ││      ││  │
-│ │ ╰───────────────╯╰───────────────╯╰───────────────╯╰──────╯│  │
-│ ╰────────────────────────────────────────────────────────────╯   │
-│ ╭─ Project Usage ◀ This Month ▶ ────────────────────────────╮   │
-│ │ Project       │ vCPU-h  │ RAM MB-h    │ Disk GB-h │ VMs   │   │
-│ │ customer-a    │ 1,440   │ 2,949,120   │ 28,800    │ 3     │   │
-│ │ customer-b    │ 720     │ 1,474,560   │ 14,400    │ 1     │   │
-│ ╰────────────────────────────────────────────────────────────╯   │
-│ ╭─ Hypervisor Allocation ───────────────────┬─ Summary ─────╮   │
-│ │ ● compute-01  vCPU[▓▓▓▓▓···] 16/32 RAM 64G│ Hosts: 3     │   │
-│ │ ● compute-02  vCPU[▓▓▓·····]  8/32 RAM 32G│ vCPU: 28/96  │   │
-│ │ ● compute-03  vCPU[▓▓······]  4/32 RAM  8G│ RAM: 104/384G│   │
-│ ╰────────────────────────────────────────────┴──────────────╯   │
-├──────────────────────────────────────────────────────────────────┤
-│ [/]:Period  j/k:Scroll  r:Refresh                                │
-╰──────────────────────────────────────────────────────────────────╯
-```
+### Server Live Migrate
+![Live Migrate](docs/screenshots/live-migrate.png)
+
+### Host Operations
+![Host Operations](docs/screenshots/host-ops.png)
+
+### Usage Monitoring
+![Usage](docs/screenshots/usage.png)
 
 ## 요구 사항
 
