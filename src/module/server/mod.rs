@@ -20,7 +20,8 @@ use crate::ui::resource_list::{ResourceList, Row};
 use crate::ui::select_popup::{ItemHint, SelectItem, SelectPopup, SelectResult};
 
 use self::view_model::{
-    server_columns_full, server_create_defs, server_detail_data_full, server_to_row_full,
+    server_columns_full, server_create_defs, server_detail_data, server_to_row_full,
+    ServerViewContext,
 };
 
 #[derive(Debug, Clone)]
@@ -995,7 +996,14 @@ impl Component for ServerModule {
                 if let Some(server) = self.servers.iter().find(|s| s.id == *id) {
                     let matched_flavor = self.cached_flavors.iter().find(|f| f.id == server.flavor.id);
                     let is_resize = self.resize_pending.as_ref().is_some_and(|rp| rp.server_id == *id);
-                    let data = server_detail_data_full(server, self.migration_progress_for(id), matched_flavor, is_resize, &self.cached_volumes, &self.cached_floating_ips);
+                    let data = server_detail_data(&ServerViewContext {
+                        server,
+                        migration_progress: self.migration_progress_for(id),
+                        flavor: matched_flavor,
+                        is_resize_pending: is_resize,
+                        cached_volumes: &self.cached_volumes,
+                        cached_floating_ips: &self.cached_floating_ips,
+                    });
                     let mut dv = crate::ui::detail_view::DetailView::new();
                     dv.set_data(data);
                     dv.render(frame, area);
