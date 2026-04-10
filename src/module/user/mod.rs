@@ -12,7 +12,7 @@ use crate::models::keystone::User;
 use crate::module::{ConfirmHandler, PendingAction, ViewState};
 use crate::port::types::UserCreateParams;
 use crate::ui::confirm::ConfirmDialog;
-use crate::ui::form::{FormAction, FormWidget};
+use crate::ui::form::{FormAction, FormWidget, SelectOption};
 use crate::ui::resource_list::{ResourceList, Row};
 
 use self::view_model::{user_columns, user_create_defs, user_to_row};
@@ -26,6 +26,7 @@ pub struct UserModule {
     confirm: ConfirmHandler,
     resource_list: ResourceList,
     form: Option<FormWidget>,
+    cached_domain_opts: Vec<SelectOption>,
     action_tx: mpsc::UnboundedSender<Action>,
 }
 
@@ -39,6 +40,7 @@ impl UserModule {
             confirm: ConfirmHandler::new(),
             resource_list: ResourceList::new(user_columns()),
             form: None,
+            cached_domain_opts: Vec::new(),
             action_tx,
         }
     }
@@ -60,7 +62,11 @@ impl UserModule {
 
     fn open_create_form(&mut self) {
         let defs = user_create_defs();
-        self.form = Some(FormWidget::new("Create User", defs));
+        let mut form = FormWidget::new("Create User", defs);
+        if !self.cached_domain_opts.is_empty() {
+            form.set_field_options("Domain", self.cached_domain_opts.clone());
+        }
+        self.form = Some(form);
         self.view_state = ViewState::Create;
     }
 
@@ -125,12 +131,12 @@ impl UserModule {
                         _ => None,
                     });
                 let domain_id = values
-                    .get("Domain ID")
+                    .get("Domain")
                     .and_then(|v| match v {
                         crate::ui::form::FormValue::Text(s) => Some(s.clone()),
                         _ => None,
                     })
-                    .unwrap_or_default();
+                    .unwrap_or_else(|| "default".to_string());
                 let enabled = values
                     .get("Enabled")
                     .and_then(|v| match v {
@@ -179,6 +185,17 @@ impl Component for UserModule {
                 self.error_message = None;
                 let rows = self.rows();
                 self.resource_list.set_rows(rows);
+                // Build domain dropdown options from loaded users
+                let mut domain_ids: Vec<String> = users
+                    .iter()
+                    .filter_map(|u| u.domain_id.clone())
+                    .collect();
+                domain_ids.sort();
+                domain_ids.dedup();
+                self.cached_domain_opts = domain_ids
+                    .into_iter()
+                    .map(|d| SelectOption { value: d.clone(), display: d })
+                    .collect();
             }
             AppEvent::UserCreated(_) => {
                 self.view_state = ViewState::List;
