@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use chrono::{DateTime, Utc};
 use tokio::sync::mpsc;
 use tracing::Instrument;
 
@@ -213,6 +214,7 @@ fn action_name(action: &Action) -> &str {
         Action::AssociateFloatingIp { .. } => "AssociateFloatingIp",
         Action::DisassociateFloatingIp { .. } => "DisassociateFloatingIp",
         Action::FetchPorts { .. } => "FetchPorts",
+        Action::FetchUsage { .. } => "FetchUsage",
         _ => "Unknown",
     }
 }
@@ -361,6 +363,22 @@ async fn handle_action(registry: &AdapterRegistry, all_tenants: &AtomicBool, act
                     }
                 }
                 Err(e) => Some(api_error("FetchMigrationProgress", e)),
+            }
+        }
+
+        // -- Nova: Usage ---------------------------------------------------
+        Action::FetchUsage { start, end } => {
+            use crate::port::error::ApiError;
+            let start_dt = start.parse::<DateTime<Utc>>().map_err(|e| ApiError::Parse(e.to_string()));
+            let end_dt = end.parse::<DateTime<Utc>>().map_err(|e| ApiError::Parse(e.to_string()));
+            match (start_dt, end_dt) {
+                (Ok(s), Ok(e)) => {
+                    match registry.nova.list_all_tenant_usage(s, e).await {
+                        Ok(usages) => Some(AppEvent::UsageLoaded(usages)),
+                        Err(e) => Some(api_error("FetchUsage", e)),
+                    }
+                }
+                (Err(e), _) | (_, Err(e)) => Some(api_error("FetchUsage", e)),
             }
         }
 

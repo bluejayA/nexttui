@@ -60,6 +60,11 @@ struct CinderQosSpecWrapper {
     qos_spec: QosSpec,
 }
 
+#[derive(Deserialize)]
+struct CinderQuotaResponse {
+    quota_set: VolumeQuota,
+}
+
 #[allow(dead_code)] // Used in Unit 14
 #[derive(Deserialize)]
 struct CinderStoragePoolsResponse {
@@ -343,10 +348,18 @@ impl CinderPort for CinderHttpAdapter {
         Err(ApiError::BadRequest("not yet implemented".into()))
     }
 
-    // -- Quota (stub — Unit 12) --
+    // -- Quota --
 
-    async fn get_volume_quota(&self, _project_id: &str) -> ApiResult<VolumeQuota> {
-        Err(ApiError::BadRequest("not yet implemented".into()))
+    async fn get_volume_quota(&self, project_id: &str) -> ApiResult<VolumeQuota> {
+        let req = self
+            .base
+            .get(&format!(
+                "/os-quota-sets/{}",
+                encode_param(project_id)
+            ))
+            .await?;
+        let resp: CinderQuotaResponse = self.base.send_json(req).await?;
+        Ok(resp.quota_set)
     }
 
     async fn update_volume_quota(

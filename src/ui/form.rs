@@ -1021,7 +1021,7 @@ impl FormWidget {
                 ]
             }
             (FieldDef::Checkbox { .. }, FieldState::Checkbox { checked }) => {
-                let icon = if *checked { "[x]" } else { "[ ]" };
+                let icon = if *checked { "[✓]" } else { "[ ]" };
                 let style = if is_focused {
                     Theme::focus_border()
                 } else {
@@ -1149,7 +1149,7 @@ impl FormWidget {
                     .map(|(i, opt)| {
                         let is_cursor = i == cursor;
                         let checked = selected.get(i).copied().unwrap_or(false);
-                        let check = if checked { "[x]" } else { "[ ]" };
+                        let check = if checked { "[✓]" } else { "[ ]" };
                         let prefix = if is_cursor { "▸" } else { " " };
                         let style = if is_cursor {
                             Theme::focus_border()
@@ -2212,7 +2212,7 @@ mod tests {
 
         form.handle_key(key(KeyCode::Char(' ')));
         let output = render_to_buffer(&form, 40, 8);
-        assert!(output.contains("[x]"), "Checked state not found");
+        assert!(output.contains("[✓]"), "Checked state not found");
     }
 
     #[test]

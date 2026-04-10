@@ -58,6 +58,9 @@ pub enum Action {
     CreateUser(crate::port::types::UserCreateParams),
     DeleteUser { id: String },
 
+    // Usage
+    FetchUsage { start: String, end: String },
+
     // UI
     FocusSidebar,
     EnterFormMode,
@@ -182,6 +185,21 @@ mod tests {
             Action::RevertResize { id: "s1".into() },
         ];
         assert_eq!(actions.len(), 3);
+    }
+
+    #[test]
+    fn test_usage_action_variant_exists() {
+        let action = Action::FetchUsage {
+            start: "2026-01-01T00:00:00Z".into(),
+            end: "2026-01-31T23:59:59Z".into(),
+        };
+        match action {
+            Action::FetchUsage { start, end } => {
+                assert!(start.contains("2026"));
+                assert!(end.contains("2026"));
+            }
+            _ => panic!("expected FetchUsage"),
+        }
     }
 
     #[test]

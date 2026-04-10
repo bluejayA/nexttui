@@ -342,6 +342,36 @@ pub struct ProjectUsage {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct TenantUsage {
+    pub tenant_id: String,
+    pub total_vcpus_usage: f64,
+    pub total_memory_mb_usage: f64,
+    pub total_local_gb_usage: f64,
+    #[serde(default)]
+    pub total_hours: f64,
+    #[serde(default)]
+    pub server_usages: Vec<ServerUsageEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ServerUsageEntry {
+    #[serde(default)]
+    pub instance_id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub hours: f64,
+    #[serde(default)]
+    pub vcpus: u32,
+    #[serde(default)]
+    pub memory_mb: u32,
+    #[serde(default)]
+    pub local_gb: u32,
+    #[serde(default)]
+    pub state: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct ComputeQuota {
     pub cores: i64,
     pub ram: i64,
@@ -565,4 +595,60 @@ pub struct ImageCreateParams {
 pub struct ImageUpdateParams {
     pub name: Option<String>,
     pub visibility: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tenant_usage_deserialize() {
+        let json = r#"{
+            "tenant_id": "proj-1",
+            "total_vcpus_usage": 4.5,
+            "total_memory_mb_usage": 8192.0,
+            "total_local_gb_usage": 100.0,
+            "total_hours": 720.0,
+            "server_usages": [
+                {
+                    "instance_id": "inst-1",
+                    "name": "web-server",
+                    "hours": 360.0,
+                    "vcpus": 2,
+                    "memory_mb": 4096,
+                    "local_gb": 50,
+                    "state": "active"
+                }
+            ]
+        }"#;
+        let usage: TenantUsage = serde_json::from_str(json).unwrap();
+        assert_eq!(usage.tenant_id, "proj-1");
+        assert!((usage.total_vcpus_usage - 4.5).abs() < f64::EPSILON);
+        assert_eq!(usage.server_usages.len(), 1);
+        assert_eq!(usage.server_usages[0].vcpus, 2);
+        assert_eq!(usage.server_usages[0].name, "web-server");
+    }
+
+    #[test]
+    fn test_tenant_usage_deserialize_minimal() {
+        let json = r#"{
+            "tenant_id": "proj-2",
+            "total_vcpus_usage": 0.0,
+            "total_memory_mb_usage": 0.0,
+            "total_local_gb_usage": 0.0
+        }"#;
+        let usage: TenantUsage = serde_json::from_str(json).unwrap();
+        assert_eq!(usage.tenant_id, "proj-2");
+        assert!(usage.server_usages.is_empty());
+        assert!((usage.total_hours - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_server_usage_entry_defaults() {
+        let json = r#"{}"#;
+        let entry: ServerUsageEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(entry.instance_id, "");
+        assert_eq!(entry.vcpus, 0);
+        assert!((entry.hours - 0.0).abs() < f64::EPSILON);
+    }
 }
