@@ -1,5 +1,7 @@
 # nexttui
 
+[🇰🇷 한국어](README.md) | 🇺🇸 **English**
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Rust-2024-orange.svg)](https://www.rust-lang.org/)
 [![ratatui](https://img.shields.io/badge/ratatui-0.30-blue.svg)](https://ratatui.rs)
@@ -7,8 +9,6 @@
 A terminal UI (TUI) for OpenStack cloud administration. Built with Rust and [ratatui](https://ratatui.rs).
 
 Designed for **cloud infrastructure operators** who manage servers, networks, volumes, and floating IPs across OpenStack environments — directly from the terminal.
-
-> **한국어**: [README.md](README.md)
 
 ## Screenshots
 

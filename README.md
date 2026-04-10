@@ -1,5 +1,7 @@
 # nexttui
 
+🇰🇷 **한국어** | [🇺🇸 English](README.en.md)
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Rust-2024-orange.svg)](https://www.rust-lang.org/)
 [![ratatui](https://img.shields.io/badge/ratatui-0.30-blue.svg)](https://ratatui.rs)
@@ -7,8 +9,6 @@
 OpenStack 클라우드 관리를 위한 터미널 UI (TUI). Rust + [ratatui](https://ratatui.rs) 기반.
 
 퍼블릭 클라우드 **인프라 운영자**가 서버, 네트워크, 볼륨, Floating IP 등 OpenStack 리소스를 터미널에서 빠르게 조회하고 관리할 수 있는 Admin TUI 도구입니다.
-
-> **English**: [README.en.md](README.en.md)
 
 ## 스크린샷
 
