@@ -514,10 +514,7 @@ impl App {
         }
         #[cfg(not(test))]
         {
-            let path = dirs::config_dir()
-                .unwrap_or_else(|| std::path::PathBuf::from(".config"))
-                .join("nexttui")
-                .join("audit.log");
+            let path = crate::config::nexttui_config_dir().join("audit.log");
             match AuditLogger::new(path) {
                 Ok(logger) => Some(logger),
                 Err(e) => {
