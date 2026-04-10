@@ -403,11 +403,7 @@ impl UsageModule {
                 let state_icon = if is_up { "●" } else { "✗" };
                 let state_color = if is_up { Color::Green } else { Color::Red };
 
-                let hostname = if hv.hypervisor_hostname.len() > 12 {
-                    &hv.hypervisor_hostname[..12]
-                } else {
-                    &hv.hypervisor_hostname
-                };
+                let hostname = &hv.hypervisor_hostname;
 
                 let cpu_filled = ((bar_w as f64) * cpu_gauge.ratio()) as u16;
                 let cpu_empty = bar_w.saturating_sub(cpu_filled);
@@ -416,7 +412,7 @@ impl UsageModule {
 
                 Line::from(vec![
                     Span::styled(format!(" {state_icon} "), Style::default().fg(state_color)),
-                    Span::styled(format!("{:<12}", hostname), Style::default().fg(Color::White)),
+                    Span::styled(format!("{:<20}", hostname), Style::default().fg(Color::White)),
                     Span::raw(" vCPU["),
                     Span::styled("▓".repeat(cpu_filled as usize), Style::default().fg(cpu_color)),
                     Span::styled("·".repeat(cpu_empty as usize), Style::default().fg(Color::DarkGray)),
