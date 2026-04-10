@@ -340,7 +340,7 @@ impl UsageModule {
 
     fn render_hypervisor_load(&self, frame: &mut Frame, area: Rect) {
         let block = Block::default()
-            .title(" Hypervisor Load ")
+            .title(" Hypervisor Allocation ")
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(Theme::focus_border());
@@ -575,7 +575,7 @@ impl Component for UsageModule {
             .constraints([
                 Constraint::Length(7),        // Infrastructure Summary (fixed)
                 Constraint::Length(half),      // Project Usage (50% of remaining)
-                Constraint::Min(half),        // Hypervisor Load (50% of remaining)
+                Constraint::Min(half),        // Hypervisor Allocation (50% of remaining)
             ])
             .split(area);
 
