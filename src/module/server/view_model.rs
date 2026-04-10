@@ -5,6 +5,32 @@ use crate::ui::detail_view::{DetailData, DetailField, DetailSection};
 use crate::ui::form::FieldDef;
 use crate::ui::resource_list::{ColumnDef, ColumnWidth, Row, RowStyleHint};
 
+/// Aggregates the context needed to render a server detail view.
+/// All fields are references to avoid cloning.
+pub struct ServerViewContext<'a> {
+    pub server: &'a Server,
+    pub migration_progress: Option<&'a ServerMigration>,
+    pub flavor: Option<&'a Flavor>,
+    pub is_resize_pending: bool,
+    pub cached_volumes: &'a [crate::models::cinder::Volume],
+    pub cached_floating_ips: &'a [crate::models::neutron::FloatingIp],
+}
+
+impl<'a> ServerViewContext<'a> {
+    /// Convenience constructor with empty optional fields — useful for tests
+    /// and callers that only need basic server info.
+    pub fn default_for(server: &'a Server) -> Self {
+        Self {
+            server,
+            migration_progress: None,
+            flavor: None,
+            is_resize_pending: false,
+            cached_volumes: &[],
+            cached_floating_ips: &[],
+        }
+    }
+}
+
 pub fn server_columns(show_tenant: bool) -> Vec<ColumnDef> {
     server_columns_full(show_tenant, false)
 }
@@ -115,18 +141,19 @@ pub fn server_to_row_full(server: &Server, show_tenant: bool, show_host: bool) -
     }
 }
 
-pub fn server_detail_data(server: &Server) -> DetailData {
-    server_detail_data_full(server, None, None, false, &[], &[])
+/// Convenience wrapper: renders detail data with only the server (no extra context).
+pub fn server_detail_data_simple(server: &Server) -> DetailData {
+    server_detail_data(&ServerViewContext::default_for(server))
 }
 
-pub fn server_detail_data_full(
-    server: &Server,
-    migration_progress: Option<&ServerMigration>,
-    flavor: Option<&Flavor>,
-    is_resize_pending: bool,
-    cached_volumes: &[crate::models::cinder::Volume],
-    cached_floating_ips: &[crate::models::neutron::FloatingIp],
-) -> DetailData {
+pub fn server_detail_data(ctx: &ServerViewContext) -> DetailData {
+    let server = ctx.server;
+    let migration_progress = ctx.migration_progress;
+    let flavor = ctx.flavor;
+    let is_resize_pending = ctx.is_resize_pending;
+    let cached_volumes = ctx.cached_volumes;
+    let cached_floating_ips = ctx.cached_floating_ips;
+
     let mut sections = vec![];
 
     // VERIFY_RESIZE banner — distinguish resize vs migration
@@ -608,7 +635,7 @@ mod tests {
     #[test]
     fn test_server_detail_data_sections() {
         let server = make_server("ACTIVE");
-        let data = server_detail_data(&server);
+        let data = server_detail_data_simple(&server);
         assert_eq!(data.title, "Server: web-01");
         assert!(data.sections.len() >= 3); // Basic, Hardware, Networks
     }
@@ -656,14 +683,14 @@ mod tests {
     #[test]
     fn test_detail_verify_resize_banner() {
         let server = make_server("VERIFY_RESIZE");
-        let data = server_detail_data_full(&server, None, None, false, &[], &[]);
+        let data = server_detail_data(&ServerViewContext::default_for(&server));
         assert_eq!(data.sections[0].name, "⚠ Migration Pending");
     }
 
     #[test]
     fn test_detail_no_banner_for_active() {
         let server = make_server("ACTIVE");
-        let data = server_detail_data_full(&server, None, None, false, &[], &[]);
+        let data = server_detail_data(&ServerViewContext::default_for(&server));
         assert_ne!(data.sections[0].name, "⚠ Migration Pending");
     }
 
@@ -684,7 +711,14 @@ mod tests {
             created_at: None,
             updated_at: None,
         };
-        let data = server_detail_data_full(&server, Some(&mig), None, false, &[], &[]);
+        let data = server_detail_data(&ServerViewContext {
+            server: &server,
+            migration_progress: Some(&mig),
+            flavor: None,
+            is_resize_pending: false,
+            cached_volumes: &[],
+            cached_floating_ips: &[],
+        });
         let mig_section = data.sections.iter().find(|s| s.name == "Migration Progress");
         assert!(mig_section.is_some());
         let fields = &mig_section.unwrap().fields;
@@ -695,7 +729,7 @@ mod tests {
     #[test]
     fn test_detail_no_migration_progress_without_data() {
         let server = make_server("ACTIVE");
-        let data = server_detail_data_full(&server, None, None, false, &[], &[]);
+        let data = server_detail_data(&ServerViewContext::default_for(&server));
         let mig_section = data.sections.iter().find(|s| s.name == "Migration Progress");
         assert!(mig_section.is_none());
     }
@@ -734,7 +768,14 @@ mod tests {
             created_at: None,
             updated_at: None,
         };
-        let data = server_detail_data_full(&server, Some(&mig), None, false, &[], &[]);
+        let data = server_detail_data(&ServerViewContext {
+            server: &server,
+            migration_progress: Some(&mig),
+            flavor: None,
+            is_resize_pending: false,
+            cached_volumes: &[],
+            cached_floating_ips: &[],
+        });
         let mig_section = data.sections.iter().find(|s| s.name == "Migration Progress").unwrap();
         // Status, Source, Dest, Memory = 4 fields (no Disk)
         assert_eq!(mig_section.fields.len(), 4);
@@ -743,7 +784,7 @@ mod tests {
     #[test]
     fn test_detail_verify_resize_banner_migration() {
         let server = make_server("VERIFY_RESIZE");
-        let data = server_detail_data_full(&server, None, None, false, &[], &[]);
+        let data = server_detail_data(&ServerViewContext::default_for(&server));
         let banner = &data.sections[0];
         assert_eq!(banner.name, "⚠ Migration Pending");
         if let DetailField::KeyValue { value, style, .. } = &banner.fields[0] {
@@ -757,7 +798,14 @@ mod tests {
     #[test]
     fn test_detail_verify_resize_banner_resize() {
         let server = make_server("VERIFY_RESIZE");
-        let data = server_detail_data_full(&server, None, None, true, &[], &[]);
+        let data = server_detail_data(&ServerViewContext {
+            server: &server,
+            migration_progress: None,
+            flavor: None,
+            is_resize_pending: true,
+            cached_volumes: &[],
+            cached_floating_ips: &[],
+        });
         let banner = &data.sections[0];
         assert_eq!(banner.name, "⚠ Resize Pending");
         if let DetailField::KeyValue { value, style, .. } = &banner.fields[0] {
@@ -777,7 +825,7 @@ mod tests {
             ServerSecurityGroup { name: "default".into() },
             ServerSecurityGroup { name: "web-sg".into() },
         ];
-        let data = server_detail_data(&server);
+        let data = server_detail_data_simple(&server);
         let sg_section = data.sections.iter().find(|s| s.name == "Security Groups");
         assert!(sg_section.is_some(), "Security Groups section should exist");
         let fields = &sg_section.unwrap().fields;
@@ -798,7 +846,7 @@ mod tests {
     #[test]
     fn test_detail_no_security_groups_when_empty() {
         let server = make_server("ACTIVE");
-        let data = server_detail_data(&server);
+        let data = server_detail_data_simple(&server);
         let sg_section = data.sections.iter().find(|s| s.name == "Security Groups");
         assert!(sg_section.is_none(), "Security Groups section should not exist when empty");
     }

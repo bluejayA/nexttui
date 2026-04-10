@@ -2,6 +2,25 @@ use crate::models::neutron::FloatingIp;
 use crate::ui::form::FieldDef;
 use crate::ui::resource_list::{ColumnDef, ColumnWidth, Row, RowStyleHint};
 
+/// Aggregates the context needed to render a floating IP row with server resolution.
+/// All fields are references to avoid cloning.
+pub struct FipRowContext<'a> {
+    pub show_tenant: bool,
+    pub cached_servers: &'a [crate::models::nova::Server],
+    pub cached_ports: &'a [crate::models::neutron::Port],
+}
+
+impl<'a> FipRowContext<'a> {
+    /// Convenience constructor with empty caches.
+    pub fn default_for(show_tenant: bool) -> Self {
+        Self {
+            show_tenant,
+            cached_servers: &[],
+            cached_ports: &[],
+        }
+    }
+}
+
 pub fn fip_columns(show_tenant: bool) -> Vec<ColumnDef> {
     let mut cols = vec![
         ColumnDef {
@@ -37,16 +56,16 @@ pub fn fip_columns(show_tenant: bool) -> Vec<ColumnDef> {
     cols
 }
 
-pub fn fip_to_row(fip: &FloatingIp, show_tenant: bool) -> Row {
-    fip_to_row_with_servers(fip, show_tenant, &[], &[])
+/// Convenience wrapper: renders a FIP row without server/port resolution.
+pub fn fip_to_row_simple(fip: &FloatingIp, show_tenant: bool) -> Row {
+    fip_to_row(fip, &FipRowContext::default_for(show_tenant))
 }
 
-pub fn fip_to_row_with_servers(
-    fip: &FloatingIp,
-    show_tenant: bool,
-    cached_servers: &[crate::models::nova::Server],
-    cached_ports: &[crate::models::neutron::Port],
-) -> Row {
+pub fn fip_to_row(fip: &FloatingIp, ctx: &FipRowContext) -> Row {
+    let show_tenant = ctx.show_tenant;
+    let cached_servers = ctx.cached_servers;
+    let cached_ports = ctx.cached_ports;
+
     let (icon, style) = fip_status_display(&fip.status);
     let fixed_ip = fip.fixed_ip_address.as_deref().unwrap_or("-");
 
@@ -132,7 +151,7 @@ mod tests {
     #[test]
     fn test_fip_to_row() {
         let fip = make_fip();
-        let row = fip_to_row(&fip, false);
+        let row = fip_to_row_simple(&fip, false);
         assert_eq!(row.id, "fip-1");
         assert_eq!(row.cells[0], "203.0.113.10");
         assert!(row.cells[1].contains("ACTIVE"));
@@ -147,7 +166,7 @@ mod tests {
     fn test_fip_to_row_no_fixed_ip() {
         let mut fip = make_fip();
         fip.fixed_ip_address = None;
-        let row = fip_to_row(&fip, false);
+        let row = fip_to_row_simple(&fip, false);
         assert_eq!(row.cells[2], "-");
     }
 
