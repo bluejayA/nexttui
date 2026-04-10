@@ -13,3 +13,11 @@
 *.pfx
 .worktrees/
 clouds.yaml
+
+# DevStack
+devstack/
+devstack-lima-archive.zip
+
+# DevFlow archives
+devflow-docs/.archive/
+devflow-docs/Screenshot1.png

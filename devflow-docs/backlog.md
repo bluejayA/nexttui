@@ -220,32 +220,7 @@
 ### Stage 2.5-B: Visual Enhancement (Medium Priority)
 
 > Stage 2.5-A (Theme & Polish)는 전체 완료 — PR #51~#53
-
-##### BL-P2-041: 스크롤바 추가
-**Priority**: Medium
-**Category**: UX
-**Description**:
-- 리스트 뷰: 우측 수직 스크롤바 (block characters: `█▐│`)
-- 디테일 뷰: 스크롤 가능 시 스크롤바 표시
-- 현재 위치/전체 비율 시각화
-**Motivation**: 사용자가 더 많은 데이터 존재 여부를 알 수 없음
-
-##### BL-P2-042: Content 보더 컨테이너
-**Priority**: Medium
-**Category**: UX
-**Description**:
-- List/Detail/Form 뷰를 Block 컨테이너로 감싸기
-- 뷰 상태에 따라 타이틀 변경: `[ Servers ]`, `[ Server: web-01 ]`, `[ Create Server ]`
-**Motivation**: Content 영역이 시각적 컨테이너 없이 플로팅
-
-##### BL-P2-043: Detail 섹션 구분 개선
-**Priority**: Medium
-**Category**: UX
-**Description**:
-- `-- Section --` 대시 구분 → Block title 또는 bold underline 섹션 헤더
-- 섹션 간 1줄 공백 유지
-- ResourceLink 포커스 시 시각적 피드백 (reverse 또는 bold)
-**Motivation**: ASCII 대시 구분자가 올드 스타일
+> Stage 2.5-B 전체 완료 — PR #60
 
 ### Stage 2.5-C: Advanced Layout (Low Priority)
 
@@ -332,3 +307,12 @@
 - **Auto-Refresh Polling**: FetchDedup + API Backoff (PR #56, 2026-04-02)
 - **Activity Log**: StatusBar 에러 뱃지 (PR #57, 2026-04-02)
 - **help_hint()**: 14개 모듈 컨텍스트 인식 힌트 (PR #58, 2026-04-02)
+- **HostModule**: Composite Host Operations Panel (PR #59, 2026-04-04)
+- **BL-P2-041**: 스크롤바 추가 (PR #60, 2026-04-06)
+- **BL-P2-042**: Content 보더 컨테이너 (PR #60, 2026-04-06)
+- **BL-P2-043**: Detail 섹션 구분 개선 (PR #60, 2026-04-06)
+- **BL-P2-015**: Volume Attach/Detach + FloatingIP Associate/Disassociate (PR #61, 2026-04-08)
+- **BL-P2-011**: 감사 로그 Audit Log 연동 (PR #62, 2026-04-08)
+- **BL-P2-012**: 통합 조회 — SG 섹션 + 리소스 네비게이션 (PR #63, 2026-04-08)
+- **BL-P2-013**: UsageModule — btop 스타일 사용량 대시보드 (PR #64, 2026-04-10)
+- **BL-P2-005**: ViewModel 분리 — ViewContext 패턴 도입 (PR #65, 2026-04-10)
