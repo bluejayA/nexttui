@@ -372,6 +372,14 @@ impl UsageModule {
         let mut hosts_down: u32 = 0;
         let mut high_cpu_hosts: Vec<String> = Vec::new();
 
+        // Dynamic hostname padding based on longest hostname
+        let max_hostname_len = self
+            .hypervisors
+            .iter()
+            .map(|hv| hv.hypervisor_hostname.len())
+            .max()
+            .unwrap_or(10);
+
         let lines: Vec<Line> = self
             .hypervisors
             .iter()
@@ -412,7 +420,7 @@ impl UsageModule {
 
                 Line::from(vec![
                     Span::styled(format!(" {state_icon} "), Style::default().fg(state_color)),
-                    Span::styled(format!("{:<20}", hostname), Style::default().fg(Color::White)),
+                    Span::styled(format!("{:<width$}", hostname, width = max_hostname_len), Style::default().fg(Color::White)),
                     Span::raw(" vCPU["),
                     Span::styled("▓".repeat(cpu_filled as usize), Style::default().fg(cpu_color)),
                     Span::styled("·".repeat(cpu_empty as usize), Style::default().fg(Color::DarkGray)),
