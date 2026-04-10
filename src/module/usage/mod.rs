@@ -417,17 +417,17 @@ impl UsageModule {
                 Line::from(vec![
                     Span::styled(format!(" {state_icon} "), Style::default().fg(state_color)),
                     Span::styled(format!("{:<12}", hostname), Style::default().fg(Color::White)),
-                    Span::raw(" C["),
+                    Span::raw(" vCPU["),
                     Span::styled("▓".repeat(cpu_filled as usize), Style::default().fg(cpu_color)),
                     Span::styled("·".repeat(cpu_empty as usize), Style::default().fg(Color::DarkGray)),
                     Span::raw("]"),
                     Span::styled(format!("{:>3}/{:<3}", vcpu_u, vcpu_t), Style::default().fg(Color::White)),
-                    Span::raw(" R["),
+                    Span::raw(" RAM["),
                     Span::styled("▓".repeat(ram_filled as usize), Style::default().fg(ram_color)),
                     Span::styled("·".repeat(ram_empty as usize), Style::default().fg(Color::DarkGray)),
                     Span::raw("]"),
                     Span::styled(format!("{:>3}G", ram_u), Style::default().fg(Color::White)),
-                    Span::styled(format!(" V:{vms}"), Style::default().fg(Color::DarkGray)),
+                    Span::styled(format!(" VMs:{vms}"), Style::default().fg(Color::DarkGray)),
                 ])
             })
             .collect();
