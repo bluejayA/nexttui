@@ -244,8 +244,7 @@ mod tests {
 
     #[test]
     fn test_sidebar_theme_tokens_for_focus_and_disabled() {
-        // Block getter 미제공으로 Borders::ALL, BorderType::Rounded는 간접 검증.
-        // render()에서 사용하는 Theme 토큰 반환값을 확인.
+        super::Theme::init_with_no_color(crate::config::ThemeVariant::Dark, false);
         let focus_style = super::Theme::focus_border();
         assert_eq!(focus_style.fg, Some(ratatui::style::Color::Cyan));
         let unfocus_style = super::Theme::unfocus_border();

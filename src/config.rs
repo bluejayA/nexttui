@@ -7,6 +7,14 @@ use serde::{Deserialize, Serialize};
 use crate::error::{AppError, Result};
 use crate::models::common::ResourceType;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeVariant {
+    #[default]
+    Dark,
+    Light,
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     clouds: HashMap<String, CloudConfig>,
@@ -92,20 +100,27 @@ pub struct AppConfig {
     #[serde(default = "default_history_max")]
     pub command_history_max: usize,
     pub default_cloud: Option<String>,
+    #[serde(default)]
+    pub theme: ThemeVariant,
 }
 
 fn default_tick_rate() -> u64 {
     200
 }
+
+/// Returns `~/.config/nexttui` regardless of platform, so the config path
+/// is predictable (XDG-style) on both macOS and Linux.
+pub fn nexttui_config_dir() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".config/nexttui")
+}
+
 fn default_audit_path() -> PathBuf {
-    dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("~/.config"))
-        .join("nexttui/audit.log")
+    nexttui_config_dir().join("audit.log")
 }
 fn default_history_path() -> PathBuf {
-    dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("~/.config"))
-        .join("nexttui/history")
+    nexttui_config_dir().join("history")
 }
 fn default_history_max() -> usize {
     50
@@ -120,6 +135,7 @@ impl Default for AppConfig {
             command_history_path: default_history_path(),
             command_history_max: 50,
             default_cloud: None,
+            theme: ThemeVariant::default(),
         }
     }
 }
@@ -326,9 +342,7 @@ impl Config {
     }
 
     fn load_app_config() -> AppConfig {
-        let config_path = dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("~/.config"))
-            .join("nexttui/config.toml");
+        let config_path = nexttui_config_dir().join("config.toml");
 
         if !config_path.exists() {
             return AppConfig::default();
@@ -783,6 +797,28 @@ clouds:
         assert_eq!(app.command_history_max, 50);
         assert_eq!(app.cache_ttl.servers_secs, 120);
         assert_eq!(app.cache_ttl.flavors_secs, 600);
+        assert!(matches!(app.theme, ThemeVariant::Dark));
+    }
+
+    #[test]
+    fn test_theme_variant_from_config_dark() {
+        let toml_str = r#"theme = "dark""#;
+        let app: AppConfig = toml::from_str(toml_str).unwrap();
+        assert!(matches!(app.theme, ThemeVariant::Dark));
+    }
+
+    #[test]
+    fn test_theme_variant_from_config_light() {
+        let toml_str = r#"theme = "light""#;
+        let app: AppConfig = toml::from_str(toml_str).unwrap();
+        assert!(matches!(app.theme, ThemeVariant::Light));
+    }
+
+    #[test]
+    fn test_theme_variant_default_is_dark() {
+        let toml_str = r#"tick_rate_ms = 200"#;
+        let app: AppConfig = toml::from_str(toml_str).unwrap();
+        assert!(matches!(app.theme, ThemeVariant::Dark));
     }
 
     #[test]
