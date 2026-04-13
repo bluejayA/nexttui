@@ -1,0 +1,440 @@
+//! Seven-step switch orchestrator.
+//!
+//! BL-P2-031 Unit 4. The switcher owns exactly four collaborators —
+//! state machine, cancellation registry, resolver, session port — and
+//! sequences them. Atomicity lives inside [`ContextSessionPort::commit`];
+//! the switcher's job is to make sure the step order is correct and that
+//! rollback runs on any failure before `commit`.
+//!
+//! Step order (from the design doc):
+//! 1. Resolve user input → authoritative [`ContextTarget`].
+//! 2. `SwitchStateMachine::try_begin` — bumps the epoch atomically and
+//!    rejects if another switch is in progress.
+//! 3. `CancellationRegistry::cancel_below(new_epoch)` — kill every
+//!    in-flight spawn from the previous generation.
+//! 4. `session.begin` — captures rollback data into a `SessionHandle`.
+//! 5. `session.rescope` → `session.refresh_catalog` — staged work; any
+//!    failure calls `session.rollback(handle)` before returning.
+//! 6. `session.commit` — self-reverting by port contract; no manual
+//!    rollback after commit.
+//! 7. `state.commit(snapshot)` + history push + a final cancel sweep.
+//!
+//! Concurrency invariant: `try_begin` is the single serialisation point.
+//! Two concurrent `switch` calls race into `try_begin`; the loser returns
+//! `SwitchError::InProgress` without touching any ports.
+
+use std::sync::Arc;
+
+use std::sync::Mutex as SyncMutex;
+
+use super::cancellation::CancellationRegistry;
+use super::epoch::Epoch;
+use super::error::SwitchError;
+use super::history::ContextHistoryStore;
+use super::resolver::ContextTargetResolver;
+use super::state_machine::SwitchStateMachine;
+use super::types::{ContextRequest, ContextSnapshot, ContextTarget, SessionHandle};
+use crate::port::context_session::ContextSessionPort;
+
+pub struct ContextSwitcher {
+    state: Arc<SwitchStateMachine>,
+    cancellation: Arc<CancellationRegistry>,
+    resolver: Arc<ContextTargetResolver>,
+    session: Arc<dyn ContextSessionPort>,
+    history: Arc<SyncMutex<ContextHistoryStore>>,
+}
+
+impl ContextSwitcher {
+    pub fn new(
+        state: Arc<SwitchStateMachine>,
+        cancellation: Arc<CancellationRegistry>,
+        resolver: Arc<ContextTargetResolver>,
+        session: Arc<dyn ContextSessionPort>,
+        history: Arc<SyncMutex<ContextHistoryStore>>,
+    ) -> Self {
+        Self { state, cancellation, resolver, session, history }
+    }
+
+    pub async fn switch(
+        &self,
+        request: ContextRequest,
+    ) -> Result<(Epoch, ContextSnapshot), SwitchError> {
+        // 1. Resolve user input → authoritative target.
+        let target = self.resolver.resolve(request).await?;
+        self.run_switch_to(target).await
+    }
+
+    /// `switch_back` uses the stored previous snapshot directly — it
+    /// bypasses the resolver because the previous target is already
+    /// authoritative. Consumes the history entry so a second consecutive
+    /// back call returns `NotFound`.
+    pub async fn switch_back(&self) -> Result<(Epoch, ContextSnapshot), SwitchError> {
+        let previous = self.history
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .pop_previous().ok_or_else(|| {
+            SwitchError::NotFound("no previous context".into())
+        })?;
+        self.run_switch_to(previous.target).await
+    }
+
+    async fn run_switch_to(
+        &self,
+        target: ContextTarget,
+    ) -> Result<(Epoch, ContextSnapshot), SwitchError> {
+        // 2. State machine bumps the epoch atomically with Idle→Switching.
+        let new_epoch = self.state.try_begin(target.clone())?;
+
+        // 3. Kill every in-flight spawn from a previous generation.
+        self.cancellation.cancel_below(new_epoch);
+
+        // 4. Stage the transition; captures rollback data.
+        let mut handle = match self.session.begin(&target, new_epoch).await {
+            Ok(h) => h,
+            Err(e) => {
+                self.state.fail(&e);
+                return Err(e);
+            }
+        };
+
+        // 5. Network work — rescope + catalog refresh. Rollback on failure.
+        if let Err(e) = self.run_transition(&mut handle).await {
+            self.session.rollback(handle).await;
+            self.state.fail(&e);
+            return Err(e);
+        }
+
+        // 6. Commit is self-reverting by port contract.
+        let snapshot = match self.session.commit(handle).await {
+            Ok(s) => s,
+            Err(e) => {
+                self.state.fail(&e);
+                return Err(e);
+            }
+        };
+
+        // 7. Publish the new state; push to history; final cancel sweep.
+        self.state.commit(snapshot.clone());
+        self.history
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(snapshot.clone());
+        self.cancellation.cancel_below(new_epoch);
+
+        Ok((new_epoch, snapshot))
+    }
+
+    async fn run_transition(
+        &self,
+        handle: &mut SessionHandle,
+    ) -> Result<(), SwitchError> {
+        self.session.rescope(handle).await?;
+        self.session.refresh_catalog(handle).await?;
+        Ok(())
+    }
+
+    pub fn state(&self) -> Arc<SwitchStateMachine> {
+        self.state.clone()
+    }
+
+    pub fn history(&self) -> Arc<SyncMutex<ContextHistoryStore>> {
+        self.history.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::epoch::ContextEpoch;
+    use crate::context::resolver::{
+        CloudDirectory, ContextTargetResolver, ProjectCandidate, ProjectDirectoryPort,
+    };
+    use crate::port::mock_context::{MockContextSession, TransitionStep};
+    use crate::port::types::{CatalogEntry, ProjectScope, Token, TokenScope};
+    use async_trait::async_trait;
+    use chrono::{TimeZone, Utc};
+    use std::collections::HashMap;
+    use std::sync::Mutex as StdMutex;
+
+    struct FakeClouds;
+    impl CloudDirectory for FakeClouds {
+        fn active_cloud(&self) -> String {
+            "devstack".into()
+        }
+        fn known_clouds(&self) -> Vec<String> {
+            vec!["devstack".into()]
+        }
+    }
+
+    struct FakeDirectory {
+        data: StdMutex<HashMap<String, Vec<ProjectCandidate>>>,
+    }
+
+    #[async_trait]
+    impl ProjectDirectoryPort for FakeDirectory {
+        async fn list_projects(
+            &self,
+            cloud: &str,
+        ) -> Result<Vec<ProjectCandidate>, SwitchError> {
+            Ok(self
+                .data
+                .lock()
+                .unwrap()
+                .get(cloud)
+                .cloned()
+                .unwrap_or_default())
+        }
+    }
+
+    fn token(id: &str, project: &str) -> Token {
+        Token {
+            id: id.into(),
+            expires_at: Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap(),
+            project: ProjectScope {
+                id: format!("id-{project}"),
+                name: project.into(),
+                domain_id: "default".into(),
+                domain_name: "default".into(),
+            },
+            roles: Vec::new(),
+            catalog: Vec::<CatalogEntry>::new(),
+        }
+    }
+
+    fn scope(project: &str) -> TokenScope {
+        TokenScope::Project {
+            name: project.into(),
+            domain: "default".into(),
+        }
+    }
+
+    fn candidate(name: &str, id: &str) -> ProjectCandidate {
+        ProjectCandidate {
+            cloud: "devstack".into(),
+            project_id: id.into(),
+            project_name: name.into(),
+            domain: "default".into(),
+        }
+    }
+
+    struct Fixture {
+        switcher: ContextSwitcher,
+        session: Arc<MockContextSession>,
+        epoch: Arc<ContextEpoch>,
+        cancellation: Arc<CancellationRegistry>,
+        state: Arc<SwitchStateMachine>,
+        history: Arc<SyncMutex<ContextHistoryStore>>,
+    }
+
+    fn fixture_with(session: MockContextSession) -> Fixture {
+        let epoch = Arc::new(ContextEpoch::new());
+        let state = Arc::new(SwitchStateMachine::new(epoch.clone()));
+        let cancellation = Arc::new(CancellationRegistry::new());
+        let history = Arc::new(SyncMutex::new(ContextHistoryStore::new()));
+
+        let clouds: Arc<dyn CloudDirectory> = Arc::new(FakeClouds);
+        let directory: Arc<dyn ProjectDirectoryPort> = Arc::new(FakeDirectory {
+            data: StdMutex::new(HashMap::from([(
+                "devstack".into(),
+                vec![candidate("demo", "id-demo"), candidate("admin", "id-admin")],
+            )])),
+        });
+        let resolver = Arc::new(ContextTargetResolver::new(clouds, directory));
+
+        let session = Arc::new(session);
+        let switcher = ContextSwitcher::new(
+            state.clone(),
+            cancellation.clone(),
+            resolver,
+            session.clone() as Arc<dyn ContextSessionPort>,
+            history.clone(),
+        );
+        Fixture { switcher, session, epoch, cancellation, state, history }
+    }
+
+    fn default_fixture() -> Fixture {
+        fixture_with(MockContextSession::new(
+            scope("admin"),
+            token("old", "admin"),
+            token("new", "demo"),
+        ))
+    }
+
+    fn by_name(project: &str) -> ContextRequest {
+        ContextRequest::ByName {
+            cloud: None,
+            project: project.into(),
+            domain: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn happy_path_commits_and_pushes_history() {
+        let f = default_fixture();
+        let (epoch, snapshot) = f.switcher.switch(by_name("demo")).await.unwrap();
+        assert_eq!(epoch, 1);
+        assert_eq!(snapshot.target.project_name, "demo");
+        assert_eq!(
+            f.session.transition_steps(),
+            vec![
+                TransitionStep::Begin,
+                TransitionStep::Rescope,
+                TransitionStep::Refresh,
+                TransitionStep::Commit,
+            ]
+        );
+        // Final cancel sweep runs with the new epoch → no older tokens pending.
+        assert_eq!(f.epoch.current(), 1);
+        assert!(f.history.lock().unwrap().previous().is_some());
+        assert!(f.state.is_idle());
+    }
+
+    #[tokio::test]
+    async fn rescope_failure_rolls_back_and_resets_state() {
+        let session = MockContextSession::new(
+            scope("admin"),
+            token("old", "admin"),
+            token("new", "demo"),
+        )
+        .with_rescope_failure(SwitchError::RescopeRejected("forbidden".into()));
+        let f = fixture_with(session);
+
+        let err = f.switcher.switch(by_name("demo")).await.unwrap_err();
+        assert!(matches!(err, SwitchError::RescopeRejected(_)));
+        assert_eq!(
+            f.session.transition_steps(),
+            vec![
+                TransitionStep::Begin,
+                TransitionStep::Rescope,
+                TransitionStep::Rollback,
+            ]
+        );
+        assert!(f.session.rollback_called());
+        assert!(f.state.is_idle());
+        assert!(f.history.lock().unwrap().previous().is_none());
+    }
+
+    #[tokio::test]
+    async fn refresh_failure_rolls_back() {
+        let session = MockContextSession::new(
+            scope("admin"),
+            token("old", "admin"),
+            token("new", "demo"),
+        )
+        .with_refresh_failure(SwitchError::CatalogFailed("timeout".into()));
+        let f = fixture_with(session);
+
+        let err = f.switcher.switch(by_name("demo")).await.unwrap_err();
+        assert!(matches!(err, SwitchError::CatalogFailed(_)));
+        assert!(f.session.rollback_called());
+        assert_eq!(
+            f.session.transition_steps(),
+            vec![
+                TransitionStep::Begin,
+                TransitionStep::Rescope,
+                TransitionStep::Refresh,
+                TransitionStep::Rollback,
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn begin_failure_does_not_call_rollback() {
+        let session = MockContextSession::new(
+            scope("admin"),
+            token("old", "admin"),
+            token("new", "demo"),
+        )
+        .with_begin_failure(SwitchError::Unsupported("bad cloud".into()));
+        let f = fixture_with(session);
+
+        let err = f.switcher.switch(by_name("demo")).await.unwrap_err();
+        assert!(matches!(err, SwitchError::Unsupported(_)));
+        assert!(!f.session.rollback_called());
+        assert!(f.state.is_idle());
+    }
+
+    #[tokio::test]
+    async fn commit_self_revert_surfaces_commit_failed() {
+        let session = MockContextSession::new(
+            scope("admin"),
+            token("old", "admin"),
+            token("new", "demo"),
+        )
+        .with_partial_commit_failure();
+        let f = fixture_with(session);
+
+        let err = f.switcher.switch(by_name("demo")).await.unwrap_err();
+        assert!(matches!(err, SwitchError::CommitFailed(_)));
+        // commit is self-reverting; the switcher must NOT invoke rollback again.
+        let steps = f.session.transition_steps();
+        let rollback_count = steps
+            .iter()
+            .filter(|s| matches!(s, TransitionStep::Rollback))
+            .count();
+        assert_eq!(rollback_count, 1, "only commit's internal rollback, not a caller rollback");
+        assert!(f.state.is_idle());
+    }
+
+    #[tokio::test]
+    async fn resolver_not_found_short_circuits_without_touching_state() {
+        let f = default_fixture();
+        let err = f.switcher.switch(by_name("ghost")).await.unwrap_err();
+        assert!(matches!(err, SwitchError::NotFound(_)));
+        // No epoch bump, no port calls.
+        assert_eq!(f.epoch.current(), 0);
+        assert!(f.session.transition_steps().is_empty());
+        assert!(f.state.is_idle());
+    }
+
+    #[tokio::test]
+    async fn switch_back_replays_previous_context() {
+        let f = default_fixture();
+        // First switch: → demo, history now has demo as previous.
+        f.switcher.switch(by_name("demo")).await.unwrap();
+        // Second switch: → admin, history now has admin as previous.
+        f.switcher.switch(by_name("admin")).await.unwrap();
+        assert_eq!(f.history.lock().unwrap().previous().unwrap().target.project_name, "admin");
+
+        let (_, snap) = f.switcher.switch_back().await.unwrap();
+        assert_eq!(snap.target.project_name, "admin");
+    }
+
+    #[tokio::test]
+    async fn switch_back_empty_history_returns_not_found() {
+        let f = default_fixture();
+        let err = f.switcher.switch_back().await.unwrap_err();
+        assert!(matches!(err, SwitchError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn second_switch_while_first_in_progress_returns_in_progress() {
+        // Occupy the state machine by manually beginning a switch.
+        let f = default_fixture();
+        let target = ContextTarget {
+            cloud: "devstack".into(),
+            project_id: "busy".into(),
+            project_name: "busy".into(),
+            domain: "default".into(),
+        };
+        let _epoch = f.state.try_begin(target).unwrap();
+        let err = f.switcher.switch(by_name("demo")).await.unwrap_err();
+        assert!(matches!(err, SwitchError::InProgress));
+        // No port calls attempted.
+        assert!(f.session.transition_steps().is_empty());
+    }
+
+    #[tokio::test]
+    async fn successful_switch_cancels_previous_epoch_work() {
+        let f = default_fixture();
+        // Register a token under epoch 0 (pre-switch).
+        let old_token = f.cancellation.register(0);
+        assert!(!old_token.is_cancelled());
+
+        f.switcher.switch(by_name("demo")).await.unwrap();
+        assert!(
+            old_token.is_cancelled(),
+            "pre-switch epoch work must be cancelled as part of the switch"
+        );
+    }
+}
