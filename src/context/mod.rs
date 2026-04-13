@@ -12,6 +12,7 @@ pub mod capabilities;
 pub mod epoch;
 pub mod error;
 pub mod history;
+pub mod state_machine;
 pub mod types;
 pub mod versioned;
 
@@ -20,5 +21,6 @@ pub use capabilities::{AuthMethod, KeystoneCapabilities, KeystoneVersion};
 pub use epoch::{ContextEpoch, Epoch};
 pub use error::SwitchError;
 pub use history::ContextHistoryStore;
+pub use state_machine::{SwitchStateMachine, SwitchStateView};
 pub use types::{ContextRequest, ContextSnapshot, ContextTarget, SessionHandle};
 pub use versioned::VersionedEvent;
