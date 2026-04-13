@@ -60,7 +60,6 @@ pub struct ContextSnapshot {
 /// Opaque-to-callers handle threaded through the session port. Contains the
 /// rollback data (previous token + scope) plus staging slots that the port
 /// uses internally during the transition.
-#[allow(dead_code)] // Fields consumed by ContextSessionPort impl in Unit 3.
 pub struct SessionHandle {
     pub(crate) epoch: Epoch,
     pub(crate) target: ContextTarget,
@@ -68,6 +67,60 @@ pub struct SessionHandle {
     pub(crate) previous_scope: TokenScope,
     pub(crate) staged_new_token: Option<Token>,
     pub(crate) staged_catalog: Option<ServiceCatalog>,
+}
+
+impl SessionHandle {
+    /// Constructor used by [`ContextSessionPort`] implementations. Captures
+    /// the pre-transition token/scope so `rollback` can restore them.
+    pub fn new(
+        epoch: Epoch,
+        target: ContextTarget,
+        previous_token: Token,
+        previous_scope: TokenScope,
+    ) -> Self {
+        Self {
+            epoch,
+            target,
+            previous_token,
+            previous_scope,
+            staged_new_token: None,
+            staged_catalog: None,
+        }
+    }
+
+    pub fn epoch(&self) -> Epoch {
+        self.epoch
+    }
+
+    pub fn target(&self) -> &ContextTarget {
+        &self.target
+    }
+
+    pub fn previous_token(&self) -> &Token {
+        &self.previous_token
+    }
+
+    pub fn previous_scope(&self) -> &TokenScope {
+        &self.previous_scope
+    }
+
+    /// Stage the token returned by `rescope`; consumed during `commit`.
+    pub fn stage_token(&mut self, token: Token) {
+        self.staged_new_token = Some(token);
+    }
+
+    pub fn staged_token(&self) -> Option<&Token> {
+        self.staged_new_token.as_ref()
+    }
+
+    /// Stage the refreshed service catalog; consumed during `commit`.
+    pub fn stage_catalog(&mut self, catalog: ServiceCatalog) {
+        self.staged_catalog = Some(catalog);
+    }
+
+    pub fn staged_catalog(&self) -> Option<&ServiceCatalog> {
+        self.staged_catalog.as_ref()
+    }
 }
 
 #[cfg(test)]

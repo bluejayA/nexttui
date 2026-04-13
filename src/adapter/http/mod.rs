@@ -1,5 +1,6 @@
 pub mod base;
 pub mod cinder;
+pub mod endpoint_invalidator;
 pub mod glance;
 pub mod keystone;
 pub mod neutron;
