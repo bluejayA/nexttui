@@ -7,6 +7,7 @@
 //! so that downstream units (concurrency infra, session port, switcher) can
 //! build on top of a stable vocabulary.
 
+pub mod cancellation;
 pub mod capabilities;
 pub mod epoch;
 pub mod error;
@@ -14,6 +15,7 @@ pub mod history;
 pub mod types;
 pub mod versioned;
 
+pub use cancellation::CancellationRegistry;
 pub use capabilities::{AuthMethod, KeystoneCapabilities, KeystoneVersion};
 pub use epoch::{ContextEpoch, Epoch};
 pub use error::SwitchError;

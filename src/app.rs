@@ -44,6 +44,10 @@ pub struct App {
 
     pub rbac: Arc<RbacGuard>,
     pub all_tenants: Arc<AtomicBool>,
+    /// Single authority for the active context generation. Bumped by the
+    /// switcher (Unit 4); read by [`App::handle_versioned_event`] to drop
+    /// stale events from previous generations. (BL-P2-031 Unit 2.)
+    pub current_epoch: Arc<crate::context::ContextEpoch>,
     config: Arc<Config>,
     layout: LayoutManager,
     sidebar: Sidebar,
@@ -73,6 +77,7 @@ impl App {
             action_tx,
             rbac: Arc::new(RbacGuard::new()),
             all_tenants: Arc::new(AtomicBool::new(false)),
+            current_epoch: Arc::new(crate::context::ContextEpoch::new()),
             config: Arc::new(config),
             layout: LayoutManager::new(),
             sidebar: Sidebar::new(Vec::new()),
@@ -108,6 +113,7 @@ impl App {
             action_tx,
             rbac,
             all_tenants: Arc::new(AtomicBool::new(false)),
+            current_epoch: Arc::new(crate::context::ContextEpoch::new()),
             config: Arc::new(config),
             layout: LayoutManager::new(),
             sidebar: Sidebar::new(parts.sidebar_items),
@@ -415,6 +421,29 @@ impl App {
                 let _ = self.action_tx.send(other);
             }
         }
+    }
+
+    /// Dispatcher entry point for events stamped with an epoch. Drops events
+    /// whose epoch is older than [`App::current_epoch`] — this is the single
+    /// authority for stale-event isolation across the runtime context switch
+    /// flow (BL-P2-031 Unit 2). Returns `true` if the event was forwarded,
+    /// `false` if it was dropped.
+    pub fn handle_versioned_event(
+        &mut self,
+        event: crate::context::VersionedEvent<AppEvent>,
+    ) -> bool {
+        let event_epoch = event.epoch();
+        let current = self.current_epoch.current();
+        if event_epoch < current {
+            tracing::debug!(
+                event_epoch,
+                current,
+                "dropping stale event from previous context generation"
+            );
+            return false;
+        }
+        self.handle_event(event.into_inner());
+        true
     }
 
     /// Handle background event — broadcast to all registered components and generate toasts.
@@ -1750,5 +1779,42 @@ mod tests {
             if matches!(action, Action::FetchVolumes) { found = true; }
         }
         assert!(found, "expected FetchVolumes after navigate + 150 ticks");
+    }
+
+    // -- Dispatcher epoch gate (BL-P2-031 Unit 2) --
+
+    #[test]
+    fn handle_versioned_event_forwards_when_epoch_matches_current() {
+        use crate::context::VersionedEvent;
+        let mut app = make_app();
+        // Fresh app starts at epoch 0.
+        let envelope = VersionedEvent::new(AppEvent::CloudSwitched("dev".into()), 0);
+        let forwarded = app.handle_versioned_event(envelope);
+        assert!(forwarded);
+    }
+
+    #[test]
+    fn handle_versioned_event_drops_when_epoch_below_current() {
+        use crate::context::VersionedEvent;
+        let mut app = make_app();
+        // Simulate the switcher bumping the epoch.
+        app.current_epoch.bump();
+        app.current_epoch.bump();
+        assert_eq!(app.current_epoch.current(), 2);
+
+        let stale = VersionedEvent::new(AppEvent::CloudSwitched("old".into()), 1);
+        let forwarded = app.handle_versioned_event(stale);
+        assert!(!forwarded);
+    }
+
+    #[test]
+    fn handle_versioned_event_forwards_when_epoch_strictly_greater_than_current() {
+        // Defensive: out-of-order arrival of a future epoch should not be
+        // dropped — that path is reserved for stale events only.
+        use crate::context::VersionedEvent;
+        let mut app = make_app();
+        let envelope = VersionedEvent::new(AppEvent::CloudSwitched("future".into()), 99);
+        let forwarded = app.handle_versioned_event(envelope);
+        assert!(forwarded);
     }
 }

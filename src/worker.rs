@@ -2,18 +2,49 @@
 //! and sends AppEvents back to the event loop for UI updates.
 
 use std::collections::HashSet;
+use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use chrono::{DateTime, Utc};
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
 use crate::action::Action;
 use crate::adapter::registry::AdapterRegistry;
+use crate::context::{Epoch, VersionedEvent};
 use crate::event::AppEvent;
 use crate::infra::rbac::{ActionKind, RbacGuard};
 use crate::port::types::*;
+
+/// Spawn an async future and forward its `AppEvent` result to `event_tx`
+/// wrapped in a [`VersionedEvent`] stamped with `epoch`. If `cancel` fires
+/// before the future completes the event is dropped — this is how the
+/// switcher silences stale work from previous context generations.
+///
+/// BL-P2-031 Unit 2.
+pub fn spawn_versioned<F>(
+    cancel: CancellationToken,
+    epoch: Epoch,
+    event_tx: mpsc::UnboundedSender<VersionedEvent<AppEvent>>,
+    fut: F,
+) -> JoinHandle<()>
+where
+    F: Future<Output = AppEvent> + Send + 'static,
+{
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = cancel.cancelled() => {
+                // Stale generation — silently drop.
+            }
+            ev = fut => {
+                let _ = event_tx.send(VersionedEvent::new(ev, epoch));
+            }
+        }
+    })
+}
 
 /// Run the background worker loop.
 /// Receives Actions from `action_rx`, calls the appropriate API via `registry`,
@@ -726,7 +757,14 @@ async fn handle_action(registry: &AdapterRegistry, all_tenants: &AtomicBool, act
         }
 
         Action::SwitchCloud(_cloud_name) => {
-            // Phase 2: switch auth provider and re-create adapters
+            // Legacy stub from Phase 1. Superseded by Action::SwitchContext
+            // (BL-P2-031). Kept until callers migrate.
+            None
+        }
+
+        Action::SwitchContext(_) | Action::SwitchBack => {
+            // Handled by App::switch_context (Unit 4) — the worker layer
+            // never sees these because they short-circuit at the dispatcher.
             None
         }
     }
@@ -1074,5 +1112,42 @@ mod tests {
             }
             _ => panic!("Expected ApiError"),
         }
+    }
+
+    // -- spawn_versioned (BL-P2-031 Unit 2) --
+
+    #[tokio::test]
+    async fn spawn_versioned_emits_event_with_epoch_when_not_cancelled() {
+        let cancel = CancellationToken::new();
+        let (tx, mut rx) = mpsc::unbounded_channel::<VersionedEvent<AppEvent>>();
+        let handle = spawn_versioned(cancel, 7, tx, async {
+            AppEvent::CloudSwitched("devstack".into())
+        });
+        handle.await.unwrap();
+        let received = rx.try_recv().expect("event delivered");
+        assert_eq!(received.epoch(), 7);
+        match received.into_inner() {
+            AppEvent::CloudSwitched(name) => assert_eq!(name, "devstack"),
+            _ => panic!("unexpected event"),
+        }
+    }
+
+    #[tokio::test]
+    async fn spawn_versioned_drops_event_when_cancelled_before_completion() {
+        use tokio::time::{Duration, sleep};
+
+        let cancel = CancellationToken::new();
+        let (tx, mut rx) = mpsc::unbounded_channel::<VersionedEvent<AppEvent>>();
+        let cancel_clone = cancel.clone();
+        let handle = spawn_versioned(cancel_clone, 1, tx, async {
+            sleep(Duration::from_secs(5)).await;
+            AppEvent::CloudSwitched("late".into())
+        });
+
+        // Give the spawn a moment to enter select.
+        tokio::task::yield_now().await;
+        cancel.cancel();
+        handle.await.unwrap();
+        assert!(rx.try_recv().is_err(), "no event should be delivered");
     }
 }
