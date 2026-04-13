@@ -1,0 +1,22 @@
+//! Runtime cloud/project context switching primitives.
+//!
+//! BL-P2-031 Unit 1: Foundation Types.
+//!
+//! This module hosts the shared types and small utilities used across the
+//! switch orchestration. It has no behavioural dependencies on other modules
+//! so that downstream units (concurrency infra, session port, switcher) can
+//! build on top of a stable vocabulary.
+
+pub mod capabilities;
+pub mod epoch;
+pub mod error;
+pub mod history;
+pub mod types;
+pub mod versioned;
+
+pub use capabilities::{AuthMethod, KeystoneCapabilities, KeystoneVersion};
+pub use epoch::{ContextEpoch, Epoch};
+pub use error::SwitchError;
+pub use history::ContextHistoryStore;
+pub use types::{ContextRequest, ContextSnapshot, ContextTarget, SessionHandle};
+pub use versioned::VersionedEvent;

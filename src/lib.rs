@@ -4,6 +4,7 @@ pub mod app;
 pub mod background;
 pub mod component;
 pub mod config;
+pub mod context;
 pub mod demo;
 pub mod error;
 pub mod event;
