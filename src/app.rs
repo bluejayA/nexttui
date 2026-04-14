@@ -437,6 +437,24 @@ impl App {
                 self.spawn_switch_back();
             }
             other => {
+                // Reject worker-bound actions while a switch is in
+                // flight. The epoch is bumped at `try_begin` but auth
+                // context isn't live until `commit`, so forwarding this
+                // action would run it with the *old* session token but
+                // under the *new* epoch stamp — a cross-context
+                // mis-execution. Pure-UI actions (Navigate / Back /
+                // FocusSidebar / EnterFormMode / …) are handled by the
+                // earlier match arms, so this guard only fires for
+                // port-bound work.
+                if let Some(switcher) = self.switcher.as_ref()
+                    && !switcher.is_idle()
+                {
+                    self.background_tracker.add_toast(
+                        "Switch in progress — please wait".into(),
+                        crate::background::ToastLevel::Info,
+                    );
+                    return;
+                }
                 if let Some(msg) = Self::progress_toast_text(&other) {
                     self.background_tracker.add_toast(msg, crate::background::ToastLevel::Info);
                 }
@@ -948,7 +966,6 @@ impl App {
             tracing::error!("switcher wired without event_tx — impossible state");
             return;
         };
-        let current_epoch = self.current_epoch.clone();
         tokio::spawn(async move {
             match switcher.switch(request).await {
                 Ok((epoch, snapshot)) => {
@@ -957,13 +974,18 @@ impl App {
                         epoch,
                     ));
                 }
-                Err(err) => {
+                Err((epoch, err)) => {
+                    // Switcher returns the attempt's epoch on failure —
+                    // pre-begin errors use the last-committed epoch,
+                    // post-begin errors use the bumped epoch. Either way
+                    // the stamp survives the dispatcher gate without
+                    // being "adopted" by a subsequent successful switch.
                     let _ = event_tx.send(crate::context::VersionedEvent::new(
                         AppEvent::ApiError {
                             operation: "SwitchContext".into(),
                             message: err.to_string(),
                         },
-                        current_epoch.current(),
+                        epoch,
                     ));
                 }
             }
@@ -981,7 +1003,6 @@ impl App {
         let Some(event_tx) = self.event_tx.clone() else {
             return;
         };
-        let current_epoch = self.current_epoch.clone();
         tokio::spawn(async move {
             match switcher.switch_back().await {
                 Ok((epoch, snapshot)) => {
@@ -990,13 +1011,13 @@ impl App {
                         epoch,
                     ));
                 }
-                Err(err) => {
+                Err((epoch, err)) => {
                     let _ = event_tx.send(crate::context::VersionedEvent::new(
                         AppEvent::ApiError {
                             operation: "SwitchBack".into(),
                             message: err.to_string(),
                         },
-                        current_epoch.current(),
+                        epoch,
                     ));
                 }
             }
@@ -2056,22 +2077,61 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dispatch_switch_back_emits_context_changed_after_one_switch() {
+    async fn dispatch_rejects_worker_actions_while_switch_in_flight() {
+        // C1 regression: if the switcher has bumped the epoch via
+        // `try_begin` but not yet committed, forwarding a worker-bound
+        // action lets it execute with stale auth but a fresh epoch
+        // stamp — cross-context mis-execution. The dispatcher must
+        // drop the action with a visible toast instead.
+        let mut app = make_app();
+        let (_session, _event_rx) = wire_test_switcher(&mut app);
+
+        // Force the state machine into `Switching` without actually
+        // running the async switch.
+        let target = crate::context::ContextTarget {
+            cloud: "devstack".into(),
+            project_id: "id-demo".into(),
+            project_name: "demo".into(),
+            domain: "default".into(),
+        };
+        app.switcher
+            .as_ref()
+            .unwrap()
+            .state()
+            .try_begin(target)
+            .unwrap();
+        assert!(!app.switcher.as_ref().unwrap().is_idle());
+
+        // Baseline: action_tx is empty. A worker-bound action should
+        // NOT be forwarded.
+        app.dispatch_action(Action::FetchServers);
+        // The action channel receiver lives inside make_app()'s `_rx`,
+        // which was dropped — so we can't observe "not forwarded"
+        // directly. Instead, we verify the toast was surfaced.
+        let toasts = app.background_tracker().active_toasts();
+        assert!(
+            toasts.iter().any(|t| t.message.contains("Switch in progress")),
+            "expected mid-switch toast, got: {:?}",
+            toasts.iter().map(|t| &t.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatch_switch_back_with_empty_history_emits_api_error() {
+        // First switch from an empty baseline leaves history empty
+        // (there was no pre-switch context to remember). `switch_back`
+        // then correctly reports "no previous context" as an ApiError
+        // rather than replaying the just-entered context.
         use crate::context::ContextRequest;
         let mut app = make_app();
         let (_session, mut event_rx) = wire_test_switcher(&mut app);
 
-        // Need two switches so `switch_back` has a previous to replay.
-        // The test switcher only knows one project ("demo"); switch_back
-        // pops the pushed "demo" snapshot after a single switch — but
-        // since history pushes post-commit, the first switch records the
-        // *new* context, and switch_back would replay it. Validate that
-        // switch_back yields a ContextChanged.
         app.dispatch_action(Action::SwitchContext(ContextRequest::ByName {
             cloud: None,
             project: "demo".into(),
             domain: None,
         }));
+        // Drain the success event so we can observe the switch_back result.
         let _ = tokio::time::timeout(std::time::Duration::from_secs(2), event_rx.recv())
             .await
             .unwrap();
@@ -2082,8 +2142,11 @@ mod tests {
             .expect("timed out")
             .expect("channel closed");
         match envelope.into_inner() {
-            AppEvent::ContextChanged { target } => assert_eq!(target.project_name, "demo"),
-            other => panic!("expected ContextChanged, got {other:?}"),
+            AppEvent::ApiError { operation, message } => {
+                assert_eq!(operation, "SwitchBack");
+                assert!(message.contains("no previous"));
+            }
+            other => panic!("expected ApiError, got {other:?}"),
         }
     }
 }

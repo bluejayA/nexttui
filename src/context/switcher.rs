@@ -58,32 +58,53 @@ impl ContextSwitcher {
     pub async fn switch(
         &self,
         request: ContextRequest,
-    ) -> Result<(Epoch, ContextSnapshot), SwitchError> {
-        // 1. Resolve user input → authoritative target.
-        let target = self.resolver.resolve(request).await?;
+    ) -> Result<(Epoch, ContextSnapshot), (Epoch, SwitchError)> {
+        // 1. Resolve user input → authoritative target. Resolver errors
+        //    happen before we touch the state machine, so stamp with the
+        //    currently-committed epoch — the error toast then survives
+        //    the dispatcher gate.
+        let target = match self.resolver.resolve(request).await {
+            Ok(t) => t,
+            Err(e) => return Err((self.state.epoch().current(), e)),
+        };
         self.run_switch_to(target).await
     }
 
-    /// `switch_back` uses the stored previous snapshot directly — it
-    /// bypasses the resolver because the previous target is already
-    /// authoritative. Consumes the history entry so a second consecutive
-    /// back call returns `NotFound`.
-    pub async fn switch_back(&self) -> Result<(Epoch, ContextSnapshot), SwitchError> {
-        let previous = self.history
+    /// Replay the snapshot most recently pushed to history. `history` is
+    /// peeked, not popped — the entry is only consumed by
+    /// `run_switch_to`'s step 7, which replaces it with the pre-switch
+    /// snapshot on success. A failed switch leaves history intact so the
+    /// user can retry.
+    pub async fn switch_back(&self) -> Result<(Epoch, ContextSnapshot), (Epoch, SwitchError)> {
+        let previous = self
+            .history
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .pop_previous().ok_or_else(|| {
-            SwitchError::NotFound("no previous context".into())
-        })?;
+            .previous()
+            .cloned();
+        let previous = match previous {
+            Some(p) => p,
+            None => {
+                return Err((
+                    self.state.epoch().current(),
+                    SwitchError::NotFound("no previous context".into()),
+                ));
+            }
+        };
         self.run_switch_to(previous.target).await
     }
 
     async fn run_switch_to(
         &self,
         target: ContextTarget,
-    ) -> Result<(Epoch, ContextSnapshot), SwitchError> {
+    ) -> Result<(Epoch, ContextSnapshot), (Epoch, SwitchError)> {
         // 2. State machine bumps the epoch atomically with Idle→Switching.
-        let new_epoch = self.state.try_begin(target.clone())?;
+        //    If try_begin rejects (another switch in progress), the epoch
+        //    hasn't moved — stamp with the currently-committed epoch.
+        let new_epoch = match self.state.try_begin(target.clone()) {
+            Ok(e) => e,
+            Err(e) => return Err((self.state.epoch().current(), e)),
+        };
 
         // 3. Kill every in-flight spawn from a previous generation.
         self.cancellation.cancel_below(new_epoch);
@@ -93,7 +114,7 @@ impl ContextSwitcher {
             Ok(h) => h,
             Err(e) => {
                 self.state.fail(&e);
-                return Err(e);
+                return Err((new_epoch, e));
             }
         };
 
@@ -101,7 +122,7 @@ impl ContextSwitcher {
         if let Err(e) = self.run_transition(&mut handle).await {
             self.session.rollback(handle).await;
             self.state.fail(&e);
-            return Err(e);
+            return Err((new_epoch, e));
         }
 
         // 6. Commit is self-reverting by port contract.
@@ -109,16 +130,38 @@ impl ContextSwitcher {
             Ok(s) => s,
             Err(e) => {
                 self.state.fail(&e);
-                return Err(e);
+                return Err((new_epoch, e));
             }
         };
 
-        // 7. Publish the new state; push to history; final cancel sweep.
+        // 7. Publish the new state; push the PRE-SWITCH snapshot into
+        //    history so `switch_back` returns to what we came from (not
+        //    what we just entered); belt-and-suspenders cancel sweep.
+        //
+        //    The cancel_below here is idempotent — step 3 already
+        //    cancelled old epoch work, and every new spawn between
+        //    steps 3 and 7 is stamped with `new_epoch` so it isn't
+        //    caught by this call. Kept as a guard against future
+        //    send-sites that might bypass `ActionSender`'s epoch
+        //    stamping and spawn directly.
+        let pre_switch = self.state.previous_in_flight();
         self.state.commit(snapshot.clone());
-        self.history
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(snapshot.clone());
+        if let Some(prev) = pre_switch {
+            self.history
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(prev);
+        } else {
+            // First-ever switch (no prior context). Drop any existing
+            // history entry so `switch_back` correctly reports "no
+            // previous" rather than replaying a stale snapshot from a
+            // crashed/earlier session.
+            let _ = self
+                .history
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .pop_previous();
+        }
         self.cancellation.cancel_below(new_epoch);
 
         Ok((new_epoch, snapshot))
@@ -139,6 +182,13 @@ impl ContextSwitcher {
 
     pub fn history(&self) -> Arc<SyncMutex<ContextHistoryStore>> {
         self.history.clone()
+    }
+
+    /// True when no switch is in flight. Used by the app's dispatcher
+    /// to reject side-effecting actions mid-switch so the worker can't
+    /// execute them with stale auth but a freshly-bumped epoch stamp.
+    pub fn is_idle(&self) -> bool {
+        self.state.is_idle()
     }
 }
 
@@ -269,7 +319,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn happy_path_commits_and_pushes_history() {
+    async fn first_switch_from_empty_commits_and_leaves_history_empty() {
+        // With no prior committed context, the switcher has nothing to
+        // push into "previous" — so history stays empty after the first
+        // successful switch. `switch_back` will correctly report NotFound.
         let f = default_fixture();
         let (epoch, snapshot) = f.switcher.switch(by_name("demo")).await.unwrap();
         assert_eq!(epoch, 1);
@@ -283,10 +336,26 @@ mod tests {
                 TransitionStep::Commit,
             ]
         );
-        // Final cancel sweep runs with the new epoch → no older tokens pending.
         assert_eq!(f.epoch.current(), 1);
-        assert!(f.history.lock().unwrap().previous().is_some());
+        assert!(f.history.lock().unwrap().previous().is_none());
         assert!(f.state.is_idle());
+    }
+
+    #[tokio::test]
+    async fn second_switch_pushes_pre_switch_snapshot_to_history() {
+        // After two switches (admin→demo→admin), history must hold the
+        // *previous* context (demo) so `switch_back` returns there.
+        let f = default_fixture();
+        f.switcher.switch(by_name("demo")).await.unwrap();
+        f.switcher.switch(by_name("admin")).await.unwrap();
+        let previous = f
+            .history
+            .lock()
+            .unwrap()
+            .previous()
+            .cloned()
+            .expect("history populated after 2 switches");
+        assert_eq!(previous.target.project_name, "demo");
     }
 
     #[tokio::test]
@@ -299,8 +368,9 @@ mod tests {
         .with_rescope_failure(SwitchError::RescopeRejected("forbidden".into()));
         let f = fixture_with(session);
 
-        let err = f.switcher.switch(by_name("demo")).await.unwrap_err();
+        let (err_epoch, err) = f.switcher.switch(by_name("demo")).await.unwrap_err();
         assert!(matches!(err, SwitchError::RescopeRejected(_)));
+        assert_eq!(err_epoch, 1, "post-begin error stamps with the attempt's epoch");
         assert_eq!(
             f.session.transition_steps(),
             vec![
@@ -324,7 +394,7 @@ mod tests {
         .with_refresh_failure(SwitchError::CatalogFailed("timeout".into()));
         let f = fixture_with(session);
 
-        let err = f.switcher.switch(by_name("demo")).await.unwrap_err();
+        let (_, err) = f.switcher.switch(by_name("demo")).await.unwrap_err();
         assert!(matches!(err, SwitchError::CatalogFailed(_)));
         assert!(f.session.rollback_called());
         assert_eq!(
@@ -348,7 +418,7 @@ mod tests {
         .with_begin_failure(SwitchError::Unsupported("bad cloud".into()));
         let f = fixture_with(session);
 
-        let err = f.switcher.switch(by_name("demo")).await.unwrap_err();
+        let (_, err) = f.switcher.switch(by_name("demo")).await.unwrap_err();
         assert!(matches!(err, SwitchError::Unsupported(_)));
         assert!(!f.session.rollback_called());
         assert!(f.state.is_idle());
@@ -364,7 +434,7 @@ mod tests {
         .with_partial_commit_failure();
         let f = fixture_with(session);
 
-        let err = f.switcher.switch(by_name("demo")).await.unwrap_err();
+        let (_, err) = f.switcher.switch(by_name("demo")).await.unwrap_err();
         assert!(matches!(err, SwitchError::CommitFailed(_)));
         // commit is self-reverting; the switcher must NOT invoke rollback again.
         let steps = f.session.transition_steps();
@@ -379,9 +449,11 @@ mod tests {
     #[tokio::test]
     async fn resolver_not_found_short_circuits_without_touching_state() {
         let f = default_fixture();
-        let err = f.switcher.switch(by_name("ghost")).await.unwrap_err();
+        let (err_epoch, err) = f.switcher.switch(by_name("ghost")).await.unwrap_err();
         assert!(matches!(err, SwitchError::NotFound(_)));
-        // No epoch bump, no port calls.
+        // No epoch bump, no port calls. Pre-begin error stamps with the
+        // committed epoch (still 0 — we haven't switched at all yet).
+        assert_eq!(err_epoch, 0);
         assert_eq!(f.epoch.current(), 0);
         assert!(f.session.transition_steps().is_empty());
         assert!(f.state.is_idle());
@@ -389,22 +461,54 @@ mod tests {
 
     #[tokio::test]
     async fn switch_back_replays_previous_context() {
+        // Trace: (empty) → demo → admin. switch_back must take us from
+        // admin BACK to demo (the context before admin), not "forward"
+        // to admin itself.
         let f = default_fixture();
-        // First switch: → demo, history now has demo as previous.
         f.switcher.switch(by_name("demo")).await.unwrap();
-        // Second switch: → admin, history now has admin as previous.
         f.switcher.switch(by_name("admin")).await.unwrap();
-        assert_eq!(f.history.lock().unwrap().previous().unwrap().target.project_name, "admin");
+        // After admin switch, history stores the pre-switch context (demo).
+        assert_eq!(
+            f.history.lock().unwrap().previous().unwrap().target.project_name,
+            "demo"
+        );
 
         let (_, snap) = f.switcher.switch_back().await.unwrap();
-        assert_eq!(snap.target.project_name, "admin");
+        assert_eq!(snap.target.project_name, "demo");
     }
 
     #[tokio::test]
     async fn switch_back_empty_history_returns_not_found() {
         let f = default_fixture();
-        let err = f.switcher.switch_back().await.unwrap_err();
+        let (_, err) = f.switcher.switch_back().await.unwrap_err();
         assert!(matches!(err, SwitchError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn switch_back_failure_preserves_history_for_retry() {
+        // H1 regression: switch_back used to pop history at the start,
+        // so any failure (including `InProgress`) silently consumed the
+        // only rollback entry. Peek-not-pop keeps the entry around.
+        let f = default_fixture();
+        f.switcher.switch(by_name("demo")).await.unwrap();
+        f.switcher.switch(by_name("admin")).await.unwrap();
+        // history: [demo]
+        // Occupy the state machine so `switch_back` fails with InProgress.
+        let busy_target = ContextTarget {
+            cloud: "devstack".into(),
+            project_id: "busy".into(),
+            project_name: "busy".into(),
+            domain: "default".into(),
+        };
+        let _ = f.state.try_begin(busy_target).unwrap();
+
+        let (_, err) = f.switcher.switch_back().await.unwrap_err();
+        assert!(matches!(err, SwitchError::InProgress));
+        // History entry must still be there for a retry.
+        assert_eq!(
+            f.history.lock().unwrap().previous().unwrap().target.project_name,
+            "demo"
+        );
     }
 
     #[tokio::test]
@@ -418,7 +522,7 @@ mod tests {
             domain: "default".into(),
         };
         let _epoch = f.state.try_begin(target).unwrap();
-        let err = f.switcher.switch(by_name("demo")).await.unwrap_err();
+        let (_, err) = f.switcher.switch(by_name("demo")).await.unwrap_err();
         assert!(matches!(err, SwitchError::InProgress));
         // No port calls attempted.
         assert!(f.session.transition_steps().is_empty());

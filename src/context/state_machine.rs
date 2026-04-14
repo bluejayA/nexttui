@@ -139,6 +139,26 @@ impl SwitchStateMachine {
             SwitchState::Idle { .. }
         )
     }
+
+    /// Shared handle to the epoch counter. Callers that need to stamp an
+    /// event with "the epoch of the attempt" (e.g., an error toast) can
+    /// read this without going through `state()`.
+    pub fn epoch(&self) -> Arc<ContextEpoch> {
+        self.epoch.clone()
+    }
+
+    /// The snapshot that was current when the in-flight switch started.
+    /// Returns `None` when no switch is running or when the pre-switch
+    /// context had not been committed yet. Used by the switcher to push
+    /// the pre-switch snapshot into history on commit, so that
+    /// `switch_back` returns to the prior context (not the new one).
+    pub fn previous_in_flight(&self) -> Option<ContextSnapshot> {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        match &*state {
+            SwitchState::Switching { previous, .. } => previous.clone(),
+            SwitchState::Idle { .. } => None,
+        }
+    }
 }
 
 #[cfg(test)]
