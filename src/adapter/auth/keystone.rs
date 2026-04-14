@@ -18,7 +18,7 @@ use crate::port::types::*;
 // --- Keystone v3 response types (internal) ---
 
 #[derive(Debug, Deserialize)]
-struct KeystoneTokenResponse {
+pub(super) struct KeystoneTokenResponse {
     token: KeystoneTokenBody,
 }
 
@@ -66,7 +66,7 @@ struct KeystoneEndpoint {
 
 // --- Token conversion ---
 
-fn parse_token(token_id: String, resp: KeystoneTokenResponse) -> Token {
+pub(super) fn parse_token(token_id: String, resp: KeystoneTokenResponse) -> Token {
     let body = resp.token;
     let project = body
         .project
