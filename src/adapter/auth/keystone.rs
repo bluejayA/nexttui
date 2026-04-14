@@ -1,18 +1,20 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex, RwLock as StdRwLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
-use tokio::sync::{broadcast, Mutex, RwLock};
+use tokio::sync::{broadcast, Mutex};
 use tokio::task::JoinHandle;
 use tracing::Instrument;
 
+use crate::context::SwitchError;
 use crate::port::auth::AuthProvider;
 use crate::port::error::{ApiError, ApiResult};
+use crate::port::scoped_auth::ScopedAuthPort;
 use crate::port::types::*;
 
 // --- Keystone v3 response types (internal) ---
@@ -131,8 +133,13 @@ fn parse_interface(s: &str) -> EndpointInterface {
 pub struct KeystoneAuthAdapter {
     client: reqwest::Client,
     credential: AuthCredential,
-    token_map: Arc<RwLock<HashMap<TokenScope, Token>>>,
-    active_scope: TokenScope,
+    /// `StdRwLock` rather than `tokio::sync::RwLock` because no critical
+    /// section here is held across an await point; using the synchronous
+    /// lock keeps [`ScopedAuthPort::current_token`] callable without async.
+    token_map: Arc<StdRwLock<HashMap<TokenScope, Token>>>,
+    /// `Arc<StdMutex<_>>` so `set_active` can atomically swap the scope and
+    /// the background refresh loop observes the change on its next tick.
+    active_scope: Arc<StdMutex<TokenScope>>,
     token_tx: broadcast::Sender<Token>,
     refresh_handle: Mutex<Option<JoinHandle<()>>>,
     /// Guard to ensure refresh loop is started only once.
@@ -165,14 +172,21 @@ impl KeystoneAuthAdapter {
                 .connect_timeout(Duration::from_secs(10))
                 .build()?,
             credential,
-            token_map: Arc::new(RwLock::new(cached_tokens)),
-            active_scope,
+            token_map: Arc::new(StdRwLock::new(cached_tokens)),
+            active_scope: Arc::new(StdMutex::new(active_scope)),
             token_tx,
             refresh_handle: Mutex::new(None),
             refresh_started: AtomicBool::new(false),
             refresh_lock: Mutex::new(()),
             cache_dir,
         })
+    }
+
+    fn active_scope_snapshot(&self) -> TokenScope {
+        self.active_scope
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Start the background token refresh loop. Idempotent — only spawns once.
@@ -187,14 +201,17 @@ impl KeystoneAuthAdapter {
         let credential = self.credential.clone();
         let tx = self.token_tx.clone();
         let cache_dir = self.cache_dir.clone();
-        let scope = self.active_scope.clone();
+        // Share the scope handle so `set_active` changes are observed on the
+        // next refresh tick rather than after a restart.
+        let scope_ref = self.active_scope.clone();
 
         let refresh_span = tracing::info_span!("token_refresh_loop");
         let handle = tokio::spawn(
             async move {
                 loop {
+                    let scope = scope_ref.lock().unwrap_or_else(|e| e.into_inner()).clone();
                     let sleep_duration = {
-                        let map = token_map_ref.read().await;
+                        let map = token_map_ref.read().unwrap_or_else(|e| e.into_inner());
                         match map.get(&scope) {
                             Some(t) => {
                                 let remaining = t.expires_at - Utc::now();
@@ -213,9 +230,14 @@ impl KeystoneAuthAdapter {
 
                     match Self::do_authenticate(&client, &credential).await {
                         Ok(new_token) => {
-                            let mut map = token_map_ref.write().await;
-                            map.insert(scope.clone(), new_token.clone());
-                            if let Err(e) = super::token_cache::save_token(&new_token, &cache_dir, &scope) {
+                            {
+                                let mut map =
+                                    token_map_ref.write().unwrap_or_else(|e| e.into_inner());
+                                map.insert(scope.clone(), new_token.clone());
+                            }
+                            if let Err(e) =
+                                super::token_cache::save_token(&new_token, &cache_dir, &scope)
+                            {
                                 tracing::warn!(error = %e, "failed to cache token to disk");
                             }
                             let _ = tx.send(new_token);
@@ -319,11 +341,12 @@ impl KeystoneAuthAdapter {
 impl AuthProvider for KeystoneAuthAdapter {
     async fn authenticate(&self, credential: &AuthCredential) -> ApiResult<Token> {
         let token = Self::do_authenticate(&self.client, credential).await?;
+        let scope = self.active_scope_snapshot();
         {
-            let mut map = self.token_map.write().await;
-            map.insert(self.active_scope.clone(), token.clone());
+            let mut map = self.token_map.write().unwrap_or_else(|e| e.into_inner());
+            map.insert(scope.clone(), token.clone());
         }
-        if let Err(e) = super::token_cache::save_token(&token, &self.cache_dir, &self.active_scope) {
+        if let Err(e) = super::token_cache::save_token(&token, &self.cache_dir, &scope) {
             tracing::warn!(error = %e, "failed to cache token to disk");
         }
         self.start_refresh_loop().await;
@@ -333,11 +356,12 @@ impl AuthProvider for KeystoneAuthAdapter {
     #[tracing::instrument(skip(self))]
     async fn refresh_token(&self) -> ApiResult<Token> {
         let token = Self::do_authenticate(&self.client, &self.credential).await?;
+        let scope = self.active_scope_snapshot();
         {
-            let mut map = self.token_map.write().await;
-            map.insert(self.active_scope.clone(), token.clone());
+            let mut map = self.token_map.write().unwrap_or_else(|e| e.into_inner());
+            map.insert(scope.clone(), token.clone());
         }
-        if let Err(e) = super::token_cache::save_token(&token, &self.cache_dir, &self.active_scope) {
+        if let Err(e) = super::token_cache::save_token(&token, &self.cache_dir, &scope) {
             tracing::warn!(error = %e, "failed to cache token to disk");
         }
         let _ = self.token_tx.send(token.clone());
@@ -352,9 +376,10 @@ impl AuthProvider for KeystoneAuthAdapter {
         self.start_refresh_loop().await;
 
         // Fast path: token is still valid for active scope
+        let scope = self.active_scope_snapshot();
         {
-            let map = self.token_map.read().await;
-            if let Some(t) = map.get(&self.active_scope) {
+            let map = self.token_map.read().unwrap_or_else(|e| e.into_inner());
+            if let Some(t) = map.get(&scope) {
                 if t.expires_at > Utc::now() + chrono::Duration::minutes(1) {
                     return Ok(t.id.clone());
                 }
@@ -364,10 +389,12 @@ impl AuthProvider for KeystoneAuthAdapter {
         // Slow path: serialize refresh attempts
         let _guard = self.refresh_lock.lock().await;
 
-        // Double-check after acquiring lock
+        // Double-check after acquiring lock. Re-snapshot the scope because
+        // `set_active` could have swapped it while we waited on the mutex.
+        let scope = self.active_scope_snapshot();
         {
-            let map = self.token_map.read().await;
-            if let Some(t) = map.get(&self.active_scope) {
+            let map = self.token_map.read().unwrap_or_else(|e| e.into_inner());
+            if let Some(t) = map.get(&scope) {
                 if t.expires_at > Utc::now() + chrono::Duration::minutes(1) {
                     return Ok(t.id.clone());
                 }
@@ -379,8 +406,9 @@ impl AuthProvider for KeystoneAuthAdapter {
     }
 
     async fn get_token_info(&self) -> ApiResult<Token> {
-        let map = self.token_map.read().await;
-        map.get(&self.active_scope)
+        let scope = self.active_scope_snapshot();
+        let map = self.token_map.read().unwrap_or_else(|e| e.into_inner());
+        map.get(&scope)
             .cloned()
             .ok_or(ApiError::AuthFailed("Not authenticated".into()))
     }
@@ -435,17 +463,19 @@ impl AuthProvider for KeystoneAuthAdapter {
     }
 
     async fn has_role(&self, role_name: &str) -> ApiResult<bool> {
-        let map = self.token_map.read().await;
+        let scope = self.active_scope_snapshot();
+        let map = self.token_map.read().unwrap_or_else(|e| e.into_inner());
         let token = map
-            .get(&self.active_scope)
+            .get(&scope)
             .ok_or(ApiError::AuthFailed("Not authenticated".into()))?;
         Ok(token.roles.iter().any(|r| r.name == role_name))
     }
 
     async fn get_catalog(&self) -> ApiResult<Vec<CatalogEntry>> {
-        let map = self.token_map.read().await;
+        let scope = self.active_scope_snapshot();
+        let map = self.token_map.read().unwrap_or_else(|e| e.into_inner());
         let token = map
-            .get(&self.active_scope)
+            .get(&scope)
             .ok_or(ApiError::AuthFailed("Not authenticated".into()))?;
         Ok(token.catalog.clone())
     }
@@ -453,6 +483,65 @@ impl AuthProvider for KeystoneAuthAdapter {
     async fn get_capabilities(&self) -> ApiResult<Vec<Capability>> {
         // Phase 1: Keystone has no capability concept. Return empty.
         Ok(Vec::new())
+    }
+}
+
+/// BL-P2-031 Unit 3b — lets the runtime context switcher read and swap the
+/// active scope/token atomically without going through the async auth surface.
+///
+/// `current_token` returns a best-effort snapshot: if no token is cached for
+/// the active scope yet, it returns an empty [`Token`] rather than blocking,
+/// since the trait contract forbids async. In practice the switcher only
+/// reaches this after initial authentication, so the empty fallback is a
+/// defensive no-op for pre-auth misuse — logged at `warn`.
+#[async_trait]
+impl ScopedAuthPort for KeystoneAuthAdapter {
+    fn current_scope(&self) -> TokenScope {
+        self.active_scope_snapshot()
+    }
+
+    fn current_token(&self) -> Token {
+        let scope = self.active_scope_snapshot();
+        let map = self.token_map.read().unwrap_or_else(|e| e.into_inner());
+        match map.get(&scope) {
+            Some(t) => t.clone(),
+            None => {
+                tracing::warn!(
+                    ?scope,
+                    "current_token() called before a token was cached; returning empty placeholder",
+                );
+                Token {
+                    id: String::new(),
+                    expires_at: DateTime::<Utc>::default(),
+                    project: ProjectScope {
+                        id: String::new(),
+                        name: String::new(),
+                        domain_id: String::new(),
+                        domain_name: String::new(),
+                    },
+                    roles: Vec::new(),
+                    catalog: Vec::new(),
+                }
+            }
+        }
+    }
+
+    async fn set_active(&self, scope: TokenScope, token: Token) -> Result<(), SwitchError> {
+        // Stage the new token under its scope key first; once that's in place
+        // we flip active_scope. Order matters so a concurrent `current_token`
+        // never sees the new scope pointing at a missing map entry.
+        {
+            let mut map = self.token_map.write().unwrap_or_else(|e| e.into_inner());
+            map.insert(scope.clone(), token);
+        }
+        {
+            let mut active = self
+                .active_scope
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            *active = scope;
+        }
+        Ok(())
     }
 }
 
@@ -601,8 +690,8 @@ mod tests {
             serde_json::from_str(sample_keystone_response_json()).unwrap();
         let token = parse_token("tok-1".to_string(), resp);
         {
-            let mut map = adapter.token_map.write().await;
-            map.insert(adapter.active_scope.clone(), token);
+            let mut map = adapter.token_map.write().unwrap_or_else(|e| e.into_inner());
+            map.insert(adapter.active_scope_snapshot(), token);
         }
 
         let url = adapter
@@ -630,8 +719,8 @@ mod tests {
             serde_json::from_str(sample_keystone_response_json()).unwrap();
         let token = parse_token("tok-1".to_string(), resp);
         {
-            let mut map = adapter.token_map.write().await;
-            map.insert(adapter.active_scope.clone(), token);
+            let mut map = adapter.token_map.write().unwrap_or_else(|e| e.into_inner());
+            map.insert(adapter.active_scope_snapshot(), token);
         }
 
         assert!(adapter.has_role("admin").await.unwrap());
@@ -646,8 +735,8 @@ mod tests {
             serde_json::from_str(sample_keystone_response_json()).unwrap();
         let token = parse_token("tok-xyz".to_string(), resp);
         {
-            let mut map = adapter.token_map.write().await;
-            map.insert(adapter.active_scope.clone(), token);
+            let mut map = adapter.token_map.write().unwrap_or_else(|e| e.into_inner());
+            map.insert(adapter.active_scope_snapshot(), token);
         }
 
         let headers = reqwest::header::HeaderMap::new();
@@ -675,8 +764,8 @@ mod tests {
             serde_json::from_str(sample_keystone_response_json()).unwrap();
         let token = parse_token("tok-1".to_string(), resp);
         {
-            let mut map = adapter.token_map.write().await;
-            map.insert(adapter.active_scope.clone(), token);
+            let mut map = adapter.token_map.write().unwrap_or_else(|e| e.into_inner());
+            map.insert(adapter.active_scope_snapshot(), token);
         }
 
         let catalog = adapter.get_catalog().await.unwrap();
@@ -696,5 +785,96 @@ mod tests {
         // Second call should be no-op (tested via AtomicBool flag)
         let was_started = adapter.refresh_started.swap(true, Ordering::SeqCst);
         assert!(was_started); // was already true
+    }
+
+    // ---------- BL-P2-031 Unit 3b: ScopedAuthPort impl ----------
+
+    fn seeded_adapter_with_token(token: Token) -> (KeystoneAuthAdapter, TokenScope) {
+        let adapter = KeystoneAuthAdapter::new(sample_credential_password()).unwrap();
+        let scope = adapter.active_scope_snapshot();
+        {
+            let mut map = adapter
+                .token_map
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
+            map.insert(scope.clone(), token);
+        }
+        (adapter, scope)
+    }
+
+    fn sample_token(id: &str, project_name: &str) -> Token {
+        Token {
+            id: id.into(),
+            expires_at: Utc::now() + chrono::Duration::hours(1),
+            project: ProjectScope {
+                id: format!("id-{project_name}"),
+                name: project_name.into(),
+                domain_id: "default".into(),
+                domain_name: "default".into(),
+            },
+            roles: Vec::new(),
+            catalog: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn scoped_auth_current_scope_matches_credential_at_construction() {
+        let adapter = KeystoneAuthAdapter::new(sample_credential_password()).unwrap();
+        assert_eq!(
+            ScopedAuthPort::current_scope(&adapter),
+            TokenScope::Project {
+                name: "admin-project".into(),
+                domain: "default".into(),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn scoped_auth_current_token_returns_token_for_active_scope() {
+        let (adapter, _) = seeded_adapter_with_token(sample_token("tok-initial", "admin"));
+        let tok = ScopedAuthPort::current_token(&adapter);
+        assert_eq!(tok.id, "tok-initial");
+        assert_eq!(tok.project.name, "admin");
+    }
+
+    #[tokio::test]
+    async fn scoped_auth_set_active_swaps_scope_and_token_atomically() {
+        let (adapter, _) = seeded_adapter_with_token(sample_token("tok-initial", "admin"));
+        let new_scope = TokenScope::Project {
+            name: "demo".into(),
+            domain: "default".into(),
+        };
+        let new_token = sample_token("tok-demo", "demo");
+
+        adapter
+            .set_active(new_scope.clone(), new_token.clone())
+            .await
+            .expect("set_active should succeed");
+
+        assert_eq!(ScopedAuthPort::current_scope(&adapter), new_scope);
+        let after = ScopedAuthPort::current_token(&adapter);
+        assert_eq!(after.id, "tok-demo");
+    }
+
+    #[tokio::test]
+    async fn scoped_auth_set_active_preserves_prior_scope_token_under_new_key() {
+        // After swapping scopes, the old scope's token must still be retrievable
+        // via the token_map — rollback relies on it being intact.
+        let (adapter, old_scope) = seeded_adapter_with_token(sample_token("tok-initial", "admin"));
+        let new_scope = TokenScope::Project {
+            name: "demo".into(),
+            domain: "default".into(),
+        };
+        adapter
+            .set_active(new_scope, sample_token("tok-demo", "demo"))
+            .await
+            .unwrap();
+
+        let map = adapter
+            .token_map
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
+        let still_there = map.get(&old_scope).expect("prior token must be retained");
+        assert_eq!(still_there.id, "tok-initial");
     }
 }
