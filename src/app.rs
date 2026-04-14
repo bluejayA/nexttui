@@ -47,6 +47,17 @@ pub struct App {
     /// switcher (Unit 4); read by [`App::handle_versioned_event`] to drop
     /// stale events from previous generations. (BL-P2-031 Unit 2.)
     pub current_epoch: Arc<crate::context::ContextEpoch>,
+    /// Orchestrator for runtime context switches. `None` until Unit 3b
+    /// wires a real [`crate::port::context_session::ContextSessionPort`]
+    /// adapter; `Action::SwitchContext` short-circuits to a toast in that
+    /// state instead of silently dropping.
+    switcher: Option<Arc<crate::context::ContextSwitcher>>,
+    /// Event sender the switcher uses to publish `ContextChanged` after a
+    /// successful commit, and a stamped `ApiError` on failure. Kept
+    /// optional for tests that don't exercise the async switch path.
+    event_tx: Option<
+        tokio::sync::mpsc::UnboundedSender<crate::context::VersionedEvent<AppEvent>>,
+    >,
     config: Arc<Config>,
     layout: LayoutManager,
     sidebar: Sidebar,
@@ -78,6 +89,8 @@ impl App {
             rbac: Arc::new(RbacGuard::new()),
             all_tenants: Arc::new(AtomicBool::new(false)),
             current_epoch,
+            switcher: None,
+            event_tx: None,
             config: Arc::new(config),
             layout: LayoutManager::new(),
             sidebar: Sidebar::new(Vec::new()),
@@ -115,6 +128,8 @@ impl App {
             rbac,
             all_tenants: Arc::new(AtomicBool::new(false)),
             current_epoch,
+            switcher: None,
+            event_tx: None,
             config: Arc::new(config),
             layout: LayoutManager::new(),
             sidebar: Sidebar::new(parts.sidebar_items),
@@ -414,6 +429,12 @@ impl App {
             }
             Action::Quit => {
                 self.should_quit = true;
+            }
+            Action::SwitchContext(request) => {
+                self.spawn_switch(request);
+            }
+            Action::SwitchBack => {
+                self.spawn_switch_back();
             }
             other => {
                 if let Some(msg) = Self::progress_toast_text(&other) {
@@ -895,6 +916,91 @@ impl App {
 
     pub fn config(&self) -> &Config {
         &self.config
+    }
+
+    /// Wire the context switcher + event sender post-construction. Main
+    /// calls this once during startup; tests that exercise the switch path
+    /// call it with a mock switcher. Kept separate from `new` so the App
+    /// can still be built without a concrete `ContextSessionPort` adapter
+    /// (Unit 3b).
+    pub fn wire_context_switch(
+        &mut self,
+        switcher: Arc<crate::context::ContextSwitcher>,
+        event_tx: tokio::sync::mpsc::UnboundedSender<crate::context::VersionedEvent<AppEvent>>,
+    ) {
+        self.switcher = Some(switcher);
+        self.event_tx = Some(event_tx);
+    }
+
+    /// Spawn an async switch. Emits `ContextChanged` on success or an
+    /// `ApiError` stamped with the *current* epoch on failure (so the
+    /// gate won't drop the error toast). Does nothing if the switcher
+    /// isn't wired yet — surfaces a toast instead of silently dropping.
+    fn spawn_switch(&mut self, request: crate::context::ContextRequest) {
+        let Some(switcher) = self.switcher.clone() else {
+            self.background_tracker.add_toast(
+                "Context switch not available yet (runtime adapter pending)".into(),
+                crate::background::ToastLevel::Error,
+            );
+            return;
+        };
+        let Some(event_tx) = self.event_tx.clone() else {
+            tracing::error!("switcher wired without event_tx — impossible state");
+            return;
+        };
+        let current_epoch = self.current_epoch.clone();
+        tokio::spawn(async move {
+            match switcher.switch(request).await {
+                Ok((epoch, snapshot)) => {
+                    let _ = event_tx.send(crate::context::VersionedEvent::new(
+                        AppEvent::ContextChanged { target: snapshot.target },
+                        epoch,
+                    ));
+                }
+                Err(err) => {
+                    let _ = event_tx.send(crate::context::VersionedEvent::new(
+                        AppEvent::ApiError {
+                            operation: "SwitchContext".into(),
+                            message: err.to_string(),
+                        },
+                        current_epoch.current(),
+                    ));
+                }
+            }
+        });
+    }
+
+    fn spawn_switch_back(&mut self) {
+        let Some(switcher) = self.switcher.clone() else {
+            self.background_tracker.add_toast(
+                "Context switch not available yet (runtime adapter pending)".into(),
+                crate::background::ToastLevel::Error,
+            );
+            return;
+        };
+        let Some(event_tx) = self.event_tx.clone() else {
+            return;
+        };
+        let current_epoch = self.current_epoch.clone();
+        tokio::spawn(async move {
+            match switcher.switch_back().await {
+                Ok((epoch, snapshot)) => {
+                    let _ = event_tx.send(crate::context::VersionedEvent::new(
+                        AppEvent::ContextChanged { target: snapshot.target },
+                        epoch,
+                    ));
+                }
+                Err(err) => {
+                    let _ = event_tx.send(crate::context::VersionedEvent::new(
+                        AppEvent::ApiError {
+                            operation: "SwitchBack".into(),
+                            message: err.to_string(),
+                        },
+                        current_epoch.current(),
+                    ));
+                }
+            }
+        });
     }
 
     pub fn action_tx(&self) -> &crate::context::ActionSender {
@@ -1817,5 +1923,167 @@ mod tests {
         let envelope = VersionedEvent::new(AppEvent::CloudSwitched("future".into()), 99);
         let forwarded = app.handle_versioned_event(envelope);
         assert!(forwarded);
+    }
+
+    // ---------- BL-P2-031 Unit 4: App.switch_context integration ----------
+
+    fn wire_test_switcher(
+        app: &mut App,
+    ) -> (
+        Arc<crate::port::mock_context::MockContextSession>,
+        tokio::sync::mpsc::UnboundedReceiver<crate::context::VersionedEvent<AppEvent>>,
+    ) {
+        use crate::context::{
+            CancellationRegistry, ContextHistoryStore, ContextSwitcher, ContextTargetResolver,
+            SwitchStateMachine,
+            resolver::{CloudDirectory, ProjectCandidate, ProjectDirectoryPort},
+        };
+        use crate::port::context_session::ContextSessionPort;
+        use crate::port::mock_context::MockContextSession;
+        use crate::port::types::{CatalogEntry, ProjectScope, Token, TokenScope};
+        use async_trait::async_trait;
+        use chrono::{TimeZone, Utc};
+
+        struct FakeClouds;
+        impl CloudDirectory for FakeClouds {
+            fn active_cloud(&self) -> String {
+                "devstack".into()
+            }
+            fn known_clouds(&self) -> Vec<String> {
+                vec!["devstack".into()]
+            }
+        }
+        struct FakeDirectory;
+        #[async_trait]
+        impl ProjectDirectoryPort for FakeDirectory {
+            async fn list_projects(
+                &self,
+                _cloud: &str,
+            ) -> Result<Vec<ProjectCandidate>, crate::context::SwitchError> {
+                Ok(vec![ProjectCandidate {
+                    cloud: "devstack".into(),
+                    project_id: "id-demo".into(),
+                    project_name: "demo".into(),
+                    domain: "default".into(),
+                }])
+            }
+        }
+
+        let prev_scope = TokenScope::Project {
+            name: "admin".into(),
+            domain: "default".into(),
+        };
+        let old_token = Token {
+            id: "old".into(),
+            expires_at: Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap(),
+            project: ProjectScope {
+                id: "id-admin".into(),
+                name: "admin".into(),
+                domain_id: "default".into(),
+                domain_name: "default".into(),
+            },
+            roles: Vec::new(),
+            catalog: Vec::<CatalogEntry>::new(),
+        };
+        let mut new_token = old_token.clone();
+        new_token.id = "new".into();
+        new_token.project.name = "demo".into();
+        new_token.project.id = "id-demo".into();
+
+        let session = Arc::new(MockContextSession::new(prev_scope, old_token, new_token));
+        let state = Arc::new(SwitchStateMachine::new(app.current_epoch.clone()));
+        let cancellation = Arc::new(CancellationRegistry::new());
+        let history = Arc::new(std::sync::Mutex::new(ContextHistoryStore::new()));
+        let resolver = Arc::new(ContextTargetResolver::new(
+            Arc::new(FakeClouds),
+            Arc::new(FakeDirectory),
+        ));
+        let switcher = Arc::new(ContextSwitcher::new(
+            state,
+            cancellation,
+            resolver,
+            session.clone() as Arc<dyn ContextSessionPort>,
+            history,
+        ));
+
+        let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+        app.wire_context_switch(switcher, event_tx);
+        (session, event_rx)
+    }
+
+    #[tokio::test]
+    async fn dispatch_switch_context_emits_context_changed_on_success() {
+        use crate::context::ContextRequest;
+        let mut app = make_app();
+        let (_session, mut event_rx) = wire_test_switcher(&mut app);
+
+        app.dispatch_action(Action::SwitchContext(ContextRequest::ByName {
+            cloud: None,
+            project: "demo".into(),
+            domain: None,
+        }));
+
+        // Spawned task needs one yield to run to completion.
+        let envelope = tokio::time::timeout(std::time::Duration::from_secs(2), event_rx.recv())
+            .await
+            .expect("timed out waiting for ContextChanged")
+            .expect("channel closed");
+        assert_eq!(envelope.epoch(), 1);
+        match envelope.into_inner() {
+            AppEvent::ContextChanged { target } => {
+                assert_eq!(target.project_name, "demo");
+                assert_eq!(target.cloud, "devstack");
+            }
+            other => panic!("expected ContextChanged, got {other:?}"),
+        }
+        // App epoch must be bumped by the switcher (shared Arc).
+        assert_eq!(app.current_epoch.current(), 1);
+    }
+
+    #[tokio::test]
+    async fn dispatch_switch_context_without_switcher_adds_error_toast() {
+        use crate::context::ContextRequest;
+        let mut app = make_app();
+        // switcher intentionally not wired.
+        app.dispatch_action(Action::SwitchContext(ContextRequest::ByName {
+            cloud: None,
+            project: "demo".into(),
+            domain: None,
+        }));
+        let toasts = app.background_tracker().active_toasts();
+        assert_eq!(toasts.len(), 1);
+        assert!(toasts[0].message.contains("not available"));
+    }
+
+    #[tokio::test]
+    async fn dispatch_switch_back_emits_context_changed_after_one_switch() {
+        use crate::context::ContextRequest;
+        let mut app = make_app();
+        let (_session, mut event_rx) = wire_test_switcher(&mut app);
+
+        // Need two switches so `switch_back` has a previous to replay.
+        // The test switcher only knows one project ("demo"); switch_back
+        // pops the pushed "demo" snapshot after a single switch — but
+        // since history pushes post-commit, the first switch records the
+        // *new* context, and switch_back would replay it. Validate that
+        // switch_back yields a ContextChanged.
+        app.dispatch_action(Action::SwitchContext(ContextRequest::ByName {
+            cloud: None,
+            project: "demo".into(),
+            domain: None,
+        }));
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), event_rx.recv())
+            .await
+            .unwrap();
+
+        app.dispatch_action(Action::SwitchBack);
+        let envelope = tokio::time::timeout(std::time::Duration::from_secs(2), event_rx.recv())
+            .await
+            .expect("timed out")
+            .expect("channel closed");
+        match envelope.into_inner() {
+            AppEvent::ContextChanged { target } => assert_eq!(target.project_name, "demo"),
+            other => panic!("expected ContextChanged, got {other:?}"),
+        }
     }
 }

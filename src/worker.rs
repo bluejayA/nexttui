@@ -768,8 +768,10 @@ async fn handle_action(registry: &AdapterRegistry, all_tenants: &AtomicBool, act
         }
 
         Action::SwitchContext(_) | Action::SwitchBack => {
-            // Handled by App::switch_context (Unit 4) — the worker layer
-            // never sees these because they short-circuit at the dispatcher.
+            // Intercepted by `App::dispatch_action` (Unit 4) — a real
+            // switch never reaches the worker. This arm stays as a
+            // defensive no-op so a misrouted action is a drop, not a
+            // panic.
             None
         }
     }
