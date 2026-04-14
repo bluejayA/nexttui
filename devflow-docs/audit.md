@@ -147,3 +147,36 @@
 - **git worktree created** — feature/server-resize, 654 tests baseline
 - **Unit 1 complete** — SelectPopup 위젯 (654→663 tests)
 - **Session paused** — Unit 2 대기
+
+## 2026-04-13
+- **Session resumed** — BL-P2-031 (#39) Keystone Rescoping, commit: 7d13944
+- **complexity-declaration**: Standard 승인 (사용자)
+- **requirements-analysis**: Standard depth, 10 FR / 5 NFR, B+ UX 확정 (피커 + 명령 + Identity s), 옵션 C 구현 전략 확정 (단일 BL을 PR1~PR6 단계적 머지)
+- **Codex adversarial-review**: 3 critical flaws + 10 design questions 식별 — ContextEpoch/CancellationToken, Switch 상태머신, Catalog 무효화, Destructive fingerprint 동반 설계로 모두 반영
+- **pre-planning**: C — user-stories + nfr-requirements 모두 스킵 (NFR은 requirements.md에 이미 5개 명시, 운영자 시나리오 명확)
+- **workflow-planning**: A안 (안전 완전) 선택 — application-design Standard + units-generation Standard. cross-cutting 변경 + 4축 동시 변경 정합 위해 권장안 채택
+- **branch-name-confirm**: feature/runtime-context-switch 확정
+- **worktree**: feature/runtime-context-switch (.worktrees/runtime-context-switch), baseline 1116 tests passed
+- **application-design DETAIL r2**: 메타 리뷰 (Codex+Gemini APPROVE-WITH-CHANGES) 반영. 21개 체크리스트 적용. 핵심 개정: ContextRequest vs ContextTarget 타입 분리, ContextSwitcher.switch 컴파일 가능 코드, commit self-reverting atomic 계약, Cancel during Switching = InProgress 거부 정책, ScopedAuthPort 신설, HttpEndpointCache trait, KeystoneCapabilities 정의, parking_lot::Mutex로 SwitchStateMachine 동기화
+- **application-design DETAIL r2 승인**: INCEPTION 완료
+- **Phase transition**: INCEPTION → CONSTRUCTION — commit: 7d13944
+- **units-generation**: 7개 unit 분해 (Unit 1~4 = PR1 / Unit 5 = PR3 / Unit 6 = PR4 / Unit 7 = PR5). 의존 DAG, Unit 2-3 병렬 / Unit 6-7 병렬 가능
+- **Session paused**: units-generation 완료, 게이트 대기 상태 — 다음 세션은 code-generation Unit 1부터
+- **Session resumed**: units-generation 게이트 대기에서 재개 — commit: 7d13944
+- **units-generation 승인**: B 선택, code-generation Unit 1 진입
+- **Unit 1 TDD RED**: Foundation Types (src/context/) — ContextEpoch, VersionedEvent, ContextHistoryStore, SwitchError, 핵심 타입들 + TokenScope 변환
+- **Unit 1 GREEN**: src/context/ 6 files (mod, types, error, epoch, versioned, history, capabilities) + 23 tests 통과. 총 1116 → 1139 tests, context 모듈 clippy clean (기존 코드베이스의 pre-existing clippy 30건은 별건)
+- **Unit 3a 완료**: Port traits (ScopedAuthPort, ContextSessionPort, HttpEndpointCache, KeystoneRescopePort) + ScopedAuthSession 오케스트레이션 + EndpointCatalogInvalidator + TokenCacheStore 확장 + Mock 인프라. commit af93b3c, +17 tests (1156 total)
+- **Unit 3b 분리**: KeystoneRescopeAdapter HTTP 구현 + KeystoneAuthAdapter ScopedAuthPort impl (active_scope를 RwLock으로 변경) — 후속 사이클로 분리
+- **Unit 2 완료**: CancellationRegistry, Action::SwitchContext/SwitchBack, AppEvent::ContextChanged, spawn_versioned, App.current_epoch + handle_versioned_event 게이트. tokio-util 추가. commit 4932c7d, +11 tests (1167 total). 채널 type 마이그레이션은 Unit 4와 통합 처리
+- **Session paused (2026-04-13)**: Unit 1+2+3a 완료 (commits befc71a, af93b3c, 4932c7d), 1116→1167 tests. 다음 세션은 Unit 4 (Switch Orchestration) 진입 권장 — fresh context에서 Council 리뷰까지
+
+## 2026-04-14
+- **Unit 4a SwitchStateMachine**: commit 0341086, +8 tests
+- **Unit 4b ContextTargetResolver**: commit f6f6d48, +11 tests
+- **Unit 4c ContextSwitcher 7-step orchestrator**: commit e7ff042, +10 tests
+- **Unit 4d channel VersionedEvent migration**: commit d747d69, Action/AppEvent 모든 모듈 연결, +2 tests
+- **Unit 4e App.switch_context + ContextChanged dispatch**: commit 1abfa53, +3 tests
+- **Unit 4 Council review (Codex + Gemini)**: 5건 반영 (C1+H1+H2+H3+H4) — commit bab45d7, +3 tests. C1 = switch-in-flight 시 port-bound action 거부로 cross-context mis-execution 방지. H1 = switch_back peek-only. H2 = history에 previous_in_flight push. H3 = switch 반환 타입 Result<_, (Epoch, SwitchError)>. H4 = cancel_below 방어선 문서화
+- **PR1 switch-core 완성**: Unit 1+2+3a+4 완료, 1116 → 1204 tests (+88), 회귀 0
+- **Session resumed (2026-04-14)**: worktree HEAD=03b20a1, main의 devflow-state/session-summary가 stale이라 worktree 상태로 동기화. 다음 액션: Unit 3b(실제 Keystone HTTP 어댑터) 진입 또는 PR1 선행 push 중 선택 대기
