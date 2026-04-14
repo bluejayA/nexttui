@@ -5,7 +5,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
 use ratatui::widgets::{Block, BorderType, Borders};
-use tokio::sync::mpsc;
 
 use crate::action::Action;
 use crate::background::BackgroundTracker;
@@ -40,7 +39,7 @@ pub struct App {
     router: Router,
     components: HashMap<Route, Box<dyn Component>>,
     background_tracker: BackgroundTracker,
-    action_tx: mpsc::UnboundedSender<Action>,
+    action_tx: crate::context::ActionSender,
 
     pub rbac: Arc<RbacGuard>,
     pub all_tenants: Arc<AtomicBool>,
@@ -62,10 +61,11 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(config: Config, action_tx: mpsc::UnboundedSender<Action>) -> Self {
+    pub fn new(config: Config, action_tx: crate::context::ActionSender) -> Self {
         let tick_rate = std::time::Duration::from_millis(config.app_config().tick_rate_ms);
         crate::ui::theme::Theme::init(config.app_config().theme);
         let audit_logger = Self::init_audit_logger();
+        let current_epoch = action_tx.epoch();
         Self {
             should_quit: false,
             input_mode: InputMode::Normal,
@@ -77,7 +77,7 @@ impl App {
             action_tx,
             rbac: Arc::new(RbacGuard::new()),
             all_tenants: Arc::new(AtomicBool::new(false)),
-            current_epoch: Arc::new(crate::context::ContextEpoch::new()),
+            current_epoch,
             config: Arc::new(config),
             layout: LayoutManager::new(),
             sidebar: Sidebar::new(Vec::new()),
@@ -94,7 +94,7 @@ impl App {
 
     pub fn from_registry(
         config: Config,
-        action_tx: mpsc::UnboundedSender<Action>,
+        action_tx: crate::context::ActionSender,
         registry: crate::registry::ModuleRegistry,
         rbac: Arc<RbacGuard>,
     ) -> (Self, Vec<Action>) {
@@ -102,6 +102,7 @@ impl App {
         let tick_rate = std::time::Duration::from_millis(config.app_config().tick_rate_ms);
         crate::ui::theme::Theme::init(config.app_config().theme);
         let audit_logger = Self::init_audit_logger();
+        let current_epoch = action_tx.epoch();
         let mut app = Self {
             should_quit: false,
             input_mode: InputMode::Normal,
@@ -113,7 +114,7 @@ impl App {
             action_tx,
             rbac,
             all_tenants: Arc::new(AtomicBool::new(false)),
-            current_epoch: Arc::new(crate::context::ContextEpoch::new()),
+            current_epoch,
             config: Arc::new(config),
             layout: LayoutManager::new(),
             sidebar: Sidebar::new(parts.sidebar_items),
@@ -896,7 +897,7 @@ impl App {
         &self.config
     }
 
-    pub fn action_tx(&self) -> &mpsc::UnboundedSender<Action> {
+    pub fn action_tx(&self) -> &crate::context::ActionSender {
         &self.action_tx
     }
 }
@@ -945,7 +946,7 @@ mod tests {
     }
 
     fn make_app() -> App {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = crate::context::test_action_channel();
         let config = test_config();
         App::new(config, tx)
     }
@@ -1088,7 +1089,7 @@ mod tests {
     #[test]
     fn test_app_sidebar_uses_rbac() {
         use crate::ui::sidebar::SidebarItem;
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = crate::context::test_action_channel();
         let config = test_config();
         let mut app = App::new(config, tx);
         // App with default RbacGuard (not admin)
@@ -1124,7 +1125,7 @@ mod tests {
 
     #[test]
     fn test_handle_cold_migrated_event_toast_and_refresh() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = crate::context::test_action_channel();
         let config = test_config();
         let mut app = App::new(config, tx);
         app.handle_event(AppEvent::ServerColdMigrated { id: "s1".into() });
@@ -1181,7 +1182,7 @@ mod tests {
 
     #[test]
     fn test_on_tick_dispatches_refresh_action() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = crate::context::test_action_channel();
         let config = test_config();
         let mut app = App::new(config, tx);
         app.register_component(Route::Servers, Box::new(RefreshMock::new(Action::FetchServers)));
@@ -1201,7 +1202,7 @@ mod tests {
 
     #[test]
     fn test_on_tick_suppressed_when_form_mode() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = crate::context::test_action_channel();
         let config = test_config();
         let mut app = App::new(config, tx);
         app.register_component(Route::Servers, Box::new(RefreshMock::new(Action::FetchServers)));
@@ -1220,7 +1221,7 @@ mod tests {
 
     #[test]
     fn test_on_tick_suppressed_when_modal() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = crate::context::test_action_channel();
         let config = test_config();
         let mut app = App::new(config, tx);
         let mut mock = RefreshMock::new(Action::FetchServers);
@@ -1242,7 +1243,7 @@ mod tests {
 
     #[test]
     fn test_api_error_rate_limited_triggers_backoff() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = crate::context::test_action_channel();
         let config = test_config();
         let mut app = App::new(config, tx);
         app.register_component(Route::Servers, Box::new(RefreshMock::new(Action::FetchServers)));
@@ -1266,7 +1267,7 @@ mod tests {
 
     #[test]
     fn test_api_error_service_unavailable_triggers_backoff() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = crate::context::test_action_channel();
         let config = test_config();
         let mut app = App::new(config, tx);
         app.register_component(Route::Servers, Box::new(RefreshMock::new(Action::FetchServers)));
@@ -1289,7 +1290,7 @@ mod tests {
 
     #[test]
     fn test_success_event_resets_backoff() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = crate::context::test_action_channel();
         let config = test_config();
         let mut app = App::new(config, tx);
         app.register_component(Route::Servers, Box::new(RefreshMock::new(Action::FetchServers)));
@@ -1487,7 +1488,7 @@ mod tests {
     // --- Audit Logger integration ---
 
     fn make_app_with_audit() -> (App, tempfile::TempDir) {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = crate::context::test_action_channel();
         let config = test_config();
         let mut app = App::new(config, tx);
         let dir = tempfile::TempDir::new().unwrap();
@@ -1757,7 +1758,7 @@ mod tests {
 
     #[test]
     fn test_navigate_resets_refresh_scheduler() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = crate::context::test_action_channel();
         let config = test_config();
         let mut app = App::new(config, tx);
         app.register_component(Route::Servers, Box::new(RefreshMock::new(Action::FetchServers)));

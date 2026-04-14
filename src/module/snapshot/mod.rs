@@ -3,9 +3,9 @@ pub mod view_model;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
 use ratatui::Frame;
-use tokio::sync::mpsc;
 
 use crate::action::Action;
+use crate::context::ActionSender;
 use crate::component::Component;
 use crate::event::AppEvent;
 use crate::models::cinder::VolumeSnapshot;
@@ -24,11 +24,11 @@ pub struct SnapshotModule {
     confirm: ConfirmHandler,
     resource_list: ResourceList,
     all_tenants: bool,
-    action_tx: mpsc::UnboundedSender<Action>,
+    action_tx: ActionSender,
 }
 
 impl SnapshotModule {
-    pub fn new(action_tx: mpsc::UnboundedSender<Action>) -> Self {
+    pub fn new(action_tx: ActionSender) -> Self {
         Self {
             view_state: ViewState::List,
             snapshots: Vec::new(),
@@ -205,6 +205,7 @@ impl Component for SnapshotModule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::{ActionReceiver, test_action_channel};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::from(code)
@@ -222,8 +223,8 @@ mod tests {
         }
     }
 
-    fn setup() -> (SnapshotModule, mpsc::UnboundedReceiver<Action>) {
-        let (tx, rx) = mpsc::unbounded_channel();
+    fn setup() -> (SnapshotModule, ActionReceiver) {
+        let (tx, rx) = test_action_channel();
         let mut module = SnapshotModule::new(tx);
         let snaps = vec![
             make_snapshot("snap-1", "daily", "available"),
@@ -236,7 +237,7 @@ mod tests {
 
     #[test]
     fn test_initial_state_is_list() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let module = SnapshotModule::new(tx);
         assert_eq!(*module.view_state(), ViewState::List);
         assert!(module.snapshots().is_empty());
@@ -295,7 +296,7 @@ mod tests {
 
     #[test]
     fn test_handle_event_snapshots_loaded() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = SnapshotModule::new(tx);
         let snaps = vec![make_snapshot("snap-1", "test", "available")];
         module.handle_event(&AppEvent::SnapshotsLoaded(snaps));

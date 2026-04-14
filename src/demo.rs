@@ -1,11 +1,10 @@
 //! Demo mode: generates sample data and wires up all modules without a real API.
 
 use std::collections::HashMap;
-use tokio::sync::mpsc;
 
-use crate::action::Action;
 use crate::app::App;
 use crate::config::Config;
+use crate::context::{ActionReceiver, test_action_channel};
 use crate::event::AppEvent;
 use crate::models::cinder::{Volume, VolumeAttachment, VolumeSnapshot};
 use crate::models::glance::Image;
@@ -17,9 +16,9 @@ use crate::models::nova::{
 use crate::registry::{ModuleRegistry, register_all_modules};
 
 /// Create a fully wired App with demo data.
-pub fn create_demo_app() -> Result<(App, mpsc::UnboundedReceiver<Action>), Box<dyn std::error::Error>> {
+pub fn create_demo_app() -> Result<(App, ActionReceiver), Box<dyn std::error::Error>> {
     let config = demo_config()?;
-    let (action_tx, action_rx) = mpsc::unbounded_channel();
+    let (action_tx, action_rx) = test_action_channel();
 
     let mut registry = ModuleRegistry::new();
     register_all_modules(&mut registry, &action_tx);

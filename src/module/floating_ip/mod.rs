@@ -5,9 +5,9 @@ use std::collections::HashSet;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
 use ratatui::Frame;
-use tokio::sync::mpsc;
 
 use crate::action::Action;
+use crate::context::ActionSender;
 use crate::component::Component;
 use crate::event::AppEvent;
 use crate::models::neutron::{FloatingIp, Network, Port};
@@ -40,11 +40,11 @@ pub struct FloatingIpModule {
     pending_ports_server_id: Option<String>,
     loading_ports: bool,
     keymap_hints_shown: HashSet<char>,
-    action_tx: mpsc::UnboundedSender<Action>,
+    action_tx: ActionSender,
 }
 
 impl FloatingIpModule {
-    pub fn new(action_tx: mpsc::UnboundedSender<Action>) -> Self {
+    pub fn new(action_tx: ActionSender) -> Self {
         Self {
             view_state: ViewState::List,
             floating_ips: Vec::new(),
@@ -506,6 +506,7 @@ impl Component for FloatingIpModule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::{ActionReceiver, test_action_channel};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::from(code)
@@ -601,8 +602,8 @@ mod tests {
         }
     }
 
-    fn setup() -> (FloatingIpModule, mpsc::UnboundedReceiver<Action>) {
-        let (tx, rx) = mpsc::unbounded_channel();
+    fn setup() -> (FloatingIpModule, ActionReceiver) {
+        let (tx, rx) = test_action_channel();
         let mut module = FloatingIpModule::new(tx);
         let fips = vec![
             make_fip("fip-1", "203.0.113.10", "ACTIVE"),
@@ -613,7 +614,7 @@ mod tests {
         (module, rx)
     }
 
-    fn setup_with_servers() -> (FloatingIpModule, mpsc::UnboundedReceiver<Action>) {
+    fn setup_with_servers() -> (FloatingIpModule, ActionReceiver) {
         let (mut module, rx) = setup();
         let servers = vec![
             make_server("srv-1", "web-01", "ACTIVE"),
@@ -626,7 +627,7 @@ mod tests {
 
     #[test]
     fn test_initial_state_is_list() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let module = FloatingIpModule::new(tx);
         assert_eq!(*module.view_state(), ViewState::List);
         assert!(module.floating_ips().is_empty());
@@ -678,7 +679,7 @@ mod tests {
 
     #[test]
     fn test_handle_event_fips_loaded() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = FloatingIpModule::new(tx);
         let fips = vec![make_fip("fip-1", "1.2.3.4", "ACTIVE")];
         module.handle_event(&AppEvent::FloatingIpsLoaded(fips));
@@ -779,7 +780,7 @@ mod tests {
 
     #[test]
     fn test_a_on_associated_fip_no_popup() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = FloatingIpModule::new(tx);
         let fips = vec![make_fip_associated("fip-1", "203.0.113.10", "port-1")];
         module.handle_event(&AppEvent::FloatingIpsLoaded(fips));
@@ -800,7 +801,7 @@ mod tests {
 
     #[test]
     fn test_server_popup_filters_active_paused_shutoff() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = FloatingIpModule::new(tx);
         let fips = vec![make_fip("fip-1", "203.0.113.10", "ACTIVE")];
         module.handle_event(&AppEvent::FloatingIpsLoaded(fips));
@@ -946,7 +947,7 @@ mod tests {
 
     #[test]
     fn test_x_on_associated_fip_opens_confirm() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = FloatingIpModule::new(tx);
         let fips = vec![make_fip_associated("fip-1", "203.0.113.10", "port-1")];
         module.handle_event(&AppEvent::FloatingIpsLoaded(fips));
@@ -964,7 +965,7 @@ mod tests {
 
     #[test]
     fn test_confirm_disassociate_produces_action() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = FloatingIpModule::new(tx);
         let fips = vec![make_fip_associated("fip-1", "203.0.113.10", "port-1")];
         module.handle_event(&AppEvent::FloatingIpsLoaded(fips));

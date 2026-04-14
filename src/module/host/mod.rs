@@ -6,10 +6,10 @@ pub mod log_panel;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::Frame;
-use tokio::sync::mpsc;
 
 use crate::action::Action;
 use crate::component::{Component, LayoutHint};
+use crate::context::{ActionSender, test_action_channel};
 use crate::event::AppEvent;
 use crate::models::nova::Server;
 use crate::port::types::EvacuateParams;
@@ -31,7 +31,7 @@ pub struct HostModule {
     instance_list: InstanceList,
     evac_task: Option<EvacTask>,
     log_panel: LogPanel,
-    action_tx: mpsc::UnboundedSender<Action>,
+    action_tx: ActionSender,
     is_admin: bool,
     all_servers: Vec<Server>,
     evac_confirm_pending: bool,
@@ -39,13 +39,13 @@ pub struct HostModule {
 
 impl Default for HostModule {
     fn default() -> Self {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         Self::new(tx)
     }
 }
 
 impl HostModule {
-    pub fn new(action_tx: mpsc::UnboundedSender<Action>) -> Self {
+    pub fn new(action_tx: ActionSender) -> Self {
         Self {
             focus: HostFocus::HostList,
             host_list: HostList::new(),
@@ -298,6 +298,7 @@ impl Component for HostModule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::{ActionReceiver, test_action_channel};
     use crate::models::nova::{FlavorRef, Hypervisor};
 
     fn make_hypervisor(id: &str, hostname: &str) -> Hypervisor {

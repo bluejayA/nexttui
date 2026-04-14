@@ -3,9 +3,9 @@ pub mod view_model;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
 use ratatui::Frame;
-use tokio::sync::mpsc;
 
 use crate::action::Action;
+use crate::context::ActionSender;
 use crate::component::Component;
 use crate::event::AppEvent;
 use crate::models::neutron::SecurityGroup;
@@ -30,11 +30,11 @@ pub struct SecurityGroupModule {
     resource_list: ResourceList,
     form: Option<FormWidget>,
     all_tenants: bool,
-    action_tx: mpsc::UnboundedSender<Action>,
+    action_tx: ActionSender,
 }
 
 impl SecurityGroupModule {
-    pub fn new(action_tx: mpsc::UnboundedSender<Action>) -> Self {
+    pub fn new(action_tx: ActionSender) -> Self {
         Self {
             view_state: ViewState::List,
             security_groups: Vec::new(),
@@ -419,6 +419,7 @@ impl Component for SecurityGroupModule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::{ActionReceiver, test_action_channel};
     use crate::models::neutron::SecurityGroupRule;
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -456,8 +457,8 @@ mod tests {
         }
     }
 
-    fn setup() -> (SecurityGroupModule, mpsc::UnboundedReceiver<Action>) {
-        let (tx, rx) = mpsc::unbounded_channel();
+    fn setup() -> (SecurityGroupModule, ActionReceiver) {
+        let (tx, rx) = test_action_channel();
         let mut module = SecurityGroupModule::new(tx);
         let sgs = vec![
             make_sg("sg-1", "default"),
@@ -470,7 +471,7 @@ mod tests {
 
     #[test]
     fn test_initial_state_is_list() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let module = SecurityGroupModule::new(tx);
         assert_eq!(*module.view_state(), ViewState::List);
         assert!(module.security_groups().is_empty());
@@ -557,7 +558,7 @@ mod tests {
 
     #[test]
     fn test_handle_event_sgs_loaded() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = SecurityGroupModule::new(tx);
         let sgs = vec![make_sg("sg-1", "test")];
         module.handle_event(&AppEvent::SecurityGroupsLoaded(sgs));

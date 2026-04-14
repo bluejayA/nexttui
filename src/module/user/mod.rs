@@ -3,9 +3,9 @@ pub mod view_model;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
 use ratatui::Frame;
-use tokio::sync::mpsc;
 
 use crate::action::Action;
+use crate::context::ActionSender;
 use crate::component::Component;
 use crate::event::AppEvent;
 use crate::models::keystone::User;
@@ -27,11 +27,11 @@ pub struct UserModule {
     resource_list: ResourceList,
     form: Option<FormWidget>,
     cached_domain_opts: Vec<SelectOption>,
-    action_tx: mpsc::UnboundedSender<Action>,
+    action_tx: ActionSender,
 }
 
 impl UserModule {
-    pub fn new(action_tx: mpsc::UnboundedSender<Action>) -> Self {
+    pub fn new(action_tx: ActionSender) -> Self {
         Self {
             view_state: ViewState::List,
             users: Vec::new(),
@@ -253,18 +253,19 @@ impl Component for UserModule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::{ActionReceiver, test_action_channel};
     fn key(code: KeyCode) -> KeyEvent { KeyEvent::from(code) }
     fn make_user(id: &str, name: &str) -> User {
         User { id: id.into(), name: name.into(), email: None, enabled: true, default_project_id: None, domain_id: Some("default".into()) }
     }
-    fn setup() -> (UserModule, mpsc::UnboundedReceiver<Action>) {
-        let (tx, rx) = mpsc::unbounded_channel();
+    fn setup() -> (UserModule, ActionReceiver) {
+        let (tx, rx) = test_action_channel();
         let mut m = UserModule::new(tx);
         m.handle_event(&AppEvent::UsersLoaded(vec![make_user("u1", "admin"), make_user("u2", "demo")]));
         (m, rx)
     }
 
-    #[test] fn test_initial_state() { let (tx, _) = mpsc::unbounded_channel(); let m = UserModule::new(tx); assert_eq!(*m.view_state(), ViewState::List); }
+    #[test] fn test_initial_state() { let (tx, _) = test_action_channel(); let m = UserModule::new(tx); assert_eq!(*m.view_state(), ViewState::List); }
     #[test] fn test_nav() { let (mut m, _) = setup(); m.handle_key(key(KeyCode::Char('j'))); assert_eq!(m.selected_index(), 1); }
     #[test] fn test_create() { let (mut m, _) = setup(); m.handle_key(key(KeyCode::Char('c'))); assert_eq!(*m.view_state(), ViewState::Create); assert!(m.form.is_some()); }
     #[test] fn test_delete_confirm() { let (mut m, _) = setup(); m.handle_key(key(KeyCode::Char('d'))); assert!(m.confirm.is_active()); }
@@ -275,7 +276,7 @@ mod tests {
     }
     #[test] fn test_refresh() { let (mut m, _) = setup(); assert!(matches!(m.handle_key(key(KeyCode::Char('r'))), Some(Action::FetchUsers))); }
     #[test] fn test_event_loaded() {
-        let (tx, _) = mpsc::unbounded_channel(); let mut m = UserModule::new(tx);
+        let (tx, _) = test_action_channel(); let mut m = UserModule::new(tx);
         m.handle_event(&AppEvent::UsersLoaded(vec![make_user("u1", "t")]));
         assert_eq!(m.users().len(), 1);
     }

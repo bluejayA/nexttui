@@ -48,7 +48,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Keep _event_tx alive so event_rx doesn't immediately return None in demo mode
     let (mut app, event_rx, _keep_alive_tx) = if demo_mode {
         let (app, _action_rx) = create_demo_app()?;
-        let (event_tx, event_rx) = mpsc::unbounded_channel::<AppEvent>();
+        let (event_tx, event_rx) =
+            mpsc::unbounded_channel::<nexttui::context::VersionedEvent<AppEvent>>();
         (app, event_rx, Some(event_tx))
     } else {
         let mut config = match Config::load() {
@@ -73,8 +74,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tracing::warn!(warning = %w, "config warning");
         }
 
-        let (action_tx, action_rx) = mpsc::unbounded_channel();
-        let (event_tx, event_rx) = mpsc::unbounded_channel::<AppEvent>();
+        let current_epoch = Arc::new(nexttui::context::ContextEpoch::new());
+        let (action_raw_tx, action_rx) = mpsc::unbounded_channel();
+        let action_tx = nexttui::context::ActionSender::new(action_raw_tx, current_epoch.clone());
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
 
         // Build auth credential from config
         let cloud = config.active_cloud_config();

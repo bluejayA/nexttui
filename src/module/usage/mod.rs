@@ -4,9 +4,9 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Cell, Paragraph, Row as TuiRow, Table};
 use ratatui::Frame;
-use tokio::sync::mpsc;
 
 use crate::action::Action;
+use crate::context::ActionSender;
 use crate::component::Component;
 use crate::event::AppEvent;
 use crate::models::keystone::Project;
@@ -94,11 +94,11 @@ pub struct UsageModule {
     mounted: bool,
     error_message: Option<String>,
     scroll_offset: usize,
-    action_tx: mpsc::UnboundedSender<Action>,
+    action_tx: ActionSender,
 }
 
 impl UsageModule {
-    pub fn new(action_tx: mpsc::UnboundedSender<Action>) -> Self {
+    pub fn new(action_tx: ActionSender) -> Self {
         Self {
             tenant_usages: Vec::new(),
             hypervisors: Vec::new(),
@@ -600,12 +600,13 @@ impl Component for UsageModule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::{ActionReceiver, test_action_channel};
     use chrono::Datelike;
     use crate::port::types::ServerUsageEntry;
     use crossterm::event::KeyEvent;
 
-    fn make_tx() -> mpsc::UnboundedSender<Action> {
-        let (tx, _rx) = mpsc::unbounded_channel();
+    fn make_tx() -> ActionSender {
+        let (tx, _rx) = test_action_channel();
         tx
     }
 
@@ -616,7 +617,7 @@ mod tests {
     /// Creates a module that has already consumed the mount key,
     /// so subsequent handle_key calls behave normally.
     fn make_mounted_module() -> UsageModule {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = test_action_channel();
         let mut m = UsageModule::new(tx);
         // Trigger mount with a dummy key (consumed, returns None)
         m.handle_key(key(KeyCode::Char('x')));
@@ -844,7 +845,7 @@ mod tests {
 
     #[test]
     fn test_key_bracket_changes_date_range() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = test_action_channel();
         let mut m = UsageModule::new(tx);
         assert_eq!(m.date_range(), DateRangePreset::ThisMonth);
 
@@ -869,7 +870,7 @@ mod tests {
 
     #[test]
     fn test_key_bracket_right_changes_date_range() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = test_action_channel();
         let mut m = UsageModule::new(tx);
 
         // Mount
@@ -912,7 +913,7 @@ mod tests {
 
     #[test]
     fn test_key_r_refreshes() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = test_action_channel();
         let mut m = UsageModule::new(tx);
 
         let result = m.handle_key(key(KeyCode::Char('r')));
@@ -1057,7 +1058,7 @@ mod tests {
 
     #[test]
     fn test_first_key_triggers_mount() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = test_action_channel();
         let mut m = UsageModule::new(tx);
         assert!(!m.mounted);
 
@@ -1079,7 +1080,7 @@ mod tests {
 
     #[test]
     fn test_second_key_does_not_remount() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = test_action_channel();
         let mut m = UsageModule::new(tx);
 
         m.handle_key(key(KeyCode::Char('j')));

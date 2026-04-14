@@ -5,9 +5,9 @@ use std::collections::HashSet;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
 use ratatui::Frame;
-use tokio::sync::mpsc;
 
 use crate::action::Action;
+use crate::context::ActionSender;
 use crate::component::Component;
 use crate::event::AppEvent;
 use crate::infra::transition_guard::is_volume_in_transition;
@@ -36,11 +36,11 @@ pub struct VolumeModule {
     cached_servers: Vec<Server>,
     select_popup: Option<SelectPopup>,
     keymap_hints_shown: HashSet<char>,
-    action_tx: mpsc::UnboundedSender<Action>,
+    action_tx: ActionSender,
 }
 
 impl VolumeModule {
-    pub fn new(action_tx: mpsc::UnboundedSender<Action>) -> Self {
+    pub fn new(action_tx: ActionSender) -> Self {
         Self {
             view_state: ViewState::List,
             volumes: Vec::new(),
@@ -670,6 +670,7 @@ impl Component for VolumeModule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::{ActionReceiver, test_action_channel};
     use crate::models::cinder::VolumeAttachment;
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -731,8 +732,8 @@ mod tests {
         }
     }
 
-    fn setup() -> (VolumeModule, mpsc::UnboundedReceiver<Action>) {
-        let (tx, rx) = mpsc::unbounded_channel();
+    fn setup() -> (VolumeModule, ActionReceiver) {
+        let (tx, rx) = test_action_channel();
         let mut module = VolumeModule::new(tx);
         let volumes = vec![
             make_volume("vol-1", "data", "available"),
@@ -743,7 +744,7 @@ mod tests {
         (module, rx)
     }
 
-    fn setup_with_servers() -> (VolumeModule, mpsc::UnboundedReceiver<Action>) {
+    fn setup_with_servers() -> (VolumeModule, ActionReceiver) {
         let (mut module, rx) = setup();
         let servers = vec![
             make_server("srv-1", "web-01", "ACTIVE"),
@@ -756,7 +757,7 @@ mod tests {
 
     #[test]
     fn test_initial_state_is_list() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let module = VolumeModule::new(tx);
         assert_eq!(*module.view_state(), ViewState::List);
         assert!(module.volumes().is_empty());
@@ -848,7 +849,7 @@ mod tests {
 
     #[test]
     fn test_handle_event_volumes_loaded() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = VolumeModule::new(tx);
         let volumes = vec![make_volume("vol-1", "test", "available")];
         module.handle_event(&AppEvent::VolumesLoaded(volumes));
@@ -990,7 +991,7 @@ mod tests {
 
     #[test]
     fn test_attach_ignores_transitional_volume() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = VolumeModule::new(tx);
         let volumes = vec![make_volume("vol-1", "data", "attaching")];
         module.handle_event(&AppEvent::VolumesLoaded(volumes));
@@ -1043,7 +1044,7 @@ mod tests {
 
     #[test]
     fn test_detach_single_attachment_opens_confirm() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = VolumeModule::new(tx);
         let vol = make_attached_volume("vol-1", "data", "srv-1", "/dev/vdb", "att-1");
         module.handle_event(&AppEvent::VolumesLoaded(vec![vol]));
@@ -1060,7 +1061,7 @@ mod tests {
 
     #[test]
     fn test_detach_multiple_attachments_opens_popup() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = VolumeModule::new(tx);
         let mut vol = make_volume("vol-1", "data", "in-use");
         vol.attachments = vec![
@@ -1089,7 +1090,7 @@ mod tests {
 
     #[test]
     fn test_detach_ignores_transitional_volume() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = VolumeModule::new(tx);
         let mut vol = make_volume("vol-1", "data", "detaching");
         vol.attachments = vec![VolumeAttachment {
@@ -1105,7 +1106,7 @@ mod tests {
 
     #[test]
     fn test_detach_boot_volume_non_admin_rejected() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = test_action_channel();
         let mut module = VolumeModule::new(tx);
         let mut vol = make_attached_volume("vol-1", "boot-vol", "srv-1", "/dev/vda", "att-1");
         vol.bootable = "true".into();
@@ -1123,7 +1124,7 @@ mod tests {
 
     #[test]
     fn test_detach_boot_volume_admin_type_to_confirm() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = VolumeModule::new(tx);
         module.is_admin = true;
         let mut vol = make_attached_volume("vol-1", "boot-vol", "srv-1", "/dev/vda", "att-1");
@@ -1145,7 +1146,7 @@ mod tests {
 
     #[test]
     fn test_detach_confirm_dispatches_detach_action() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = VolumeModule::new(tx);
         let vol = make_attached_volume("vol-1", "data", "srv-1", "/dev/vdb", "att-1");
         module.handle_event(&AppEvent::VolumesLoaded(vec![vol]));
@@ -1164,7 +1165,7 @@ mod tests {
 
     #[test]
     fn test_force_detach_admin_only() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = VolumeModule::new(tx);
         let vol = make_attached_volume("vol-1", "data", "srv-1", "/dev/vdb", "att-1");
         module.handle_event(&AppEvent::VolumesLoaded(vec![vol]));
@@ -1176,7 +1177,7 @@ mod tests {
 
     #[test]
     fn test_force_detach_admin_opens_type_to_confirm() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = VolumeModule::new(tx);
         module.is_admin = true;
         let vol = make_attached_volume("vol-1", "data", "srv-1", "/dev/vdb", "att-1");
@@ -1188,7 +1189,7 @@ mod tests {
 
     #[test]
     fn test_force_detach_confirm_dispatches_action() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = VolumeModule::new(tx);
         module.is_admin = true;
         let vol = make_attached_volume("vol-1", "data", "srv-1", "/dev/vdb", "att-1");
@@ -1204,7 +1205,7 @@ mod tests {
 
     #[test]
     fn test_force_detach_error_volume() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = VolumeModule::new(tx);
         module.is_admin = true;
         let vol = make_volume("vol-1", "data", "error");
@@ -1216,7 +1217,7 @@ mod tests {
 
     #[test]
     fn test_force_detach_ignores_available_volume() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = VolumeModule::new(tx);
         module.is_admin = true;
         let vol = make_volume("vol-1", "data", "available");
@@ -1228,7 +1229,7 @@ mod tests {
 
     #[test]
     fn test_force_detach_ignores_transitional_volume() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = VolumeModule::new(tx);
         module.is_admin = true;
         let vol = make_volume("vol-1", "data", "detaching");
@@ -1242,7 +1243,7 @@ mod tests {
 
     #[test]
     fn test_state_reset_admin_only() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = VolumeModule::new(tx);
         let vol = make_volume("vol-1", "data", "error");
         module.handle_event(&AppEvent::VolumesLoaded(vec![vol]));
@@ -1254,7 +1255,7 @@ mod tests {
 
     #[test]
     fn test_state_reset_admin_opens_type_to_confirm() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = VolumeModule::new(tx);
         module.is_admin = true;
         let vol = make_volume("vol-1", "data", "error");
@@ -1266,7 +1267,7 @@ mod tests {
 
     #[test]
     fn test_state_reset_confirm_dispatches_action() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = VolumeModule::new(tx);
         module.is_admin = true;
         let vol = make_volume("vol-1", "data", "error");
@@ -1282,7 +1283,7 @@ mod tests {
 
     #[test]
     fn test_state_reset_ignores_available() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = VolumeModule::new(tx);
         module.is_admin = true;
         let vol = make_volume("vol-1", "data", "available");
@@ -1294,7 +1295,7 @@ mod tests {
 
     #[test]
     fn test_state_reset_ignores_in_use() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = VolumeModule::new(tx);
         module.is_admin = true;
         let vol = make_volume("vol-1", "data", "in-use");
@@ -1306,7 +1307,7 @@ mod tests {
 
     #[test]
     fn test_state_reset_ignores_transitional() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = VolumeModule::new(tx);
         module.is_admin = true;
         let vol = make_volume("vol-1", "data", "attaching");
@@ -1376,7 +1377,7 @@ mod tests {
 
     #[test]
     fn test_set_admin() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = VolumeModule::new(tx);
         assert!(!module.is_admin);
         module.set_admin(true);
@@ -1387,7 +1388,7 @@ mod tests {
 
     #[test]
     fn test_attach_full_cycle() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = VolumeModule::new(tx);
         let volumes = vec![make_volume("vol-1", "data", "available")];
         module.handle_event(&AppEvent::VolumesLoaded(volumes));
@@ -1409,7 +1410,7 @@ mod tests {
 
     #[test]
     fn test_detach_popup_select_opens_confirm() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = VolumeModule::new(tx);
         let mut vol = make_volume("vol-1", "data", "in-use");
         vol.attachments = vec![
