@@ -1,0 +1,23 @@
+# .git-blame-ignore-revs
+#
+# Commits listed here are skipped by `git blame` because they are
+# purely mechanical (reformat, mass codemod) and would otherwise hide
+# the real author of each line under a rustfmt/clippy-fix signature.
+#
+# - GitHub's blame view reads this file automatically (no config needed).
+# - Local CLI `git blame` respects it after:
+#       git config --local blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# Policy (see docs/git-blame-hygiene-in-ai-devflow.md):
+#   - Only mechanical transformations go here: cargo fmt, clippy --fix,
+#     codemod, mass rename, dependency bumps.
+#   - Every entry uses the MERGE COMMIT SHA on `main` (this repo squash-
+#     merges, so feature-branch SHAs do not exist on main).
+#   - Each entry carries a 1-line comment with the PR number and the
+#     tracking BL, so future readers understand why it is skipped.
+
+# BL-P2-063 (PR #70): cargo clippy --fix (19 files) + cargo fmt --all
+# (83 files) bundled into the canonical clippy gate + CI bootstrap
+# commit. ~5.9k lines of mechanical diff, zero intentional code change
+# outside of 4 targeted manual fixes and two `#[allow]` annotations.
+912830519a12c1c525556f1501621a41c4ddc31e
