@@ -163,11 +163,7 @@ mod tests {
 
     #[test]
     fn test_evac_task_tracks_failures() {
-        let mut task = EvacTask::new(
-            vec!["s1".into(), "s2".into()],
-            EvacuateParams::default(),
-            2,
-        );
+        let mut task = EvacTask::new(vec!["s1".into(), "s2".into()], EvacuateParams::default(), 2);
         task.start();
         task.poll_next();
 

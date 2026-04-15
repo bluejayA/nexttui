@@ -4,13 +4,11 @@ use crate::ui::form::FieldDef;
 use crate::ui::resource_list::{ColumnDef, ColumnWidth, Row, RowStyleHint};
 
 pub fn sg_columns(show_tenant: bool) -> Vec<ColumnDef> {
-    let mut cols = vec![
-        ColumnDef {
-            name: "Name".into(),
-            width: ColumnWidth::Percent(30),
-            alignment: ratatui::layout::Alignment::Left,
-        },
-    ];
+    let mut cols = vec![ColumnDef {
+        name: "Name".into(),
+        width: ColumnWidth::Percent(30),
+        alignment: ratatui::layout::Alignment::Left,
+    }];
     if show_tenant {
         cols.push(ColumnDef {
             name: "Project".into(),

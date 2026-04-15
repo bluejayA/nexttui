@@ -3,12 +3,12 @@ pub mod view_model;
 use std::collections::HashSet;
 
 use crossterm::event::{KeyCode, KeyEvent};
-use ratatui::layout::Rect;
 use ratatui::Frame;
+use ratatui::layout::Rect;
 
 use crate::action::Action;
-use crate::context::ActionSender;
 use crate::component::Component;
+use crate::context::ActionSender;
 use crate::event::AppEvent;
 use crate::models::neutron::{FloatingIp, Network, Port};
 use crate::models::nova::Server;
@@ -18,7 +18,7 @@ use crate::ui::form::{FormAction, FormWidget, SelectOption};
 use crate::ui::resource_list::{ResourceList, Row};
 use crate::ui::select_popup::{ItemHint, SelectItem, SelectPopup, SelectResult};
 
-use self::view_model::{fip_columns, fip_create_defs, fip_to_row, FipRowContext};
+use self::view_model::{FipRowContext, fip_columns, fip_create_defs, fip_to_row};
 
 pub struct FloatingIpModule {
     view_state: ViewState,
@@ -94,7 +94,10 @@ impl FloatingIpModule {
             cached_servers: &self.cached_servers,
             cached_ports: &self.cached_ports,
         };
-        self.floating_ips.iter().map(|f| fip_to_row(f, &ctx)).collect()
+        self.floating_ips
+            .iter()
+            .map(|f| fip_to_row(f, &ctx))
+            .collect()
     }
 
     fn resolve_action(pending: PendingAction) -> Option<Action> {
@@ -140,7 +143,11 @@ impl FloatingIpModule {
             .collect()
     }
 
-    fn fip_associate_detail_lines(fip: &FloatingIp, server_name: &str, port_label: &str) -> Vec<String> {
+    fn fip_associate_detail_lines(
+        fip: &FloatingIp,
+        server_name: &str,
+        port_label: &str,
+    ) -> Vec<String> {
         vec![
             format!("  Floating IP: {}", fip.floating_ip_address),
             format!("  Server: {server_name}"),
@@ -162,7 +169,9 @@ impl FloatingIpModule {
         self.cached_ports = ports;
         self.loading_ports = false;
 
-        let Some(fip_id) = self.pending_fip_id.clone() else { return };
+        let Some(fip_id) = self.pending_fip_id.clone() else {
+            return;
+        };
 
         if self.cached_ports.is_empty() {
             let _ = self.action_tx.send(Action::ShowToast {
@@ -181,14 +190,19 @@ impl FloatingIpModule {
                 return;
             };
             // Find server name from cached_servers by port's device_id
-            let server_name = port.device_id.as_deref()
+            let server_name = port
+                .device_id
+                .as_deref()
                 .and_then(|did| self.cached_servers.iter().find(|s| s.id == did))
                 .map(|s| s.name.as_str())
                 .unwrap_or("unknown");
             let details = Self::fip_associate_detail_lines(fip, server_name, &port_label);
             self.confirm.open(
                 ConfirmDialog::yes_no_with_details(
-                    format!("Associate {} to port {}?", fip.floating_ip_address, port_label),
+                    format!(
+                        "Associate {} to port {}?",
+                        fip.floating_ip_address, port_label
+                    ),
                     details,
                 ),
                 PendingAction::AssociateFloatingIp {
@@ -206,20 +220,29 @@ impl FloatingIpModule {
     }
 
     fn handle_port_selected(&mut self, port_id: String) {
-        let Some(fip_id) = self.pending_fip_id.take() else { return };
+        let Some(fip_id) = self.pending_fip_id.take() else {
+            return;
+        };
         let port = self.cached_ports.iter().find(|p| p.id == port_id);
         let fip = self.floating_ips.iter().find(|f| f.id == fip_id);
-        let (Some(port), Some(fip)) = (port, fip) else { return };
+        let (Some(port), Some(fip)) = (port, fip) else {
+            return;
+        };
 
         let port_label = port.display_label(&self.cached_networks);
-        let server_name = port.device_id.as_deref()
+        let server_name = port
+            .device_id
+            .as_deref()
             .and_then(|did| self.cached_servers.iter().find(|s| s.id == did))
             .map(|s| s.name.as_str())
             .unwrap_or("unknown");
         let details = Self::fip_associate_detail_lines(fip, server_name, &port_label);
         self.confirm.open(
             ConfirmDialog::yes_no_with_details(
-                format!("Associate {} to port {}?", fip.floating_ip_address, port_label),
+                format!(
+                    "Associate {} to port {}?",
+                    fip.floating_ip_address, port_label
+                ),
                 details,
             ),
             PendingAction::AssociateFloatingIp {
@@ -371,8 +394,12 @@ impl FloatingIpModule {
 }
 
 impl Component for FloatingIpModule {
-    fn refresh_action(&self) -> Option<Action> { Some(Action::FetchFloatingIps) }
-    fn is_modal(&self) -> bool { self.confirm.is_active() || self.form.is_some() || self.select_popup.is_some() }
+    fn refresh_action(&self) -> Option<Action> {
+        Some(Action::FetchFloatingIps)
+    }
+    fn is_modal(&self) -> bool {
+        self.confirm.is_active() || self.form.is_some() || self.select_popup.is_some()
+    }
 
     fn set_admin(&mut self, is_admin: bool) {
         self.is_admin = is_admin;
@@ -484,7 +511,9 @@ impl Component for FloatingIpModule {
         match &self.view_state {
             ViewState::List => None,
             ViewState::Detail(id) => {
-                let addr = self.floating_ips.iter()
+                let addr = self
+                    .floating_ips
+                    .iter()
                     .find(|r| r.id == *id)
                     .map(|r| r.floating_ip_address.as_str())
                     .unwrap_or("...");
@@ -738,7 +767,10 @@ mod tests {
     #[test]
     fn test_help_hint_list() {
         let (module, _rx) = setup();
-        assert_eq!(module.help_hint(), "c:Create a:Associate x:Disassociate D:Delete r:Refresh");
+        assert_eq!(
+            module.help_hint(),
+            "c:Create a:Associate x:Disassociate D:Delete r:Refresh"
+        );
     }
 
     #[test]
@@ -784,9 +816,9 @@ mod tests {
         let mut module = FloatingIpModule::new(tx);
         let fips = vec![make_fip_associated("fip-1", "203.0.113.10", "port-1")];
         module.handle_event(&AppEvent::FloatingIpsLoaded(fips));
-        module.handle_event(&AppEvent::ServersLoaded(vec![
-            make_server("srv-1", "web-01", "ACTIVE"),
-        ]));
+        module.handle_event(&AppEvent::ServersLoaded(vec![make_server(
+            "srv-1", "web-01", "ACTIVE",
+        )]));
         module.handle_key(key(KeyCode::Char('a')));
         assert!(module.select_popup.is_none());
     }
@@ -808,7 +840,7 @@ mod tests {
         let servers = vec![
             make_server("srv-1", "web-01", "ACTIVE"),
             make_server("srv-2", "web-02", "SHUTOFF"),
-            make_server("srv-3", "db-01", "BUILD"),  // should be filtered out
+            make_server("srv-3", "db-01", "BUILD"), // should be filtered out
             make_server("srv-4", "db-02", "PAUSED"),
         ];
         module.handle_event(&AppEvent::ServersLoaded(servers));
@@ -940,7 +972,9 @@ mod tests {
 
         assert!(module.confirm.is_active());
         let action = module.handle_key(key(KeyCode::Char('y')));
-        assert!(matches!(action, Some(Action::AssociateFloatingIp { fip_id, port_id }) if fip_id == "fip-1" && port_id == "port-1"));
+        assert!(
+            matches!(action, Some(Action::AssociateFloatingIp { fip_id, port_id }) if fip_id == "fip-1" && port_id == "port-1")
+        );
     }
 
     // -- Disassociate tests ----------------------------------------------------
@@ -976,7 +1010,9 @@ mod tests {
             module.handle_key(key(KeyCode::Char(c)));
         }
         let action = module.handle_key(key(KeyCode::Enter));
-        assert!(matches!(action, Some(Action::DisassociateFloatingIp { fip_id }) if fip_id == "fip-1"));
+        assert!(
+            matches!(action, Some(Action::DisassociateFloatingIp { fip_id }) if fip_id == "fip-1")
+        );
     }
 
     // -- Event handling tests --------------------------------------------------
@@ -1031,7 +1067,9 @@ mod tests {
             fip_id: "fip-1".into(),
             port_id: "port-1".into(),
         });
-        assert!(matches!(action, Some(Action::AssociateFloatingIp { fip_id, port_id }) if fip_id == "fip-1" && port_id == "port-1"));
+        assert!(
+            matches!(action, Some(Action::AssociateFloatingIp { fip_id, port_id }) if fip_id == "fip-1" && port_id == "port-1")
+        );
     }
 
     #[test]
@@ -1039,7 +1077,9 @@ mod tests {
         let action = FloatingIpModule::resolve_action(PendingAction::DisassociateFloatingIp {
             fip_id: "fip-1".into(),
         });
-        assert!(matches!(action, Some(Action::DisassociateFloatingIp { fip_id }) if fip_id == "fip-1"));
+        assert!(
+            matches!(action, Some(Action::DisassociateFloatingIp { fip_id }) if fip_id == "fip-1")
+        );
     }
 
     // -- is_modal tests --------------------------------------------------------
@@ -1101,7 +1141,8 @@ mod tests {
     #[test]
     fn test_fip_associate_detail_lines() {
         let fip = make_fip("fip-1", "203.0.113.10", "ACTIVE");
-        let lines = FloatingIpModule::fip_associate_detail_lines(&fip, "web-01", "10.0.0.5 on private");
+        let lines =
+            FloatingIpModule::fip_associate_detail_lines(&fip, "web-01", "10.0.0.5 on private");
         assert!(lines.iter().any(|l| l.contains("203.0.113.10")));
         assert!(lines.iter().any(|l| l.contains("web-01")));
         assert!(lines.iter().any(|l| l.contains("10.0.0.5 on private")));

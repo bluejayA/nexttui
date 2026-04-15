@@ -2,7 +2,9 @@ use async_trait::async_trait;
 
 use super::error::ApiResult;
 use super::types::*;
-use crate::models::neutron::{FloatingIp, Network, NetworkAgent, Port, SecurityGroup, SecurityGroupRule};
+use crate::models::neutron::{
+    FloatingIp, Network, NetworkAgent, Port, SecurityGroup, SecurityGroupRule,
+};
 
 #[async_trait]
 pub trait NeutronPort: Send + Sync {

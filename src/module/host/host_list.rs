@@ -1,8 +1,8 @@
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
-use ratatui::Frame;
 
 use crate::models::nova::Hypervisor;
 use crate::ui::theme::Icons;
@@ -13,7 +13,9 @@ pub struct HostList {
 }
 
 impl Default for HostList {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl HostList {
@@ -114,14 +116,25 @@ impl HostList {
 
             // Line 2: resource usage summary
             if lines.len() < inner.height as usize {
-                let cpu_pct = if h.vcpus > 0 { h.vcpus_used * 100 / h.vcpus } else { 0 };
-                let mem_pct = if h.memory_mb > 0 { h.memory_mb_used * 100 / h.memory_mb } else { 0 };
+                let cpu_pct = if h.vcpus > 0 {
+                    h.vcpus_used * 100 / h.vcpus
+                } else {
+                    0
+                };
+                let mem_pct = if h.memory_mb > 0 {
+                    h.memory_mb_used * 100 / h.memory_mb
+                } else {
+                    0
+                };
                 lines.push(Line::from(vec![
                     Span::raw("  "),
                     Span::styled("CPU", Style::default().fg(Color::DarkGray)),
                     Span::raw(format!(" {}/{}({cpu_pct}%) ", h.vcpus_used, h.vcpus)),
                     Span::styled("MEM", Style::default().fg(Color::DarkGray)),
-                    Span::raw(format!(" {}/{}MB({mem_pct}%)", h.memory_mb_used, h.memory_mb)),
+                    Span::raw(format!(
+                        " {}/{}MB({mem_pct}%)",
+                        h.memory_mb_used, h.memory_mb
+                    )),
                 ]));
             }
 
@@ -162,7 +175,13 @@ fn host_state_style(state: &str, status: &str) -> Style {
 mod tests {
     use super::*;
 
-    fn make_hypervisor(hostname: &str, vcpus: u32, vcpus_used: u32, state: &str, status: &str) -> Hypervisor {
+    fn make_hypervisor(
+        hostname: &str,
+        vcpus: u32,
+        vcpus_used: u32,
+        state: &str,
+        status: &str,
+    ) -> Hypervisor {
         Hypervisor {
             id: "1".into(),
             hypervisor_hostname: hostname.into(),
@@ -213,9 +232,7 @@ mod tests {
         let mut list = HostList::new();
         assert!(list.selected_hypervisor().is_none());
 
-        list.set_hypervisors(vec![
-            make_hypervisor("compute-01", 16, 8, "up", "enabled"),
-        ]);
+        list.set_hypervisors(vec![make_hypervisor("compute-01", 16, 8, "up", "enabled")]);
         let h = list.selected_hypervisor().unwrap();
         assert_eq!(h.hypervisor_hostname, "compute-01");
     }
@@ -233,9 +250,7 @@ mod tests {
         assert_eq!(list.selected_index(), 2);
 
         // Shrink list — selection should clamp
-        list.set_hypervisors(vec![
-            make_hypervisor("a", 1, 0, "up", "enabled"),
-        ]);
+        list.set_hypervisors(vec![make_hypervisor("a", 1, 0, "up", "enabled")]);
         assert_eq!(list.selected_index(), 0);
     }
 

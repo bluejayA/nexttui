@@ -72,14 +72,12 @@ pub(crate) fn extract_next_marker(links: &[Link]) -> Option<String> {
 /// Extract `marker=` value from a URL query string.
 /// Shared by all marker extraction variants (Link array, Glance next URL, Keystone links).
 pub(crate) fn extract_marker_from_url(url: &str) -> Option<String> {
-    url.split('?')
-        .nth(1)
-        .and_then(|query| {
-            query
-                .split('&')
-                .find(|p| p.starts_with("marker="))
-                .map(|p| p.trim_start_matches("marker=").to_string())
-        })
+    url.split('?').nth(1).and_then(|query| {
+        query
+            .split('&')
+            .find(|p| p.starts_with("marker="))
+            .map(|p| p.trim_start_matches("marker=").to_string())
+    })
 }
 
 /// Generic paginated list combinator.

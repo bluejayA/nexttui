@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
-use ratatui::Frame;
 
 use crate::models::nova::Server;
 use crate::ui::theme::{Icons, Theme};
@@ -64,7 +64,9 @@ pub enum EvacInlineStatus {
 }
 
 impl Default for InstanceList {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl InstanceList {
@@ -228,7 +230,11 @@ impl InstanceList {
             }
             let server = &self.servers[idx];
             let is_selected = vi == self.selected;
-            let checkbox = if self.is_checked(&server.id) { "☑" } else { "☐" };
+            let checkbox = if self.is_checked(&server.id) {
+                "☑"
+            } else {
+                "☐"
+            };
             let icon = Icons::status_icon(&server.status);
 
             let name_style = if is_selected {
@@ -267,7 +273,9 @@ fn status_color(status: &str) -> Style {
     match status {
         "ACTIVE" => Style::default().fg(Color::Green),
         "ERROR" => Style::default().fg(Color::Red),
-        "BUILD" | "REBUILD" | "RESIZE" | "REBOOT" | "MIGRATING" | "VERIFY_RESIZE" => Style::default().fg(Color::Yellow),
+        "BUILD" | "REBUILD" | "RESIZE" | "REBOOT" | "MIGRATING" | "VERIFY_RESIZE" => {
+            Style::default().fg(Color::Yellow)
+        }
         "SHUTOFF" | "STOPPED" => Style::default().fg(Color::DarkGray),
         _ => Style::default(),
     }
@@ -385,7 +393,10 @@ mod tests {
         list.set_servers(vec![make_server("s1", "web-01", "ACTIVE")]);
 
         list.set_evac_status("s1", EvacInlineStatus::InFlight);
-        assert_eq!(list.evac_status.get("s1"), Some(&EvacInlineStatus::InFlight));
+        assert_eq!(
+            list.evac_status.get("s1"),
+            Some(&EvacInlineStatus::InFlight)
+        );
 
         list.set_evac_status("s1", EvacInlineStatus::Success);
         assert_eq!(list.evac_status.get("s1"), Some(&EvacInlineStatus::Success));

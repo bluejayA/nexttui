@@ -1,14 +1,14 @@
 use crossterm::event::{KeyCode, KeyEvent};
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
-use ratatui::Frame;
 
+use super::theme::Theme;
 use crate::action::Action;
 use crate::models::common::Route;
 use crate::ui::resource_list::RowStyleHint;
-use super::theme::Theme;
 
 pub struct DetailData {
     pub title: String,
@@ -116,19 +116,16 @@ impl DetailView {
             }
             KeyCode::Tab => {
                 if !self.links.is_empty() {
-                    self.focused_link_index =
-                        (self.focused_link_index + 1) % self.links.len();
+                    self.focused_link_index = (self.focused_link_index + 1) % self.links.len();
                 }
                 None
             }
-            KeyCode::Enter => {
-                self.links.get(self.focused_link_index).map(|(route, id)| {
-                    Action::NavigateToResource {
-                        route: *route,
-                        id: id.clone(),
-                    }
-                })
-            }
+            KeyCode::Enter => self.links.get(self.focused_link_index).map(|(route, id)| {
+                Action::NavigateToResource {
+                    route: *route,
+                    id: id.clone(),
+                }
+            }),
             KeyCode::Esc => Some(Action::Back),
             _ => None,
         }
@@ -136,11 +133,8 @@ impl DetailView {
 
     pub fn render(&self, frame: &mut Frame, area: Rect) {
         if self.loading {
-            let widget = Paragraph::new(Line::from(Span::styled(
-                "Loading...",
-                Theme::active(),
-            )))
-            .alignment(ratatui::layout::Alignment::Center);
+            let widget = Paragraph::new(Line::from(Span::styled("Loading...", Theme::active())))
+                .alignment(ratatui::layout::Alignment::Center);
             frame.render_widget(widget, area);
             return;
         }
@@ -154,10 +148,7 @@ impl DetailView {
             }
         };
 
-        let mut lines = vec![Line::from(Span::styled(
-            &data.title,
-            Theme::highlight(),
-        ))];
+        let mut lines = vec![Line::from(Span::styled(&data.title, Theme::highlight()))];
         lines.push(Line::from(""));
 
         let mut link_counter = 0usize;
@@ -222,7 +213,13 @@ impl DetailView {
                         let header: String = columns
                             .iter()
                             .enumerate()
-                            .map(|(i, c)| format!("{:<w$}", c, w = col_widths.get(i).copied().unwrap_or(c.len())))
+                            .map(|(i, c)| {
+                                format!(
+                                    "{:<w$}",
+                                    c,
+                                    w = col_widths.get(i).copied().unwrap_or(c.len())
+                                )
+                            })
                             .collect::<Vec<_>>()
                             .join(" | ");
                         lines.push(Line::from(Span::styled(
@@ -255,10 +252,7 @@ impl DetailView {
                                 format!("  {:>width$}: ", key, width = key_width),
                                 Theme::focus_border(),
                             ),
-                            Span::styled(
-                                format!("[{display}]"),
-                                link_style,
-                            ),
+                            Span::styled(format!("[{display}]"), link_style),
                         ]));
                         link_counter += 1;
                     }
@@ -274,8 +268,7 @@ impl DetailView {
         // Scrollbar — only show when content exceeds visible area
         let visible = area.height as usize;
         if total_lines > visible {
-            let mut scrollbar_state =
-                ScrollbarState::new(total_lines).position(self.scroll_offset);
+            let mut scrollbar_state = ScrollbarState::new(total_lines).position(self.scroll_offset);
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight);
             frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
         }

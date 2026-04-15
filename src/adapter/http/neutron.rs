@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use super::{Link, append_pagination_parts, encode_param, extract_next_marker, paginated_list};
 use crate::adapter::http::base::BaseHttpClient;
-use crate::models::neutron::{FloatingIp, Network, NetworkAgent, Port, SecurityGroup, SecurityGroupRule};
+use crate::models::neutron::{
+    FloatingIp, Network, NetworkAgent, Port, SecurityGroup, SecurityGroupRule,
+};
 use crate::port::auth::AuthProvider;
 use crate::port::error::{ApiError, ApiResult};
 use crate::port::neutron::NeutronPort;
@@ -217,13 +219,19 @@ fn build_network_query(_filter: &NetworkListFilter, pagination: &PaginationParam
     parts.join("&")
 }
 
-fn build_security_group_query(_filter: &SecurityGroupListFilter, pagination: &PaginationParams) -> String {
+fn build_security_group_query(
+    _filter: &SecurityGroupListFilter,
+    pagination: &PaginationParams,
+) -> String {
     let mut parts = Vec::new();
     append_pagination_parts(&mut parts, pagination);
     parts.join("&")
 }
 
-fn build_floating_ip_query(_filter: &FloatingIpListFilter, pagination: &PaginationParams) -> String {
+fn build_floating_ip_query(
+    _filter: &FloatingIpListFilter,
+    pagination: &PaginationParams,
+) -> String {
     let mut parts = Vec::new();
     append_pagination_parts(&mut parts, pagination);
     parts.join("&")
@@ -241,10 +249,16 @@ impl NeutronPort for NeutronHttpAdapter {
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<Network>> {
         let query = build_network_query(filter, pagination);
-        paginated_list(&self.base, "/v2.0/networks", &query, |resp: NeutronNetworksResponse| {
-            let next = resp.networks_links.as_deref().and_then(extract_next_marker);
-            (resp.networks, next)
-        }).await
+        paginated_list(
+            &self.base,
+            "/v2.0/networks",
+            &query,
+            |resp: NeutronNetworksResponse| {
+                let next = resp.networks_links.as_deref().and_then(extract_next_marker);
+                (resp.networks, next)
+            },
+        )
+        .await
     }
 
     async fn get_network(&self, network_id: &str) -> ApiResult<Network> {
@@ -322,10 +336,19 @@ impl NeutronPort for NeutronHttpAdapter {
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<SecurityGroup>> {
         let query = build_security_group_query(filter, pagination);
-        paginated_list(&self.base, "/v2.0/security-groups", &query, |resp: NeutronSecurityGroupsResponse| {
-            let next = resp.security_groups_links.as_deref().and_then(extract_next_marker);
-            (resp.security_groups, next)
-        }).await
+        paginated_list(
+            &self.base,
+            "/v2.0/security-groups",
+            &query,
+            |resp: NeutronSecurityGroupsResponse| {
+                let next = resp
+                    .security_groups_links
+                    .as_deref()
+                    .and_then(extract_next_marker);
+                (resp.security_groups, next)
+            },
+        )
+        .await
     }
 
     async fn get_security_group(&self, sg_id: &str) -> ApiResult<SecurityGroup> {
@@ -347,11 +370,7 @@ impl NeutronPort for NeutronHttpAdapter {
                 description: params.description.clone(),
             },
         };
-        let req = self
-            .base
-            .post("/v2.0/security-groups")
-            .await?
-            .json(&body);
+        let req = self.base.post("/v2.0/security-groups").await?.json(&body);
         let resp: NeutronSecurityGroupWrapper = self.base.send_json(req).await?;
         Ok(resp.security_group)
     }
@@ -430,10 +449,19 @@ impl NeutronPort for NeutronHttpAdapter {
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<FloatingIp>> {
         let query = build_floating_ip_query(filter, pagination);
-        paginated_list(&self.base, "/v2.0/floatingips", &query, |resp: NeutronFloatingIpsResponse| {
-            let next = resp.floatingips_links.as_deref().and_then(extract_next_marker);
-            (resp.floatingips, next)
-        }).await
+        paginated_list(
+            &self.base,
+            "/v2.0/floatingips",
+            &query,
+            |resp: NeutronFloatingIpsResponse| {
+                let next = resp
+                    .floatingips_links
+                    .as_deref()
+                    .and_then(extract_next_marker);
+                (resp.floatingips, next)
+            },
+        )
+        .await
     }
 
     async fn create_floating_ip(&self, params: &FloatingIpCreateParams) -> ApiResult<FloatingIp> {
@@ -569,7 +597,10 @@ mod tests {
         assert!(resp.network.external);
         assert!(resp.network.shared);
         assert_eq!(resp.network.mtu, Some(9000));
-        assert_eq!(resp.network.description.as_deref(), Some("External network"));
+        assert_eq!(
+            resp.network.description.as_deref(),
+            Some("External network")
+        );
         assert_eq!(resp.network.port_security_enabled, Some(false));
     }
 

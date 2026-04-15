@@ -1,8 +1,8 @@
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 
 pub struct HeaderContext {
     pub user_name: String,
@@ -21,20 +21,40 @@ impl Header {
     pub fn render(&self, frame: &mut Frame, area: Rect, ctx: &HeaderContext) {
         let (app, fill, badge, right) = Self::build_header_parts(area.width, ctx);
         let mut spans = vec![
-            Span::styled(app, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                app,
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled(fill, Style::default().add_modifier(Modifier::DIM)),
         ];
         if let Some(badge) = badge {
-            spans.push(Span::styled(badge, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+            spans.push(Span::styled(
+                badge,
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ));
         }
-        spans.push(Span::styled(right, Style::default().add_modifier(Modifier::DIM)));
+        spans.push(Span::styled(
+            right,
+            Style::default().add_modifier(Modifier::DIM),
+        ));
         frame.render_widget(Paragraph::new(Line::from(spans)), area);
     }
 
     /// Build header line parts: (app_name, fill, optional_badge, right_context).
-    pub fn build_header_parts(width: u16, ctx: &HeaderContext) -> (String, String, Option<String>, String) {
+    pub fn build_header_parts(
+        width: u16,
+        ctx: &HeaderContext,
+    ) -> (String, String, Option<String>, String) {
         let app_name = "nexttui".to_string();
-        let badge = if ctx.all_tenants { Some("[ALL] ".to_string()) } else { None };
+        let badge = if ctx.all_tenants {
+            Some("[ALL] ".to_string())
+        } else {
+            None
+        };
         let right_text = format!("{}@{} | {}", ctx.user_name, ctx.cloud_name, ctx.region);
         let total_right = badge.as_ref().map_or(0, |b| b.len()) + right_text.len();
         let fill_len = (width as usize)

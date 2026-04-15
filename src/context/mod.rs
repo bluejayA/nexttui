@@ -25,9 +25,7 @@ pub use capabilities::{AuthMethod, KeystoneCapabilities, KeystoneVersion};
 pub use epoch::{ContextEpoch, Epoch};
 pub use error::SwitchError;
 pub use history::ContextHistoryStore;
-pub use resolver::{
-    CloudDirectory, ContextTargetResolver, ProjectCandidate, ProjectDirectoryPort,
-};
+pub use resolver::{CloudDirectory, ContextTargetResolver, ProjectCandidate, ProjectDirectoryPort};
 pub use state_machine::{SwitchStateMachine, SwitchStateView};
 pub use switcher::ContextSwitcher;
 pub use types::{ContextRequest, ContextSnapshot, ContextTarget, SessionHandle};

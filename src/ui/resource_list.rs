@@ -3,12 +3,12 @@ use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Color, Modifier, Style};
 
 use super::theme::Theme;
+use ratatui::Frame;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, Borders, Cell, Paragraph, Row as TuiRow, Scrollbar, ScrollbarOrientation,
     ScrollbarState, Table, TableState,
 };
-use ratatui::Frame;
 
 use crate::action::Action;
 
@@ -168,30 +168,25 @@ impl ResourceList {
             return None;
         }
         match key.code {
-            KeyCode::Enter => self.selected_id().map(|id| Action::SelectResource {
-                id: id.to_string(),
-            }),
+            KeyCode::Enter => self
+                .selected_id()
+                .map(|id| Action::SelectResource { id: id.to_string() }),
             _ => None,
         }
     }
 
     pub fn render(&self, frame: &mut Frame, area: Rect) {
         if self.loading {
-            let spinner = Paragraph::new(Line::from(Span::styled(
-                "Loading...",
-                Theme::active(),
-            )))
-            .alignment(ratatui::layout::Alignment::Center);
+            let spinner = Paragraph::new(Line::from(Span::styled("Loading...", Theme::active())))
+                .alignment(ratatui::layout::Alignment::Center);
             frame.render_widget(spinner, area);
             return;
         }
 
         if self.filtered_indices.is_empty() {
-            let empty = Paragraph::new(Line::from(Span::styled(
-                "No items found",
-                Theme::waiting(),
-            )))
-            .alignment(ratatui::layout::Alignment::Center);
+            let empty =
+                Paragraph::new(Line::from(Span::styled("No items found", Theme::waiting())))
+                    .alignment(ratatui::layout::Alignment::Center);
             frame.render_widget(empty, area);
             return;
         }
@@ -210,7 +205,11 @@ impl ResourceList {
             .collect();
         let header = TuiRow::new(header_cells);
 
-        let widths: Vec<Constraint> = self.columns.iter().map(|c| c.width.to_constraint()).collect();
+        let widths: Vec<Constraint> = self
+            .columns
+            .iter()
+            .map(|c| c.width.to_constraint())
+            .collect();
 
         let data_rows: Vec<TuiRow> = self
             .filtered_indices

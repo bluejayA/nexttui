@@ -1,13 +1,13 @@
 use crossterm::event::{KeyCode, KeyEvent};
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Cell, Paragraph, Row as TuiRow, Table};
-use ratatui::Frame;
 
 use crate::action::Action;
-use crate::context::ActionSender;
 use crate::component::Component;
+use crate::context::ActionSender;
 use crate::event::AppEvent;
 use crate::models::keystone::Project;
 use crate::models::nova::Hypervisor;
@@ -210,13 +210,32 @@ impl UsageModule {
             .split(inner);
 
         self.render_mini_gauge(frame, cols[0], "vCPU", used_vcpus, total_vcpus, "");
-        self.render_mini_gauge(frame, cols[1], "RAM", used_ram / 1024, total_ram / 1024, "GB");
+        self.render_mini_gauge(
+            frame,
+            cols[1],
+            "RAM",
+            used_ram / 1024,
+            total_ram / 1024,
+            "GB",
+        );
         self.render_mini_gauge(frame, cols[2], "Disk", used_disk, total_disk, "GB");
         self.render_mini_gauge(frame, cols[3], "VMs", total_vms, total_vms.max(1), "");
     }
 
-    fn render_mini_gauge(&self, frame: &mut Frame, area: Rect, title: &str, used: u64, total: u64, unit: &str) {
-        let pct = if total > 0 { (used as f64 / total as f64 * 100.0) as u16 } else { 0 };
+    fn render_mini_gauge(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        title: &str,
+        used: u64,
+        total: u64,
+        unit: &str,
+    ) {
+        let pct = if total > 0 {
+            (used as f64 / total as f64 * 100.0) as u16
+        } else {
+            0
+        };
         let color = match pct {
             0..=70 => Color::Green,
             71..=90 => Color::Yellow,
@@ -236,15 +255,24 @@ impl UsageModule {
             return;
         }
 
-        let unit_str = if unit.is_empty() { String::new() } else { format!(" {unit}") };
+        let unit_str = if unit.is_empty() {
+            String::new()
+        } else {
+            format!(" {unit}")
+        };
         let info_line = Line::from(vec![
-            Span::styled(format!(" Used: {used}{unit_str}"), Style::default().fg(Color::White)),
-            Span::styled(format!("  Total: {total}{unit_str}"), Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!(" Used: {used}{unit_str}"),
+                Style::default().fg(Color::White),
+            ),
+            Span::styled(
+                format!("  Total: {total}{unit_str}"),
+                Style::default().fg(Color::DarkGray),
+            ),
         ]);
 
-        let bar_width = mini_inner.width.saturating_sub(2) as u16;
-        let gauge = GaugeBar::new("", used, total)
-            .with_bar_width(bar_width);
+        let bar_width = mini_inner.width.saturating_sub(2);
+        let gauge = GaugeBar::new("", used, total).with_bar_width(bar_width);
         let bar_line = gauge.render_line();
         // Remove the label span (first span is empty label)
         let bar_spans: Vec<Span> = bar_line.spans.into_iter().skip(1).collect();
@@ -303,10 +331,7 @@ impl UsageModule {
         let header = TuiRow::new(header_cells).height(1);
 
         let usages = self.sorted_usages();
-        let visible_usages: Vec<&&TenantUsage> = usages
-            .iter()
-            .skip(self.scroll_offset)
-            .collect();
+        let visible_usages: Vec<&&TenantUsage> = usages.iter().skip(self.scroll_offset).collect();
 
         let rows: Vec<TuiRow> = visible_usages
             .iter()
@@ -396,9 +421,17 @@ impl UsageModule {
                 used_ram_gb += ram_u;
 
                 let is_up = hv.state == "up" && hv.status == "enabled";
-                if is_up { hosts_up += 1; } else { hosts_down += 1; }
+                if is_up {
+                    hosts_up += 1;
+                } else {
+                    hosts_down += 1;
+                }
 
-                let cpu_pct = if vcpu_t > 0 { (vcpu_u as f64 / vcpu_t as f64 * 100.0) as u16 } else { 0 };
+                let cpu_pct = if vcpu_t > 0 {
+                    (vcpu_u as f64 / vcpu_t as f64 * 100.0) as u16
+                } else {
+                    0
+                };
                 if cpu_pct > 90 {
                     high_cpu_hosts.push(hv.hypervisor_hostname.clone());
                 }
@@ -420,15 +453,33 @@ impl UsageModule {
 
                 Line::from(vec![
                     Span::styled(format!(" {state_icon} "), Style::default().fg(state_color)),
-                    Span::styled(format!("{:<width$}", hostname, width = max_hostname_len), Style::default().fg(Color::White)),
+                    Span::styled(
+                        format!("{:<width$}", hostname, width = max_hostname_len),
+                        Style::default().fg(Color::White),
+                    ),
                     Span::raw(" vCPU["),
-                    Span::styled("▓".repeat(cpu_filled as usize), Style::default().fg(cpu_color)),
-                    Span::styled("·".repeat(cpu_empty as usize), Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        "▓".repeat(cpu_filled as usize),
+                        Style::default().fg(cpu_color),
+                    ),
+                    Span::styled(
+                        "·".repeat(cpu_empty as usize),
+                        Style::default().fg(Color::DarkGray),
+                    ),
                     Span::raw("]"),
-                    Span::styled(format!("{:>3}/{:<3}", vcpu_u, vcpu_t), Style::default().fg(Color::White)),
+                    Span::styled(
+                        format!("{:>3}/{:<3}", vcpu_u, vcpu_t),
+                        Style::default().fg(Color::White),
+                    ),
                     Span::raw(" RAM["),
-                    Span::styled("▓".repeat(ram_filled as usize), Style::default().fg(ram_color)),
-                    Span::styled("·".repeat(ram_empty as usize), Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        "▓".repeat(ram_filled as usize),
+                        Style::default().fg(ram_color),
+                    ),
+                    Span::styled(
+                        "·".repeat(ram_empty as usize),
+                        Style::default().fg(Color::DarkGray),
+                    ),
                     Span::raw("]"),
                     Span::styled(format!("{:>3}G", ram_u), Style::default().fg(Color::White)),
                     Span::styled(format!(" VMs:{vms}"), Style::default().fg(Color::DarkGray)),
@@ -450,16 +501,35 @@ impl UsageModule {
         frame.render_widget(summary_block, lr[1]);
 
         let total_hosts = hosts_up + hosts_down;
-        let cpu_pct = if total_vcpus > 0 { (used_vcpus as f64 / total_vcpus as f64 * 100.0) as u16 } else { 0 };
-        let ram_pct = if total_ram_gb > 0 { (used_ram_gb as f64 / total_ram_gb as f64 * 100.0) as u16 } else { 0 };
+        let cpu_pct = if total_vcpus > 0 {
+            (used_vcpus as f64 / total_vcpus as f64 * 100.0) as u16
+        } else {
+            0
+        };
+        let ram_pct = if total_ram_gb > 0 {
+            (used_ram_gb as f64 / total_ram_gb as f64 * 100.0) as u16
+        } else {
+            0
+        };
 
         let mut summary_lines = vec![
             Line::from(vec![
                 Span::styled(" Hosts: ", Style::default().fg(Color::White)),
-                Span::styled(format!("{total_hosts}"), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                Span::styled(format!(" ({hosts_up} up"), Style::default().fg(Color::Green)),
+                Span::styled(
+                    format!("{total_hosts}"),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!(" ({hosts_up} up"),
+                    Style::default().fg(Color::Green),
+                ),
                 if hosts_down > 0 {
-                    Span::styled(format!(", {hosts_down} down"), Style::default().fg(Color::Red))
+                    Span::styled(
+                        format!(", {hosts_down} down"),
+                        Style::default().fg(Color::Red),
+                    )
                 } else {
                     Span::raw("")
                 },
@@ -468,11 +538,17 @@ impl UsageModule {
             Line::from(""),
             Line::from(vec![
                 Span::styled(" Total vCPU: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(format!("{used_vcpus}/{total_vcpus} ({cpu_pct}%)"), Style::default().fg(Color::White)),
+                Span::styled(
+                    format!("{used_vcpus}/{total_vcpus} ({cpu_pct}%)"),
+                    Style::default().fg(Color::White),
+                ),
             ]),
             Line::from(vec![
                 Span::styled(" Total RAM:  ", Style::default().fg(Color::DarkGray)),
-                Span::styled(format!("{used_ram_gb}/{total_ram_gb} GB ({ram_pct}%)"), Style::default().fg(Color::White)),
+                Span::styled(
+                    format!("{used_ram_gb}/{total_ram_gb} GB ({ram_pct}%)"),
+                    Style::default().fg(Color::White),
+                ),
             ]),
         ];
 
@@ -508,9 +584,7 @@ impl Component for UsageModule {
         }
 
         match key.code {
-            KeyCode::Left => {
-                return Some(Action::FocusSidebar);
-            }
+            KeyCode::Left => Some(Action::FocusSidebar),
             KeyCode::Char('[') => {
                 // '[' for previous period (avoids 'h' conflict with Host Ops)
                 self.date_range = self.date_range.prev();
@@ -577,9 +651,9 @@ impl Component for UsageModule {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(7),        // Infrastructure Summary (fixed)
-                Constraint::Length(half),      // Project Usage (50% of remaining)
-                Constraint::Min(half),        // Hypervisor Allocation (50% of remaining)
+                Constraint::Length(7),    // Infrastructure Summary (fixed)
+                Constraint::Length(half), // Project Usage (50% of remaining)
+                Constraint::Min(half),    // Hypervisor Allocation (50% of remaining)
             ])
             .split(area);
 
@@ -600,9 +674,9 @@ impl Component for UsageModule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::{ActionReceiver, test_action_channel};
-    use chrono::Datelike;
+    use crate::context::test_action_channel;
     use crate::port::types::ServerUsageEntry;
+    use chrono::Datelike;
     use crossterm::event::KeyEvent;
 
     fn make_tx() -> ActionSender {
@@ -671,17 +745,15 @@ mod tests {
                 total_memory_mb_usage: 204800.0,
                 total_local_gb_usage: 500.0,
                 total_hours: 720.0,
-                server_usages: vec![
-                    ServerUsageEntry {
-                        instance_id: "i1".into(),
-                        name: "web".into(),
-                        hours: 360.0,
-                        vcpus: 2,
-                        memory_mb: 4096,
-                        local_gb: 50,
-                        state: "active".into(),
-                    },
-                ],
+                server_usages: vec![ServerUsageEntry {
+                    instance_id: "i1".into(),
+                    name: "web".into(),
+                    hours: 360.0,
+                    vcpus: 2,
+                    memory_mb: 4096,
+                    local_gb: 50,
+                    state: "active".into(),
+                }],
             },
             TenantUsage {
                 tenant_id: "proj-2".into(),
@@ -838,7 +910,7 @@ mod tests {
         });
         assert!(!m.loading);
         assert!(m.error_message().is_some());
-        assert!(m.error_message().map_or(false, |e| e.contains("timeout")));
+        assert!(m.error_message().is_some_and(|e| e.contains("timeout")));
     }
 
     // === handle_key tests ===

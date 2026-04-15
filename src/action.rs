@@ -11,14 +11,29 @@ pub enum Action {
     // Nova
     FetchServers,
     CreateServer(crate::port::types::ServerCreateParams),
-    DeleteServer { id: String, name: String },
-    RebootServer { id: String, hard: bool },
-    StartServer { id: String },
-    StopServer { id: String },
-    CreateServerSnapshot { server_id: String, name: String },
+    DeleteServer {
+        id: String,
+        name: String,
+    },
+    RebootServer {
+        id: String,
+        hard: bool,
+    },
+    StartServer {
+        id: String,
+    },
+    StopServer {
+        id: String,
+    },
+    CreateServerSnapshot {
+        server_id: String,
+        name: String,
+    },
     FetchFlavors,
     CreateFlavor(crate::port::types::FlavorCreateParams),
-    DeleteFlavor { id: String },
+    DeleteFlavor {
+        id: String,
+    },
     FetchAggregates,
     FetchComputeServices,
     FetchHypervisors,
@@ -28,80 +43,163 @@ pub enum Action {
     CreateNetwork(crate::port::types::NetworkCreateParams),
     FetchSecurityGroups,
     CreateSecurityGroup(crate::port::types::SecurityGroupCreateParams),
-    DeleteSecurityGroup { id: String },
+    DeleteSecurityGroup {
+        id: String,
+    },
     CreateSecurityGroupRule(crate::port::types::SecurityGroupRuleCreateParams),
-    DeleteSecurityGroupRule { rule_id: String },
+    DeleteSecurityGroupRule {
+        rule_id: String,
+    },
     FetchFloatingIps,
-    CreateFloatingIp { network_id: String },
-    DeleteFloatingIp { id: String },
-    FetchSubnets { network_id: String },
+    CreateFloatingIp {
+        network_id: String,
+    },
+    DeleteFloatingIp {
+        id: String,
+    },
+    FetchSubnets {
+        network_id: String,
+    },
     FetchAgents,
 
     // Cinder
     FetchVolumes,
     CreateVolume(crate::port::types::VolumeCreateParams),
-    DeleteVolume { id: String, force: bool },
-    ExtendVolume { id: String, new_size: u32 },
+    DeleteVolume {
+        id: String,
+        force: bool,
+    },
+    ExtendVolume {
+        id: String,
+        new_size: u32,
+    },
     FetchSnapshots,
     CreateSnapshot(crate::port::types::SnapshotCreateParams),
-    DeleteSnapshot { id: String },
+    DeleteSnapshot {
+        id: String,
+    },
 
     // Glance
     FetchImages,
     CreateImage(crate::port::types::ImageCreateParams),
-    DeleteImage { id: String },
+    DeleteImage {
+        id: String,
+    },
 
     // Keystone Admin
     FetchProjects,
     CreateProject(crate::port::types::ProjectCreateParams),
-    DeleteProject { id: String },
+    DeleteProject {
+        id: String,
+    },
     FetchUsers,
     CreateUser(crate::port::types::UserCreateParams),
-    DeleteUser { id: String },
+    DeleteUser {
+        id: String,
+    },
 
     // Usage
-    FetchUsage { start: String, end: String },
+    FetchUsage {
+        start: String,
+        end: String,
+    },
 
     // UI
     FocusSidebar,
     EnterFormMode,
     ExitFormMode,
-    SelectResource { id: String },
-    NavigateToResource { route: Route, id: String },
+    SelectResource {
+        id: String,
+    },
+    NavigateToResource {
+        route: Route,
+        id: String,
+    },
 
     // Resize
-    ResizeServer { id: String, flavor_id: String },
-    ConfirmResize { id: String },
-    RevertResize { id: String },
+    ResizeServer {
+        id: String,
+        flavor_id: String,
+    },
+    ConfirmResize {
+        id: String,
+    },
+    RevertResize {
+        id: String,
+    },
 
     // Migration / Evacuate
-    LiveMigrateServer { id: String, host: Option<String> },
-    ColdMigrateServer { id: String },
-    ConfirmMigration { id: String },
-    RevertMigration { id: String },
-    EvacuateServer { id: String, params: EvacuateParams },
-    DisableComputeService { service_id: String, hostname: String },
-    EnableComputeService { service_id: String, hostname: String },
-    FetchMigrationProgress { server_id: String },
+    LiveMigrateServer {
+        id: String,
+        host: Option<String>,
+    },
+    ColdMigrateServer {
+        id: String,
+    },
+    ConfirmMigration {
+        id: String,
+    },
+    RevertMigration {
+        id: String,
+    },
+    EvacuateServer {
+        id: String,
+        params: EvacuateParams,
+    },
+    DisableComputeService {
+        service_id: String,
+        hostname: String,
+    },
+    EnableComputeService {
+        service_id: String,
+        hostname: String,
+    },
+    FetchMigrationProgress {
+        server_id: String,
+    },
 
     // Volume Attach/Detach
-    AttachVolume { volume_id: String, server_id: String, device: Option<String> },
-    DetachVolume { volume_id: String, server_id: String, attachment_id: String },
-    ForceDetachVolume { volume_id: String, server_id: String, attachment_id: String },
-    ForceResetVolumeState { volume_id: String, target_state: String },
+    AttachVolume {
+        volume_id: String,
+        server_id: String,
+        device: Option<String>,
+    },
+    DetachVolume {
+        volume_id: String,
+        server_id: String,
+        attachment_id: String,
+    },
+    ForceDetachVolume {
+        volume_id: String,
+        server_id: String,
+        attachment_id: String,
+    },
+    ForceResetVolumeState {
+        volume_id: String,
+        target_state: String,
+    },
 
     // Floating IP Associate/Disassociate
-    AssociateFloatingIp { fip_id: String, port_id: String },
-    DisassociateFloatingIp { fip_id: String },
+    AssociateFloatingIp {
+        fip_id: String,
+        port_id: String,
+    },
+    DisassociateFloatingIp {
+        fip_id: String,
+    },
 
     // Ports
-    FetchPorts { server_id: String },
+    FetchPorts {
+        server_id: String,
+    },
 
     // All Tenants
     ToggleAllTenants,
 
     // Toast (module-initiated hints)
-    ShowToast { message: String },
+    ShowToast {
+        message: String,
+    },
 
     // System
     RefreshAll,
@@ -177,13 +275,35 @@ mod tests {
     #[test]
     fn test_volume_fip_action_variants_exist() {
         let actions: Vec<Action> = vec![
-            Action::AttachVolume { volume_id: "v1".into(), server_id: "s1".into(), device: Some("/dev/vdb".into()) },
-            Action::DetachVolume { volume_id: "v1".into(), server_id: "s1".into(), attachment_id: "att-1".into() },
-            Action::ForceDetachVolume { volume_id: "v1".into(), server_id: "s1".into(), attachment_id: "att-1".into() },
-            Action::ForceResetVolumeState { volume_id: "v1".into(), target_state: "available".into() },
-            Action::AssociateFloatingIp { fip_id: "fip-1".into(), port_id: "port-1".into() },
-            Action::DisassociateFloatingIp { fip_id: "fip-1".into() },
-            Action::FetchPorts { server_id: "s1".into() },
+            Action::AttachVolume {
+                volume_id: "v1".into(),
+                server_id: "s1".into(),
+                device: Some("/dev/vdb".into()),
+            },
+            Action::DetachVolume {
+                volume_id: "v1".into(),
+                server_id: "s1".into(),
+                attachment_id: "att-1".into(),
+            },
+            Action::ForceDetachVolume {
+                volume_id: "v1".into(),
+                server_id: "s1".into(),
+                attachment_id: "att-1".into(),
+            },
+            Action::ForceResetVolumeState {
+                volume_id: "v1".into(),
+                target_state: "available".into(),
+            },
+            Action::AssociateFloatingIp {
+                fip_id: "fip-1".into(),
+                port_id: "port-1".into(),
+            },
+            Action::DisassociateFloatingIp {
+                fip_id: "fip-1".into(),
+            },
+            Action::FetchPorts {
+                server_id: "s1".into(),
+            },
         ];
         assert_eq!(actions.len(), 7);
     }
@@ -191,7 +311,10 @@ mod tests {
     #[test]
     fn test_resize_action_variants_exist() {
         let actions: Vec<Action> = vec![
-            Action::ResizeServer { id: "s1".into(), flavor_id: "f2".into() },
+            Action::ResizeServer {
+                id: "s1".into(),
+                flavor_id: "f2".into(),
+            },
             Action::ConfirmResize { id: "s1".into() },
             Action::RevertResize { id: "s1".into() },
         ];
@@ -216,14 +339,31 @@ mod tests {
     #[test]
     fn test_migration_action_variants_exist() {
         let actions: Vec<Action> = vec![
-            Action::LiveMigrateServer { id: "s1".into(), host: None },
+            Action::LiveMigrateServer {
+                id: "s1".into(),
+                host: None,
+            },
             Action::ColdMigrateServer { id: "s1".into() },
             Action::ConfirmMigration { id: "s1".into() },
             Action::RevertMigration { id: "s1".into() },
-            Action::EvacuateServer { id: "s1".into(), params: EvacuateParams { host: Some("compute-02".into()), ..Default::default() } },
-            Action::FetchMigrationProgress { server_id: "s1".into() },
-            Action::DisableComputeService { service_id: "svc-1".into(), hostname: "compute-01".into() },
-            Action::EnableComputeService { service_id: "svc-1".into(), hostname: "compute-01".into() },
+            Action::EvacuateServer {
+                id: "s1".into(),
+                params: EvacuateParams {
+                    host: Some("compute-02".into()),
+                    ..Default::default()
+                },
+            },
+            Action::FetchMigrationProgress {
+                server_id: "s1".into(),
+            },
+            Action::DisableComputeService {
+                service_id: "svc-1".into(),
+                hostname: "compute-01".into(),
+            },
+            Action::EnableComputeService {
+                service_id: "svc-1".into(),
+                hostname: "compute-01".into(),
+            },
         ];
         assert_eq!(actions.len(), 8);
     }

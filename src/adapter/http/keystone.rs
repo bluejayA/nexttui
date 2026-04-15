@@ -69,7 +69,9 @@ struct KeystoneLinks {
 }
 
 fn extract_keystone_marker(links: &Option<KeystoneLinks>) -> Option<String> {
-    links.as_ref().and_then(|l| l.next.as_deref().and_then(extract_marker_from_url))
+    links
+        .as_ref()
+        .and_then(|l| l.next.as_deref().and_then(extract_marker_from_url))
 }
 
 // --- Serialize structs ---
@@ -150,10 +152,16 @@ impl KeystonePort for KeystoneHttpAdapter {
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<Project>> {
         let query = build_pagination_query(pagination);
-        paginated_list(&self.base, "/v3/projects", &query, |resp: KeystoneProjectsResponse| {
-            let next = extract_keystone_marker(&resp.links);
-            (resp.projects, next)
-        }).await
+        paginated_list(
+            &self.base,
+            "/v3/projects",
+            &query,
+            |resp: KeystoneProjectsResponse| {
+                let next = extract_keystone_marker(&resp.links);
+                (resp.projects, next)
+            },
+        )
+        .await
     }
 
     async fn get_project(&self, project_id: &str) -> ApiResult<Project> {
@@ -215,10 +223,16 @@ impl KeystonePort for KeystoneHttpAdapter {
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<User>> {
         let query = build_pagination_query(pagination);
-        paginated_list(&self.base, "/v3/users", &query, |resp: KeystoneUsersResponse| {
-            let next = extract_keystone_marker(&resp.links);
-            (resp.users, next)
-        }).await
+        paginated_list(
+            &self.base,
+            "/v3/users",
+            &query,
+            |resp: KeystoneUsersResponse| {
+                let next = extract_keystone_marker(&resp.links);
+                (resp.users, next)
+            },
+        )
+        .await
     }
 
     async fn get_user(&self, user_id: &str) -> ApiResult<User> {
@@ -246,11 +260,7 @@ impl KeystonePort for KeystoneHttpAdapter {
         Ok(resp.user)
     }
 
-    async fn update_user(
-        &self,
-        user_id: &str,
-        params: &UserUpdateParams,
-    ) -> ApiResult<User> {
+    async fn update_user(&self, user_id: &str, params: &UserUpdateParams) -> ApiResult<User> {
         let body = UserUpdateBody {
             user: UserUpdateInner {
                 name: params.name.clone(),
@@ -409,7 +419,8 @@ mod tests {
 
     #[test]
     fn test_keystone_roles_response_deserialize() {
-        let json = r#"{"roles": [{"id": "r-1", "name": "admin"}, {"id": "r-2", "name": "member"}]}"#;
+        let json =
+            r#"{"roles": [{"id": "r-1", "name": "admin"}, {"id": "r-2", "name": "member"}]}"#;
         let resp: KeystoneRolesResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.roles.len(), 2);
     }

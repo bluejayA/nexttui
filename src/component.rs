@@ -17,15 +17,29 @@ pub trait Component {
     fn render(&self, frame: &mut Frame, area: Rect);
     fn set_admin(&mut self, _is_admin: bool) {}
     fn set_all_tenants(&mut self, _all_tenants: bool) {}
-    fn help_hint(&self) -> &str { "" }
-    fn refresh_action(&self) -> Option<Action> { None }
-    fn has_transitional_resources(&self) -> bool { false }
-    fn is_modal(&self) -> bool { false }
-    fn layout_hint(&self) -> LayoutHint { LayoutHint::Default }
-    fn is_busy(&self) -> bool { false }
+    fn help_hint(&self) -> &str {
+        ""
+    }
+    fn refresh_action(&self) -> Option<Action> {
+        None
+    }
+    fn has_transitional_resources(&self) -> bool {
+        false
+    }
+    fn is_modal(&self) -> bool {
+        false
+    }
+    fn layout_hint(&self) -> LayoutHint {
+        LayoutHint::Default
+    }
+    fn is_busy(&self) -> bool {
+        false
+    }
     /// Dynamic content title based on view state (e.g. "Server: web-01").
     /// Returns None to use the default route label.
-    fn content_title(&self) -> Option<String> { None }
+    fn content_title(&self) -> Option<String> {
+        None
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -52,7 +66,9 @@ mod tests {
     fn test_component_default_refresh_action_is_none() {
         struct Dummy;
         impl Component for Dummy {
-            fn handle_key(&mut self, _key: KeyEvent) -> Option<Action> { None }
+            fn handle_key(&mut self, _key: KeyEvent) -> Option<Action> {
+                None
+            }
             fn handle_event(&mut self, _event: &AppEvent) {}
             fn render(&self, _frame: &mut Frame, _area: Rect) {}
         }
@@ -64,7 +80,9 @@ mod tests {
     fn test_component_default_has_transitional_is_false() {
         struct Dummy;
         impl Component for Dummy {
-            fn handle_key(&mut self, _key: KeyEvent) -> Option<Action> { None }
+            fn handle_key(&mut self, _key: KeyEvent) -> Option<Action> {
+                None
+            }
             fn handle_event(&mut self, _event: &AppEvent) {}
             fn render(&self, _frame: &mut Frame, _area: Rect) {}
         }
@@ -76,7 +94,9 @@ mod tests {
     fn test_component_default_is_modal_is_false() {
         struct Dummy;
         impl Component for Dummy {
-            fn handle_key(&mut self, _key: KeyEvent) -> Option<Action> { None }
+            fn handle_key(&mut self, _key: KeyEvent) -> Option<Action> {
+                None
+            }
             fn handle_event(&mut self, _event: &AppEvent) {}
             fn render(&self, _frame: &mut Frame, _area: Rect) {}
         }
@@ -88,7 +108,9 @@ mod tests {
     fn test_component_default_layout_hint_is_default() {
         struct Dummy;
         impl Component for Dummy {
-            fn handle_key(&mut self, _key: KeyEvent) -> Option<Action> { None }
+            fn handle_key(&mut self, _key: KeyEvent) -> Option<Action> {
+                None
+            }
             fn handle_event(&mut self, _event: &AppEvent) {}
             fn render(&self, _frame: &mut Frame, _area: Rect) {}
         }
@@ -99,15 +121,17 @@ mod tests {
 
     #[test]
     fn test_component_set_admin_default() {
-        use crossterm::event::KeyEvent;
-        use ratatui::layout::Rect;
-        use ratatui::Frame;
         use crate::action::Action;
         use crate::event::AppEvent;
+        use crossterm::event::KeyEvent;
+        use ratatui::Frame;
+        use ratatui::layout::Rect;
 
         struct Dummy;
         impl Component for Dummy {
-            fn handle_key(&mut self, _key: KeyEvent) -> Option<Action> { None }
+            fn handle_key(&mut self, _key: KeyEvent) -> Option<Action> {
+                None
+            }
             fn handle_event(&mut self, _event: &AppEvent) {}
             fn render(&self, _frame: &mut Frame, _area: Rect) {}
         }

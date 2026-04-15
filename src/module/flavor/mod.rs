@@ -1,12 +1,12 @@
 pub mod view_model;
 
 use crossterm::event::{KeyCode, KeyEvent};
-use ratatui::layout::Rect;
 use ratatui::Frame;
+use ratatui::layout::Rect;
 
 use crate::action::Action;
-use crate::context::ActionSender;
 use crate::component::Component;
+use crate::context::ActionSender;
 use crate::event::AppEvent;
 use crate::models::nova::Flavor;
 use crate::module::{ConfirmHandler, PendingAction, ViewState};
@@ -70,7 +70,6 @@ impl FlavorModule {
             _ => None,
         }
     }
-
 
     fn open_create_form(&mut self) {
         let defs = flavor_create_defs();
@@ -159,13 +158,15 @@ impl FlavorModule {
                     .unwrap_or(true);
 
                 self.close_form();
-                let _ = self.action_tx.send(Action::CreateFlavor(FlavorCreateParams {
-                    name,
-                    vcpus,
-                    ram_mb,
-                    disk_gb,
-                    is_public,
-                }));
+                let _ = self
+                    .action_tx
+                    .send(Action::CreateFlavor(FlavorCreateParams {
+                        name,
+                        vcpus,
+                        ram_mb,
+                        disk_gb,
+                        is_public,
+                    }));
                 Some(Action::ExitFormMode)
             }
             FormAction::Cancel => {
@@ -178,8 +179,12 @@ impl FlavorModule {
 }
 
 impl Component for FlavorModule {
-    fn refresh_action(&self) -> Option<Action> { Some(Action::FetchFlavors) }
-    fn is_modal(&self) -> bool { self.confirm.is_active() || self.form.is_some() }
+    fn refresh_action(&self) -> Option<Action> {
+        Some(Action::FetchFlavors)
+    }
+    fn is_modal(&self) -> bool {
+        self.confirm.is_active() || self.form.is_some()
+    }
 
     fn set_admin(&mut self, is_admin: bool) {
         self.is_admin = is_admin;
@@ -245,7 +250,9 @@ impl Component for FlavorModule {
         match &self.view_state {
             ViewState::List => None,
             ViewState::Detail(id) => {
-                let name = self.flavors.iter()
+                let name = self
+                    .flavors
+                    .iter()
                     .find(|r| r.id == *id)
                     .map(|r| r.name.as_str())
                     .unwrap_or("...");

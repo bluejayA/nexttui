@@ -3,13 +3,11 @@ use crate::ui::detail_view::{DetailData, DetailField, DetailSection};
 use crate::ui::resource_list::{ColumnDef, ColumnWidth, Row, RowStyleHint};
 
 pub fn snapshot_columns(show_tenant: bool) -> Vec<ColumnDef> {
-    let mut cols = vec![
-        ColumnDef {
-            name: "Name".into(),
-            width: ColumnWidth::Percent(25),
-            alignment: ratatui::layout::Alignment::Left,
-        },
-    ];
+    let mut cols = vec![ColumnDef {
+        name: "Name".into(),
+        width: ColumnWidth::Percent(25),
+        alignment: ratatui::layout::Alignment::Left,
+    }];
     if show_tenant {
         cols.push(ColumnDef {
             name: "Project".into(),
@@ -46,9 +44,7 @@ pub fn snapshot_to_row(snap: &VolumeSnapshot, show_tenant: bool) -> Row {
     let (icon, style) = snapshot_status_display(&snap.status);
     let name = snap.name.as_deref().unwrap_or("-");
     let created = snap.created_at.as_deref().unwrap_or("-");
-    let mut cells = vec![
-        name.to_string(),
-    ];
+    let mut cells = vec![name.to_string()];
     if show_tenant {
         cells.push(snap.tenant_id.as_deref().unwrap_or("-").to_string());
     }
@@ -157,10 +153,19 @@ mod tests {
 
     #[test]
     fn test_snapshot_status_display() {
-        assert_eq!(snapshot_status_display("available"), ("●", RowStyleHint::Active));
+        assert_eq!(
+            snapshot_status_display("available"),
+            ("●", RowStyleHint::Active)
+        );
         assert_eq!(snapshot_status_display("error"), ("✗", RowStyleHint::Error));
-        assert_eq!(snapshot_status_display("creating"), ("◐", RowStyleHint::Warning));
-        assert_eq!(snapshot_status_display("UNKNOWN"), ("?", RowStyleHint::Normal));
+        assert_eq!(
+            snapshot_status_display("creating"),
+            ("◐", RowStyleHint::Warning)
+        );
+        assert_eq!(
+            snapshot_status_display("UNKNOWN"),
+            ("?", RowStyleHint::Normal)
+        );
     }
 
     #[test]

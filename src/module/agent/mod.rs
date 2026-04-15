@@ -1,8 +1,8 @@
 pub mod view_model;
 
 use crossterm::event::{KeyCode, KeyEvent};
-use ratatui::layout::Rect;
 use ratatui::Frame;
+use ratatui::layout::Rect;
 
 use crate::action::Action;
 use crate::component::Component;
@@ -19,6 +19,12 @@ pub struct AgentModule {
     resource_list: ResourceList,
 }
 
+impl Default for AgentModule {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AgentModule {
     pub fn new() -> Self {
         Self {
@@ -27,16 +33,26 @@ impl AgentModule {
             resource_list: ResourceList::new(agent_columns()),
         }
     }
-    pub fn agents(&self) -> &[NetworkAgent] { &self.agents }
-    pub fn selected_index(&self) -> usize { self.resource_list.selected_index() }
-    fn rows(&self) -> Vec<Row> { self.agents.iter().map(agent_to_row).collect() }
+    pub fn agents(&self) -> &[NetworkAgent] {
+        &self.agents
+    }
+    pub fn selected_index(&self) -> usize {
+        self.resource_list.selected_index()
+    }
+    fn rows(&self) -> Vec<Row> {
+        self.agents.iter().map(agent_to_row).collect()
+    }
 }
 
 impl Component for AgentModule {
-    fn refresh_action(&self) -> Option<Action> { Some(Action::FetchAgents) }
+    fn refresh_action(&self) -> Option<Action> {
+        Some(Action::FetchAgents)
+    }
 
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
-        if self.resource_list.handle_nav_key(key) { return None; }
+        if self.resource_list.handle_nav_key(key) {
+            return None;
+        }
         match key.code {
             KeyCode::Char('r') => Some(Action::FetchAgents),
             KeyCode::Left => Some(Action::FocusSidebar),
@@ -56,33 +72,54 @@ impl Component for AgentModule {
         self.resource_list.render(frame, area);
     }
 
-    fn help_hint(&self) -> &str { "r:Refresh" }
+    fn help_hint(&self) -> &str {
+        "r:Refresh"
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn key(code: KeyCode) -> KeyEvent { KeyEvent::from(code) }
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::from(code)
+    }
 
     fn make_agent(id: &str, agent_type: &str) -> NetworkAgent {
         NetworkAgent {
-            id: id.into(), agent_type: agent_type.into(), host: "network-01".into(),
-            admin_state_up: true, alive: true, binary: "neutron-agent".into(),
+            id: id.into(),
+            agent_type: agent_type.into(),
+            host: "network-01".into(),
+            admin_state_up: true,
+            alive: true,
+            binary: "neutron-agent".into(),
         }
     }
 
-    #[test] fn test_initial() { let m = AgentModule::new(); assert!(m.agents().is_empty()); }
-    #[test] fn test_nav() {
+    #[test]
+    fn test_initial() {
+        let m = AgentModule::new();
+        assert!(m.agents().is_empty());
+    }
+    #[test]
+    fn test_nav() {
         let mut m = AgentModule::new();
-        m.handle_event(&AppEvent::AgentsLoaded(vec![make_agent("a1", "OVS"), make_agent("a2", "L3")]));
+        m.handle_event(&AppEvent::AgentsLoaded(vec![
+            make_agent("a1", "OVS"),
+            make_agent("a2", "L3"),
+        ]));
         m.handle_key(key(KeyCode::Char('j')));
         assert_eq!(m.selected_index(), 1);
     }
-    #[test] fn test_refresh() {
+    #[test]
+    fn test_refresh() {
         let mut m = AgentModule::new();
-        assert!(matches!(m.handle_key(key(KeyCode::Char('r'))), Some(Action::FetchAgents)));
+        assert!(matches!(
+            m.handle_key(key(KeyCode::Char('r'))),
+            Some(Action::FetchAgents)
+        ));
     }
-    #[test] fn test_event_loaded() {
+    #[test]
+    fn test_event_loaded() {
         let mut m = AgentModule::new();
         m.handle_event(&AppEvent::AgentsLoaded(vec![make_agent("a1", "OVS")]));
         assert_eq!(m.agents().len(), 1);

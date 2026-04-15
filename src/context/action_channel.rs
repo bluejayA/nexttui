@@ -78,8 +78,18 @@ impl ActionSender {
     /// Stamp `action` with the current epoch and forward it to the worker.
     /// Signature mirrors `UnboundedSender::send` so existing call sites
     /// compile unchanged.
+    ///
+    /// The `Err` variant is ~176 bytes because it carries the whole
+    /// `VersionedEvent<Action>`. Boxing it (or changing `Action`'s
+    /// representation) would touch every send site in the codebase and
+    /// needs benchmark-based justification — tracked under BL-P2-060.
+    #[allow(
+        clippy::result_large_err,
+        reason = "tracked by BL-P2-060 — pending bench-based boxing decision"
+    )]
     pub fn send(&self, action: Action) -> Result<(), SendError<VersionedEvent<Action>>> {
-        self.tx.send(VersionedEvent::new(action, self.epoch.current()))
+        self.tx
+            .send(VersionedEvent::new(action, self.epoch.current()))
     }
 
     /// Exposes the underlying raw sender. Used by the few sites that need

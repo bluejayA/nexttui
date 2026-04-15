@@ -14,7 +14,9 @@ pub struct ContextEpoch {
 
 impl ContextEpoch {
     pub fn new() -> Self {
-        Self { value: AtomicU64::new(0) }
+        Self {
+            value: AtomicU64::new(0),
+        }
     }
 
     pub fn current(&self) -> Epoch {
@@ -57,7 +59,10 @@ mod tests {
                 (0..100).map(|_| e.bump()).collect::<Vec<_>>()
             }));
         }
-        let mut all: Vec<Epoch> = handles.into_iter().flat_map(|h| h.join().unwrap()).collect();
+        let mut all: Vec<Epoch> = handles
+            .into_iter()
+            .flat_map(|h| h.join().unwrap())
+            .collect();
         all.sort_unstable();
         all.dedup();
         assert_eq!(all.len(), 800, "all bump values should be unique");

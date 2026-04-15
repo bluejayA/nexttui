@@ -5,13 +5,11 @@ use crate::ui::form::FieldDef;
 use crate::ui::resource_list::{ColumnDef, ColumnWidth, Row, RowStyleHint};
 
 pub fn network_columns(show_tenant: bool) -> Vec<ColumnDef> {
-    let mut cols = vec![
-        ColumnDef {
-            name: "Name".into(),
-            width: ColumnWidth::Percent(25),
-            alignment: ratatui::layout::Alignment::Left,
-        },
-    ];
+    let mut cols = vec![ColumnDef {
+        name: "Name".into(),
+        width: ColumnWidth::Percent(25),
+        alignment: ratatui::layout::Alignment::Left,
+    }];
     if show_tenant {
         cols.push(ColumnDef {
             name: "Project".into(),
@@ -56,9 +54,7 @@ pub fn network_to_row(network: &Network, show_tenant: bool) -> Row {
     let shared_icon = if network.shared { "✓" } else { "✗" };
     let mtu_str = network.mtu.map(|m| m.to_string()).unwrap_or("-".into());
 
-    let mut cells = vec![
-        network.name.clone(),
-    ];
+    let mut cells = vec![network.name.clone()];
     if show_tenant {
         cells.push(network.tenant_id.as_deref().unwrap_or("-").to_string());
     }
@@ -291,11 +287,23 @@ mod tests {
 
     #[test]
     fn test_network_status_display() {
-        assert_eq!(network_status_display("ACTIVE"), ("●", RowStyleHint::Active));
+        assert_eq!(
+            network_status_display("ACTIVE"),
+            ("●", RowStyleHint::Active)
+        );
         assert_eq!(network_status_display("ERROR"), ("✗", RowStyleHint::Error));
-        assert_eq!(network_status_display("BUILD"), ("◐", RowStyleHint::Warning));
-        assert_eq!(network_status_display("DOWN"), ("○", RowStyleHint::Disabled));
-        assert_eq!(network_status_display("UNKNOWN"), ("?", RowStyleHint::Normal));
+        assert_eq!(
+            network_status_display("BUILD"),
+            ("◐", RowStyleHint::Warning)
+        );
+        assert_eq!(
+            network_status_display("DOWN"),
+            ("○", RowStyleHint::Disabled)
+        );
+        assert_eq!(
+            network_status_display("UNKNOWN"),
+            ("?", RowStyleHint::Normal)
+        );
     }
 
     #[test]

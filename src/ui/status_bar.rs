@@ -1,8 +1,8 @@
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 
 use super::theme;
 
@@ -32,12 +32,7 @@ impl StatusBar {
         Self
     }
 
-    pub fn render(
-        &self,
-        frame: &mut Frame,
-        area: Rect,
-        info: &StatusInfo,
-    ) {
+    pub fn render(&self, frame: &mut Frame, area: Rect, info: &StatusInfo) {
         // Paragraph bg applies to spans without explicit bg (ratatui style merge)
         let bg = Style::default().bg(Color::DarkGray).fg(Color::White);
         let left = info.left_text();
@@ -67,9 +62,7 @@ impl StatusBar {
             .saturating_sub(hint_plain_len);
         let padding = " ".repeat(padding_len);
 
-        let mut spans = vec![
-            Span::styled(&left, bg),
-        ];
+        let mut spans = vec![Span::styled(&left, bg)];
         if info.error_badge_count > 0 {
             spans.push(Span::styled(
                 badge,
@@ -151,8 +144,8 @@ mod tests {
         // The badge is rendered in StatusBar::render, not in left_text.
         // We test the render output by checking the spans.
         // Use a buffer to capture render output.
-        use ratatui::backend::TestBackend;
         use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
 
         let backend = TestBackend::new(80, 1);
         let mut terminal = Terminal::new(backend).ok();
@@ -164,13 +157,16 @@ mod tests {
             });
             let buf = term.backend().buffer().clone();
             let content: String = (0..buf.area.width)
-                .filter_map(|x| {
-                    let cell = &buf[(x, 0)];
-                    Some(cell.symbol().to_string())
-                })
+                .map(|x| buf[(x, 0)].symbol().to_string())
                 .collect();
-            assert!(content.contains('⚠'), "badge should appear in rendered output: {content}");
-            assert!(content.contains('3'), "badge count should appear: {content}");
+            assert!(
+                content.contains('⚠'),
+                "badge should appear in rendered output: {content}"
+            );
+            assert!(
+                content.contains('3'),
+                "badge count should appear: {content}"
+            );
         }
     }
 

@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
 use crossterm::event::{KeyCode, KeyEvent};
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
-use ratatui::Frame;
 
 use super::theme::Theme;
 
@@ -181,11 +181,7 @@ impl FieldDef {
         }
     }
 
-    pub fn dropdown(
-        label: impl Into<String>,
-        options: Vec<String>,
-        required: bool,
-    ) -> Self {
+    pub fn dropdown(label: impl Into<String>, options: Vec<String>, required: bool) -> Self {
         let label = label.into();
         let name = label.clone();
         let mut validations = Vec::new();
@@ -218,10 +214,7 @@ impl FieldDef {
         }
     }
 
-    pub fn multiselect(
-        label: impl Into<String>,
-        options: Vec<SelectOption>,
-    ) -> Self {
+    pub fn multiselect(label: impl Into<String>, options: Vec<SelectOption>) -> Self {
         let label = label.into();
         let name = label.clone();
         FieldDef::MultiSelect {
@@ -394,10 +387,7 @@ impl FormWidget {
         for (def, state) in &mut self.fields {
             if def.name() == name {
                 match def {
-                    FieldDef::Dropdown {
-                        options: opts,
-                        ..
-                    } => {
+                    FieldDef::Dropdown { options: opts, .. } => {
                         *opts = options;
                         *state = FieldState::Dropdown {
                             selected: None,
@@ -405,10 +395,7 @@ impl FormWidget {
                             scroll: 0,
                         };
                     }
-                    FieldDef::MultiSelect {
-                        options: opts,
-                        ..
-                    } => {
+                    FieldDef::MultiSelect { options: opts, .. } => {
                         let len = options.len();
                         *opts = options;
                         *state = FieldState::MultiSelect {
@@ -430,7 +417,11 @@ impl FormWidget {
                 continue;
             }
             match (def, state, &value) {
-                (FieldDef::Text { .. }, FieldState::Text { value: v, cursor }, FormValue::Text(t)) => {
+                (
+                    FieldDef::Text { .. },
+                    FieldState::Text { value: v, cursor },
+                    FormValue::Text(t),
+                ) => {
                     let truncated: String = t.chars().take(MAX_INPUT_LEN).collect();
                     *cursor = truncated.chars().count();
                     *v = truncated;
@@ -453,7 +444,11 @@ impl FormWidget {
                         }
                     }
                 }
-                (FieldDef::Checkbox { .. }, FieldState::Checkbox { checked }, FormValue::Bool(b)) => {
+                (
+                    FieldDef::Checkbox { .. },
+                    FieldState::Checkbox { checked },
+                    FormValue::Bool(b),
+                ) => {
                     *checked = *b;
                 }
                 _ => {}
@@ -497,17 +492,33 @@ impl FormWidget {
                         None
                     }
                 }
-                (Validation::MinLength(min), FieldDef::Text { .. }, FieldState::Text { value, .. }) => {
+                (
+                    Validation::MinLength(min),
+                    FieldDef::Text { .. },
+                    FieldState::Text { value, .. },
+                ) => {
                     let char_count = value.chars().count();
                     if !value.is_empty() && char_count < *min {
-                        Some(format!("{} must be at least {} characters", def.label(), min))
+                        Some(format!(
+                            "{} must be at least {} characters",
+                            def.label(),
+                            min
+                        ))
                     } else {
                         None
                     }
                 }
-                (Validation::MaxLength(max), FieldDef::Text { .. }, FieldState::Text { value, .. }) => {
+                (
+                    Validation::MaxLength(max),
+                    FieldDef::Text { .. },
+                    FieldState::Text { value, .. },
+                ) => {
                     if value.chars().count() > *max {
-                        Some(format!("{} must be at most {} characters", def.label(), max))
+                        Some(format!(
+                            "{} must be at most {} characters",
+                            def.label(),
+                            max
+                        ))
                     } else {
                         None
                     }
@@ -521,7 +532,10 @@ impl FormWidget {
                 }
                 (Validation::Cidr, FieldDef::Text { .. }, FieldState::Text { value, .. }) => {
                     if !value.is_empty() && !is_valid_ipv4_cidr(value) {
-                        Some(format!("{} must be a valid CIDR (e.g. 10.0.0.0/24)", def.label()))
+                        Some(format!(
+                            "{} must be a valid CIDR (e.g. 10.0.0.0/24)",
+                            def.label()
+                        ))
                     } else {
                         None
                     }
@@ -581,10 +595,7 @@ impl FormWidget {
                 (FieldDef::Text { .. }, FieldState::Text { value, .. }) => {
                     FormValue::Text(value.clone())
                 }
-                (
-                    FieldDef::Dropdown { options, .. },
-                    FieldState::Dropdown { selected, .. },
-                ) => {
+                (FieldDef::Dropdown { options, .. }, FieldState::Dropdown { selected, .. }) => {
                     let v = selected
                         .and_then(|i| options.get(i))
                         .map(|o| o.value.clone())
@@ -663,9 +674,7 @@ impl FormWidget {
             }
             KeyCode::Left => FormAction::Cancel,
             KeyCode::Esc => FormAction::Cancel,
-            KeyCode::Right | KeyCode::Enter => {
-                self.handle_activate(key.code)
-            }
+            KeyCode::Right | KeyCode::Enter => self.handle_activate(key.code),
             KeyCode::Char(' ') => {
                 if let Some((def, state)) = self.fields.get_mut(self.focused) {
                     match (def, state) {
@@ -716,17 +725,15 @@ impl FormWidget {
 
         if let Some((def, state)) = self.fields.get_mut(self.focused) {
             match (def, state) {
-                (
-                    FieldDef::Dropdown { options, .. },
-                    FieldState::Dropdown { open, .. },
-                ) if !options.is_empty() => {
+                (FieldDef::Dropdown { options, .. }, FieldState::Dropdown { open, .. })
+                    if !options.is_empty() =>
+                {
                     *open = true;
                     return FormAction::None;
                 }
-                (
-                    FieldDef::MultiSelect { options, .. },
-                    FieldState::MultiSelect { open, .. },
-                ) if !options.is_empty() => {
+                (FieldDef::MultiSelect { options, .. }, FieldState::MultiSelect { open, .. })
+                    if !options.is_empty() =>
+                {
                     *open = true;
                     return FormAction::None;
                 }
@@ -767,37 +774,35 @@ impl FormWidget {
                     open,
                     scroll,
                 },
-            ) => {
-                match key.code {
-                    KeyCode::Up => {
-                        let sel = selected.unwrap_or(0);
-                        *selected = Some(sel.saturating_sub(1));
-                        let s = selected.unwrap_or(0);
-                        if s < *scroll {
-                            *scroll = s;
-                        }
+            ) => match key.code {
+                KeyCode::Up => {
+                    let sel = selected.unwrap_or(0);
+                    *selected = Some(sel.saturating_sub(1));
+                    let s = selected.unwrap_or(0);
+                    if s < *scroll {
+                        *scroll = s;
                     }
-                    KeyCode::Down => {
-                        let max = options.len().saturating_sub(1);
-                        let new_sel = match *selected {
-                            None => 0,
-                            Some(s) => s.saturating_add(1).min(max),
-                        };
-                        *selected = Some(new_sel);
-                        if new_sel >= *scroll + POPUP_VISIBLE_ITEMS {
-                            *scroll = new_sel.saturating_sub(POPUP_VISIBLE_ITEMS - 1);
-                        }
-                    }
-                    KeyCode::Enter | KeyCode::Right => {
-                        *open = false;
-                        confirm_close = key.code == KeyCode::Enter;
-                    }
-                    KeyCode::Esc | KeyCode::Left => {
-                        *open = false;
-                    }
-                    _ => {}
                 }
-            }
+                KeyCode::Down => {
+                    let max = options.len().saturating_sub(1);
+                    let new_sel = match *selected {
+                        None => 0,
+                        Some(s) => s.saturating_add(1).min(max),
+                    };
+                    *selected = Some(new_sel);
+                    if new_sel >= *scroll + POPUP_VISIBLE_ITEMS {
+                        *scroll = new_sel.saturating_sub(POPUP_VISIBLE_ITEMS - 1);
+                    }
+                }
+                KeyCode::Enter | KeyCode::Right => {
+                    *open = false;
+                    confirm_close = key.code == KeyCode::Enter;
+                }
+                KeyCode::Esc | KeyCode::Left => {
+                    *open = false;
+                }
+                _ => {}
+            },
             (
                 FieldDef::MultiSelect { options, .. },
                 FieldState::MultiSelect {
@@ -805,31 +810,29 @@ impl FormWidget {
                     open,
                     scroll,
                 },
-            ) => {
-                match key.code {
-                    KeyCode::Up => {
-                        *scroll = scroll.saturating_sub(1);
-                    }
-                    KeyCode::Down => {
-                        let max = options.len().saturating_sub(1);
-                        *scroll = (*scroll).saturating_add(1).min(max);
-                    }
-                    KeyCode::Char(' ') => {
-                        let idx = *scroll;
-                        if idx < selected.len() {
-                            selected[idx] = !selected[idx];
-                        }
-                    }
-                    KeyCode::Enter | KeyCode::Right => {
-                        *open = false;
-                        confirm_close = key.code == KeyCode::Enter;
-                    }
-                    KeyCode::Esc | KeyCode::Left => {
-                        *open = false;
-                    }
-                    _ => {}
+            ) => match key.code {
+                KeyCode::Up => {
+                    *scroll = scroll.saturating_sub(1);
                 }
-            }
+                KeyCode::Down => {
+                    let max = options.len().saturating_sub(1);
+                    *scroll = (*scroll).saturating_add(1).min(max);
+                }
+                KeyCode::Char(' ') => {
+                    let idx = *scroll;
+                    if idx < selected.len() {
+                        selected[idx] = !selected[idx];
+                    }
+                }
+                KeyCode::Enter | KeyCode::Right => {
+                    *open = false;
+                    confirm_close = key.code == KeyCode::Enter;
+                }
+                KeyCode::Esc | KeyCode::Left => {
+                    *open = false;
+                }
+                _ => {}
+            },
             _ => {}
         }
 
@@ -874,15 +877,18 @@ impl FormWidget {
 
             let is_focused = i == self.focused;
             let label_style = if is_focused {
-                Theme::focus_border()
-                    .add_modifier(Modifier::BOLD)
+                Theme::focus_border().add_modifier(Modifier::BOLD)
             } else {
                 Theme::waiting()
             };
 
             let is_required = def.validations().contains(&Validation::Required);
             let label_text = if is_required {
-                format!("* {:>width$}: ", def.label(), width = label_width.saturating_sub(2))
+                format!(
+                    "* {:>width$}: ",
+                    def.label(),
+                    width = label_width.saturating_sub(2)
+                )
             } else {
                 format!("{:>width$}: ", def.label(), width = label_width)
             };
@@ -908,10 +914,7 @@ impl FormWidget {
                 let padding = " ".repeat(label_width + 2);
                 let err_line = Line::from(vec![
                     Span::raw(padding),
-                    Span::styled(
-                        format!("! {err_msg}"),
-                        Theme::error(),
-                    ),
+                    Span::styled(format!("! {err_msg}"), Theme::error()),
                 ]);
                 let err_area = Rect::new(inner.x, y, inner.width, 1);
                 frame.render_widget(Paragraph::new(err_line), err_area);
@@ -922,16 +925,16 @@ impl FormWidget {
         // Render hint at bottom
         let hint_y = (inner.y + inner.height).saturating_sub(1);
         if hint_y > y {
-            let has_required = self.fields.iter().any(|(d, _)| d.validations().contains(&Validation::Required));
+            let has_required = self
+                .fields
+                .iter()
+                .any(|(d, _)| d.validations().contains(&Validation::Required));
             let hint_text = if has_required {
                 " ↑↓ Navigate  ←/Esc Cancel  Enter Review  * = required"
             } else {
                 " ↑↓ Navigate  ←/Esc Cancel  Enter Review"
             };
-            let hint = Line::from(Span::styled(
-                hint_text,
-                Theme::disabled(),
-            ));
+            let hint = Line::from(Span::styled(hint_text, Theme::disabled()));
             let hint_area = Rect::new(inner.x, hint_y, inner.width, 1);
             frame.render_widget(Paragraph::new(hint), hint_area);
         }
@@ -970,9 +973,7 @@ impl FormWidget {
                         Span::styled(before, Style::default().fg(Color::White)),
                         Span::styled(
                             cursor_char,
-                            Style::default()
-                                .fg(Color::Black)
-                                .bg(Color::White),
+                            Style::default().fg(Color::Black).bg(Color::White),
                         ),
                         Span::styled(after, Style::default().fg(Color::White)),
                     ]
@@ -1080,9 +1081,9 @@ impl FormWidget {
                 if popup_height < 3 {
                     return; // Not enough space for popup
                 }
-                let popup_y = field_y.saturating_add(1).min(
-                    frame_h.saturating_sub(popup_height),
-                );
+                let popup_y = field_y
+                    .saturating_add(1)
+                    .min(frame_h.saturating_sub(popup_height));
                 let popup_width = available_width.min(40).min(frame_w.saturating_sub(popup_x));
                 if popup_width < 4 {
                     return;
@@ -1100,8 +1101,7 @@ impl FormWidget {
                         let is_sel = *selected == Some(i);
                         let prefix = if is_sel { "▸ " } else { "  " };
                         let style = if is_sel {
-                            Theme::focus_border()
-                                .add_modifier(Modifier::BOLD)
+                            Theme::focus_border().add_modifier(Modifier::BOLD)
                         } else {
                             Style::default().fg(Color::White)
                         };
@@ -1128,9 +1128,9 @@ impl FormWidget {
                 if popup_height < 3 {
                     return;
                 }
-                let popup_y = field_y.saturating_add(1).min(
-                    frame_h.saturating_sub(popup_height),
-                );
+                let popup_y = field_y
+                    .saturating_add(1)
+                    .min(frame_h.saturating_sub(popup_height));
                 let popup_width = available_width.min(40).min(frame_w.saturating_sub(popup_x));
                 if popup_width < 4 {
                     return;
@@ -1156,8 +1156,7 @@ impl FormWidget {
                         let check = if checked { "[✓]" } else { "[ ]" };
                         let prefix = if is_cursor { "▸" } else { " " };
                         let style = if is_cursor {
-                            Theme::focus_border()
-                                .add_modifier(Modifier::BOLD)
+                            Theme::focus_border().add_modifier(Modifier::BOLD)
                         } else {
                             Style::default().fg(Color::White)
                         };
@@ -1212,10 +1211,7 @@ impl FormWidget {
         // Confirm hint at bottom
         let hint_y = (inner.y + inner.height).saturating_sub(1);
         if hint_y > y {
-            let hint = Line::from(Span::styled(
-                " Enter Confirm  Esc Back ",
-                Theme::disabled(),
-            ));
+            let hint = Line::from(Span::styled(" Enter Confirm  Esc Back ", Theme::disabled()));
             let hint_area = Rect::new(inner.x, hint_y, inner.width, 1);
             frame.render_widget(Paragraph::new(hint), hint_area);
         }
@@ -1232,12 +1228,10 @@ impl FormWidget {
                     value.clone()
                 }
             }
-            (FieldDef::Dropdown { options, .. }, FieldState::Dropdown { selected, .. }) => {
-                selected
-                    .and_then(|i| options.get(i))
-                    .map(|o| o.display.clone())
-                    .unwrap_or_else(|| "(none)".into())
-            }
+            (FieldDef::Dropdown { options, .. }, FieldState::Dropdown { selected, .. }) => selected
+                .and_then(|i| options.get(i))
+                .map(|o| o.display.clone())
+                .unwrap_or_else(|| "(none)".into()),
             (FieldDef::MultiSelect { options, .. }, FieldState::MultiSelect { selected, .. }) => {
                 let vals: Vec<&str> = options
                     .iter()
@@ -1245,10 +1239,18 @@ impl FormWidget {
                     .filter(|(i, _)| selected.get(*i).copied().unwrap_or(false))
                     .map(|(_, o)| o.display.as_str())
                     .collect();
-                if vals.is_empty() { "(none)".into() } else { vals.join(", ") }
+                if vals.is_empty() {
+                    "(none)".into()
+                } else {
+                    vals.join(", ")
+                }
             }
             (FieldDef::Checkbox { .. }, FieldState::Checkbox { checked }) => {
-                if *checked { "Yes".into() } else { "No".into() }
+                if *checked {
+                    "Yes".into()
+                } else {
+                    "No".into()
+                }
             }
             _ => String::new(),
         }
@@ -1343,7 +1345,10 @@ mod tests {
     fn test_field_def_multiselect_builder() {
         let def = FieldDef::multiselect(
             "Networks",
-            vec![SelectOption::new("net1", "Network 1"), SelectOption::new("net2", "Network 2")],
+            vec![
+                SelectOption::new("net1", "Network 1"),
+                SelectOption::new("net2", "Network 2"),
+            ],
         );
         assert_eq!(def.name(), "Networks");
         if let FieldDef::MultiSelect { options, .. } = &def {
@@ -1359,9 +1364,19 @@ mod tests {
         assert!(matches!(text_state, FieldState::Text { .. }));
 
         let dd_state = FieldState::default_for(&FieldDef::dropdown("X", vec!["a".into()], false));
-        assert!(matches!(dd_state, FieldState::Dropdown { selected: None, open: false, .. }));
+        assert!(matches!(
+            dd_state,
+            FieldState::Dropdown {
+                selected: None,
+                open: false,
+                ..
+            }
+        ));
 
-        let ms_def = FieldDef::multiselect("X", vec![SelectOption::simple("a"), SelectOption::simple("b")]);
+        let ms_def = FieldDef::multiselect(
+            "X",
+            vec![SelectOption::simple("a"), SelectOption::simple("b")],
+        );
         let ms_state = FieldState::default_for(&ms_def);
         if let FieldState::MultiSelect { selected, .. } = ms_state {
             assert_eq!(selected.len(), 2);
@@ -1378,11 +1393,14 @@ mod tests {
 
     #[test]
     fn test_field_navigation_down_up() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::text("A", false),
-            FieldDef::text("B", false),
-            FieldDef::text("C", false),
-        ]);
+        let mut form = FormWidget::new(
+            "Test",
+            vec![
+                FieldDef::text("A", false),
+                FieldDef::text("B", false),
+                FieldDef::text("C", false),
+            ],
+        );
         assert_eq!(form.focused_index(), 0);
 
         form.handle_key(key(KeyCode::Down));
@@ -1408,10 +1426,10 @@ mod tests {
 
     #[test]
     fn test_tab_navigation() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::text("A", false),
-            FieldDef::text("B", false),
-        ]);
+        let mut form = FormWidget::new(
+            "Test",
+            vec![FieldDef::text("A", false), FieldDef::text("B", false)],
+        );
         form.handle_key(key(KeyCode::Tab));
         assert_eq!(form.focused_index(), 1);
 
@@ -1421,10 +1439,10 @@ mod tests {
 
     #[test]
     fn test_focused_field_name() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::text("Name", false),
-            FieldDef::text("Size", false),
-        ]);
+        let mut form = FormWidget::new(
+            "Test",
+            vec![FieldDef::text("Name", false), FieldDef::text("Size", false)],
+        );
         assert_eq!(form.focused_field_name(), "Name");
         form.handle_key(key(KeyCode::Down));
         assert_eq!(form.focused_field_name(), "Size");
@@ -1477,9 +1495,14 @@ mod tests {
 
     #[test]
     fn test_char_ignored_on_dropdown() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::dropdown("Type", vec!["a".into(), "b".into()], false),
-        ]);
+        let mut form = FormWidget::new(
+            "Test",
+            vec![FieldDef::dropdown(
+                "Type",
+                vec!["a".into(), "b".into()],
+                false,
+            )],
+        );
         form.handle_key(key(KeyCode::Char('x')));
         // No crash, no text state change
         assert!(matches!(form.fields()[0].1, FieldState::Dropdown { .. }));
@@ -1489,9 +1512,14 @@ mod tests {
 
     #[test]
     fn test_dropdown_open_close() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::dropdown("Type", vec!["a".into(), "b".into()], false),
-        ]);
+        let mut form = FormWidget::new(
+            "Test",
+            vec![FieldDef::dropdown(
+                "Type",
+                vec!["a".into(), "b".into()],
+                false,
+            )],
+        );
 
         // Open with Enter
         form.handle_key(key(KeyCode::Enter));
@@ -1521,9 +1549,14 @@ mod tests {
 
     #[test]
     fn test_dropdown_navigate_and_select() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::dropdown("Type", vec!["alpha".into(), "beta".into(), "gamma".into()], false),
-        ]);
+        let mut form = FormWidget::new(
+            "Test",
+            vec![FieldDef::dropdown(
+                "Type",
+                vec!["alpha".into(), "beta".into(), "gamma".into()],
+                false,
+            )],
+        );
 
         // Open
         form.handle_key(key(KeyCode::Enter));
@@ -1550,9 +1583,14 @@ mod tests {
 
     #[test]
     fn test_dropdown_navigate_clamp() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::dropdown("Type", vec!["a".into(), "b".into()], false),
-        ]);
+        let mut form = FormWidget::new(
+            "Test",
+            vec![FieldDef::dropdown(
+                "Type",
+                vec!["a".into(), "b".into()],
+                false,
+            )],
+        );
         form.handle_key(key(KeyCode::Enter)); // open
 
         // Up at top stays at 0
@@ -1573,13 +1611,17 @@ mod tests {
 
     #[test]
     fn test_multiselect_toggle() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::multiselect("Nets", vec![
-                SelectOption::simple("net1"),
-                SelectOption::simple("net2"),
-                SelectOption::simple("net3"),
-            ]),
-        ]);
+        let mut form = FormWidget::new(
+            "Test",
+            vec![FieldDef::multiselect(
+                "Nets",
+                vec![
+                    SelectOption::simple("net1"),
+                    SelectOption::simple("net2"),
+                    SelectOption::simple("net3"),
+                ],
+            )],
+        );
 
         // Open
         form.handle_key(key(KeyCode::Enter));
@@ -1611,9 +1653,13 @@ mod tests {
 
     #[test]
     fn test_multiselect_close() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::multiselect("Nets", vec![SelectOption::simple("net1")]),
-        ]);
+        let mut form = FormWidget::new(
+            "Test",
+            vec![FieldDef::multiselect(
+                "Nets",
+                vec![SelectOption::simple("net1")],
+            )],
+        );
         form.handle_key(key(KeyCode::Enter)); // open
         let action = form.handle_key(key(KeyCode::Esc)); // close
         if let FieldState::MultiSelect { open, .. } = &form.fields()[0].1 {
@@ -1640,10 +1686,10 @@ mod tests {
     #[test]
     fn test_checkbox_enter_toggles_on_non_last_field() {
         // Checkbox NOT as last field: Enter toggles
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::checkbox("Public"),
-            FieldDef::text("Name", false),
-        ]);
+        let mut form = FormWidget::new(
+            "Test",
+            vec![FieldDef::checkbox("Public"), FieldDef::text("Name", false)],
+        );
         form.handle_key(key(KeyCode::Enter));
         if let FieldState::Checkbox { checked } = &form.fields()[0].1 {
             assert!(*checked);
@@ -1662,10 +1708,10 @@ mod tests {
     #[test]
     fn test_checkbox_toggle_right() {
         // Right key on checkbox: toggle (regardless of position)
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::checkbox("Public"),
-            FieldDef::text("Name", false),
-        ]);
+        let mut form = FormWidget::new(
+            "Test",
+            vec![FieldDef::checkbox("Public"), FieldDef::text("Name", false)],
+        );
         form.handle_key(key(KeyCode::Right));
         if let FieldState::Checkbox { checked } = &form.fields()[0].1 {
             assert!(*checked);
@@ -1685,9 +1731,10 @@ mod tests {
 
     #[test]
     fn test_validate_required_dropdown() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::dropdown("Flavor", vec!["m1.small".into()], true),
-        ]);
+        let mut form = FormWidget::new(
+            "Test",
+            vec![FieldDef::dropdown("Flavor", vec!["m1.small".into()], true)],
+        );
         let action = form.validate_and_submit();
         assert!(matches!(action, FormAction::None));
         assert_eq!(form.errors().len(), 1);
@@ -1767,11 +1814,14 @@ mod tests {
 
     #[test]
     fn test_validate_focuses_first_error() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::text("A", false),
-            FieldDef::text("B", true),
-            FieldDef::text("C", true),
-        ]);
+        let mut form = FormWidget::new(
+            "Test",
+            vec![
+                FieldDef::text("A", false),
+                FieldDef::text("B", true),
+                FieldDef::text("C", true),
+            ],
+        );
         form.handle_key(key(KeyCode::Down)); // focus B
         form.handle_key(key(KeyCode::Down)); // focus C
         // A is not required, B and C are required (empty)
@@ -1783,10 +1833,10 @@ mod tests {
 
     #[test]
     fn test_submit_with_valid_data() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::text("Name", true),
-            FieldDef::checkbox("Public"),
-        ]);
+        let mut form = FormWidget::new(
+            "Test",
+            vec![FieldDef::text("Name", true), FieldDef::checkbox("Public")],
+        );
         form.handle_key(key(KeyCode::Char('x')));
         form.validate_and_submit();
         let action = form.confirm_submit();
@@ -1800,9 +1850,14 @@ mod tests {
 
     #[test]
     fn test_submit_dropdown_value() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::dropdown("Flavor", vec!["small".into(), "large".into()], false),
-        ]);
+        let mut form = FormWidget::new(
+            "Test",
+            vec![FieldDef::dropdown(
+                "Flavor",
+                vec!["small".into(), "large".into()],
+                false,
+            )],
+        );
         // Open, Down twice (0 → 1 = "large"), close
         form.handle_key(key(KeyCode::Enter));
         form.handle_key(key(KeyCode::Down)); // selects index 0 ("small")
@@ -1812,7 +1867,10 @@ mod tests {
         form.validate_and_submit();
         let action = form.confirm_submit();
         if let FormAction::Submit(values) = action {
-            assert_eq!(values.get("Flavor"), Some(&FormValue::Selected("large".into())));
+            assert_eq!(
+                values.get("Flavor"),
+                Some(&FormValue::Selected("large".into()))
+            );
         } else {
             panic!("Expected Submit");
         }
@@ -1820,13 +1878,17 @@ mod tests {
 
     #[test]
     fn test_submit_multiselect_values() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::multiselect("Nets", vec![
-                SelectOption::new("n1", "Net 1"),
-                SelectOption::new("n2", "Net 2"),
-                SelectOption::new("n3", "Net 3"),
-            ]),
-        ]);
+        let mut form = FormWidget::new(
+            "Test",
+            vec![FieldDef::multiselect(
+                "Nets",
+                vec![
+                    SelectOption::new("n1", "Net 1"),
+                    SelectOption::new("n2", "Net 2"),
+                    SelectOption::new("n3", "Net 3"),
+                ],
+            )],
+        );
         // Open, toggle first, down, toggle second, close
         form.handle_key(key(KeyCode::Enter));
         form.handle_key(key(KeyCode::Char(' ')));
@@ -1862,9 +1924,10 @@ mod tests {
 
     #[test]
     fn test_esc_in_dropdown_closes_not_cancels() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::dropdown("Type", vec!["a".into()], false),
-        ]);
+        let mut form = FormWidget::new(
+            "Test",
+            vec![FieldDef::dropdown("Type", vec!["a".into()], false)],
+        );
         form.handle_key(key(KeyCode::Enter)); // open
         let action = form.handle_key(key(KeyCode::Esc)); // close popup, not cancel form
         assert!(matches!(action, FormAction::None));
@@ -1875,9 +1938,10 @@ mod tests {
 
     #[test]
     fn test_left_in_dropdown_closes_not_cancels() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::dropdown("Type", vec!["a".into()], false),
-        ]);
+        let mut form = FormWidget::new(
+            "Test",
+            vec![FieldDef::dropdown("Type", vec!["a".into()], false)],
+        );
         form.handle_key(key(KeyCode::Right)); // open
         let action = form.handle_key(key(KeyCode::Left)); // close popup
         assert!(matches!(action, FormAction::None));
@@ -1885,9 +1949,7 @@ mod tests {
 
     #[test]
     fn test_enter_on_last_field_enters_confirming() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::text("Name", false),
-        ]);
+        let mut form = FormWidget::new("Test", vec![FieldDef::text("Name", false)]);
         let action = form.handle_key(key(KeyCode::Enter));
         assert!(matches!(action, FormAction::None));
         assert_eq!(form.phase(), FormPhase::Confirming);
@@ -1897,14 +1959,15 @@ mod tests {
 
     #[test]
     fn test_set_field_options() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::dropdown("Flavor", vec![], false),
-        ]);
+        let mut form = FormWidget::new("Test", vec![FieldDef::dropdown("Flavor", vec![], false)]);
 
-        form.set_field_options("Flavor", vec![
-            SelectOption::new("s1", "Small"),
-            SelectOption::new("l1", "Large"),
-        ]);
+        form.set_field_options(
+            "Flavor",
+            vec![
+                SelectOption::new("s1", "Small"),
+                SelectOption::new("l1", "Large"),
+            ],
+        );
 
         if let (FieldDef::Dropdown { options, .. }, _) = &form.fields()[0] {
             assert_eq!(options.len(), 2);
@@ -1926,9 +1989,14 @@ mod tests {
 
     #[test]
     fn test_set_field_value_dropdown() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::dropdown("Size", vec!["small".into(), "large".into()], false),
-        ]);
+        let mut form = FormWidget::new(
+            "Test",
+            vec![FieldDef::dropdown(
+                "Size",
+                vec!["small".into(), "large".into()],
+                false,
+            )],
+        );
         form.set_field_value("Size", FormValue::Selected("large".into()));
         if let (_, FieldState::Dropdown { selected, .. }) = &form.fields()[0] {
             assert_eq!(*selected, Some(1));
@@ -1946,14 +2014,21 @@ mod tests {
 
     #[test]
     fn test_set_field_value_multiselect() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::multiselect("Nets", vec![
-                SelectOption::new("n1", "Net 1"),
-                SelectOption::new("n2", "Net 2"),
-                SelectOption::new("n3", "Net 3"),
-            ]),
-        ]);
-        form.set_field_value("Nets", FormValue::MultiSelected(vec!["n1".into(), "n3".into()]));
+        let mut form = FormWidget::new(
+            "Test",
+            vec![FieldDef::multiselect(
+                "Nets",
+                vec![
+                    SelectOption::new("n1", "Net 1"),
+                    SelectOption::new("n2", "Net 2"),
+                    SelectOption::new("n3", "Net 3"),
+                ],
+            )],
+        );
+        form.set_field_value(
+            "Nets",
+            FormValue::MultiSelected(vec!["n1".into(), "n3".into()]),
+        );
         if let (_, FieldState::MultiSelect { selected, .. }) = &form.fields()[0] {
             assert!(selected[0]);
             assert!(!selected[1]);
@@ -1965,11 +2040,14 @@ mod tests {
 
     #[test]
     fn test_enter_on_middle_text_field_does_not_submit() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::text("Name", false),
-            FieldDef::text("Size", false),
-            FieldDef::text("Zone", false),
-        ]);
+        let mut form = FormWidget::new(
+            "Test",
+            vec![
+                FieldDef::text("Name", false),
+                FieldDef::text("Size", false),
+                FieldDef::text("Zone", false),
+            ],
+        );
         // Focus is on field 0 (not last)
         let action = form.handle_key(key(KeyCode::Enter));
         assert!(matches!(action, FormAction::None));
@@ -1980,16 +2058,17 @@ mod tests {
     #[test]
     fn test_dropdown_scroll_tracks_down() {
         let opts: Vec<String> = (0..20).map(|i| format!("opt-{i}")).collect();
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::dropdown("Big", opts, false),
-        ]);
+        let mut form = FormWidget::new("Test", vec![FieldDef::dropdown("Big", opts, false)]);
         form.handle_key(key(KeyCode::Enter)); // open
 
         // Navigate down past POPUP_VISIBLE_ITEMS (first Down = index 0)
         for _ in 0..15 {
             form.handle_key(key(KeyCode::Down));
         }
-        if let FieldState::Dropdown { selected, scroll, .. } = &form.fields()[0].1 {
+        if let FieldState::Dropdown {
+            selected, scroll, ..
+        } = &form.fields()[0].1
+        {
             assert_eq!(*selected, Some(14)); // 15 Downs from None: 0..14
             assert!(*scroll > 0, "scroll should have advanced but was {scroll}");
         }
@@ -2087,10 +2166,13 @@ mod tests {
 
     #[test]
     fn test_submit_when_last_field_is_dropdown() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::text("Name", false),
-            FieldDef::dropdown("Type", vec!["a".into(), "b".into()], false),
-        ]);
+        let mut form = FormWidget::new(
+            "Test",
+            vec![
+                FieldDef::text("Name", false),
+                FieldDef::dropdown("Type", vec!["a".into(), "b".into()], false),
+            ],
+        );
         // Type name
         form.handle_key(key(KeyCode::Char('x')));
         // Move to last field (Dropdown)
@@ -2105,9 +2187,7 @@ mod tests {
 
     #[test]
     fn test_submit_when_last_field_is_checkbox() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::checkbox("Accept"),
-        ]);
+        let mut form = FormWidget::new("Test", vec![FieldDef::checkbox("Accept")]);
         // Toggle checkbox (Enter toggles but doesn't submit for checkbox)
         form.handle_key(key(KeyCode::Enter));
         // but we need a way to submit. Use Tab to stay, then test validate_and_submit directly.
@@ -2120,9 +2200,14 @@ mod tests {
 
     #[test]
     fn test_dropdown_first_down_selects_index_0() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::dropdown("Type", vec!["alpha".into(), "beta".into(), "gamma".into()], false),
-        ]);
+        let mut form = FormWidget::new(
+            "Test",
+            vec![FieldDef::dropdown(
+                "Type",
+                vec!["alpha".into(), "beta".into(), "gamma".into()],
+                false,
+            )],
+        );
         form.handle_key(key(KeyCode::Enter)); // open
         form.handle_key(key(KeyCode::Down)); // first down
         if let FieldState::Dropdown { selected, .. } = &form.fields()[0].1 {
@@ -2156,10 +2241,10 @@ mod tests {
     #[test]
     #[should_panic(expected = "unique")]
     fn test_duplicate_field_names_panics_in_debug() {
-        let _form = FormWidget::new("Test", vec![
-            FieldDef::text("Name", false),
-            FieldDef::text("Name", false),
-        ]);
+        let _form = FormWidget::new(
+            "Test",
+            vec![FieldDef::text("Name", false), FieldDef::text("Name", false)],
+        );
     }
 
     // -- CIDR helper --------------------------------------------------------
@@ -2169,17 +2254,17 @@ mod tests {
         assert!(is_valid_ipv4_cidr("10.0.0.0/24"));
         assert!(is_valid_ipv4_cidr("192.168.1.0/16"));
         assert!(is_valid_ipv4_cidr("0.0.0.0/0"));
-        assert!(!is_valid_ipv4_cidr("10.0.0.0"));       // no prefix
-        assert!(!is_valid_ipv4_cidr("10.0.0.0/33"));     // prefix > 32
-        assert!(!is_valid_ipv4_cidr("10.0.0/24"));       // only 3 octets
-        assert!(!is_valid_ipv4_cidr("abc.0.0.0/24"));    // non-numeric
+        assert!(!is_valid_ipv4_cidr("10.0.0.0")); // no prefix
+        assert!(!is_valid_ipv4_cidr("10.0.0.0/33")); // prefix > 32
+        assert!(!is_valid_ipv4_cidr("10.0.0/24")); // only 3 octets
+        assert!(!is_valid_ipv4_cidr("abc.0.0.0/24")); // non-numeric
     }
 
     // -- Render tests -------------------------------------------------------
 
     fn render_to_buffer(form: &FormWidget, width: u16, height: u16) -> String {
-        use ratatui::backend::TestBackend;
         use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
 
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -2203,20 +2288,24 @@ mod tests {
 
     #[test]
     fn test_render_shows_title() {
-        let form = FormWidget::new("Create Server", vec![
-            FieldDef::text("Name", true),
-        ]);
+        let form = FormWidget::new("Create Server", vec![FieldDef::text("Name", true)]);
         let output = render_to_buffer(&form, 50, 10);
-        assert!(output.contains("Create Server"), "Title not found in render output");
+        assert!(
+            output.contains("Create Server"),
+            "Title not found in render output"
+        );
     }
 
     #[test]
     fn test_render_shows_field_labels() {
-        let form = FormWidget::new("Test", vec![
-            FieldDef::text("Name", false),
-            FieldDef::dropdown("Flavor", vec!["m1.small".into()], false),
-            FieldDef::checkbox("Public"),
-        ]);
+        let form = FormWidget::new(
+            "Test",
+            vec![
+                FieldDef::text("Name", false),
+                FieldDef::dropdown("Flavor", vec!["m1.small".into()], false),
+                FieldDef::checkbox("Public"),
+            ],
+        );
         let output = render_to_buffer(&form, 60, 12);
         assert!(output.contains("Name"), "Name label not found");
         assert!(output.contains("Flavor"), "Flavor label not found");
@@ -2225,9 +2314,7 @@ mod tests {
 
     #[test]
     fn test_render_shows_checkbox_state() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::checkbox("Accept"),
-        ]);
+        let mut form = FormWidget::new("Test", vec![FieldDef::checkbox("Accept")]);
         let output = render_to_buffer(&form, 40, 8);
         assert!(output.contains("[ ]"), "Unchecked state not found");
 
@@ -2238,9 +2325,10 @@ mod tests {
 
     #[test]
     fn test_render_shows_dropdown_arrow() {
-        let form = FormWidget::new("Test", vec![
-            FieldDef::dropdown("Type", vec!["a".into()], false),
-        ]);
+        let form = FormWidget::new(
+            "Test",
+            vec![FieldDef::dropdown("Type", vec!["a".into()], false)],
+        );
         let output = render_to_buffer(&form, 40, 8);
         assert!(
             output.contains('▼') || output.contains("(select)"),
@@ -2250,9 +2338,7 @@ mod tests {
 
     #[test]
     fn test_render_shows_validation_error() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::text("Name", true),
-        ]);
+        let mut form = FormWidget::new("Test", vec![FieldDef::text("Name", true)]);
         form.validate_and_submit();
         let output = render_to_buffer(&form, 50, 10);
         assert!(output.contains("required"), "Validation error not shown");
@@ -2260,19 +2346,24 @@ mod tests {
 
     #[test]
     fn test_render_no_panic_on_small_area() {
-        let form = FormWidget::new("Test", vec![
-            FieldDef::text("Name", false),
-            FieldDef::text("Size", false),
-        ]);
+        let form = FormWidget::new(
+            "Test",
+            vec![FieldDef::text("Name", false), FieldDef::text("Size", false)],
+        );
         // Should not panic even with tiny area
         let _output = render_to_buffer(&form, 5, 3);
     }
 
     #[test]
     fn test_render_popup_on_small_area_no_panic() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::dropdown("Type", vec!["a".into(), "b".into(), "c".into()], false),
-        ]);
+        let mut form = FormWidget::new(
+            "Test",
+            vec![FieldDef::dropdown(
+                "Type",
+                vec!["a".into(), "b".into(), "c".into()],
+                false,
+            )],
+        );
         // Open popup
         form.handle_key(key(KeyCode::Enter));
         // Render on very small area — must not panic from u16 underflow
@@ -2281,10 +2372,13 @@ mod tests {
 
     #[test]
     fn test_render_popup_with_errors_above() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::text("Name", true),
-            FieldDef::dropdown("Type", vec!["a".into(), "b".into()], false),
-        ]);
+        let mut form = FormWidget::new(
+            "Test",
+            vec![
+                FieldDef::text("Name", true),
+                FieldDef::dropdown("Type", vec!["a".into(), "b".into()], false),
+            ],
+        );
         // Trigger validation error on Name
         form.validate_and_submit();
         // Move to dropdown and open popup
@@ -2296,9 +2390,7 @@ mod tests {
 
     #[test]
     fn test_render_shows_text_value() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::text("Name", false),
-        ]);
+        let mut form = FormWidget::new("Test", vec![FieldDef::text("Name", false)]);
         form.handle_key(key(KeyCode::Char('h')));
         form.handle_key(key(KeyCode::Char('i')));
         let output = render_to_buffer(&form, 40, 8);
@@ -2307,46 +2399,62 @@ mod tests {
 
     #[test]
     fn test_render_required_asterisk() {
-        let form = FormWidget::new("Test", vec![
-            FieldDef::text("Name", true),
-            FieldDef::text("Description", false),
-        ]);
+        let form = FormWidget::new(
+            "Test",
+            vec![
+                FieldDef::text("Name", true),
+                FieldDef::text("Description", false),
+            ],
+        );
         let output = render_to_buffer(&form, 60, 10);
         // Check that Name line has * but Description line doesn't
-        let name_line = output.lines().find(|l| l.contains("Name")).expect("Name line not found");
-        assert!(name_line.contains("*"), "Required Name field missing * indicator");
-        let desc_line = output.lines().find(|l| l.contains("Description")).expect("Desc line not found");
-        assert!(!desc_line.contains("*"), "Optional Description should not have *");
+        let name_line = output
+            .lines()
+            .find(|l| l.contains("Name"))
+            .expect("Name line not found");
+        assert!(
+            name_line.contains("*"),
+            "Required Name field missing * indicator"
+        );
+        let desc_line = output
+            .lines()
+            .find(|l| l.contains("Description"))
+            .expect("Desc line not found");
+        assert!(
+            !desc_line.contains("*"),
+            "Optional Description should not have *"
+        );
     }
 
     #[test]
     fn test_form_initial_phase_is_editing() {
-        let form = FormWidget::new("Test", vec![
-            FieldDef::text("Name", true),
-        ]);
+        let form = FormWidget::new("Test", vec![FieldDef::text("Name", true)]);
         assert_eq!(form.phase(), FormPhase::Editing);
     }
 
     #[test]
     fn test_submit_enters_confirming_phase() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::text("Name", true),
-        ]);
+        let mut form = FormWidget::new("Test", vec![FieldDef::text("Name", true)]);
         // Type a value so validation passes
         form.handle_key(key(KeyCode::Char('s')));
         form.handle_key(key(KeyCode::Char('v')));
         // Enter on last field triggers submit flow
         let action = form.handle_key(key(KeyCode::Enter));
         // Should NOT submit yet — should enter Confirming phase
-        assert!(matches!(action, FormAction::None), "Should not submit directly");
-        assert_eq!(form.phase(), FormPhase::Confirming, "Should be in Confirming phase");
+        assert!(
+            matches!(action, FormAction::None),
+            "Should not submit directly"
+        );
+        assert_eq!(
+            form.phase(),
+            FormPhase::Confirming,
+            "Should be in Confirming phase"
+        );
     }
 
     #[test]
     fn test_confirming_enter_submits() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::text("Name", false),
-        ]);
+        let mut form = FormWidget::new("Test", vec![FieldDef::text("Name", false)]);
         form.handle_key(key(KeyCode::Char('x')));
         form.handle_key(key(KeyCode::Enter)); // enters Confirming
         assert_eq!(form.phase(), FormPhase::Confirming);
@@ -2359,9 +2467,7 @@ mod tests {
 
     #[test]
     fn test_confirming_esc_returns_to_editing() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::text("Name", false),
-        ]);
+        let mut form = FormWidget::new("Test", vec![FieldDef::text("Name", false)]);
         form.handle_key(key(KeyCode::Enter)); // enters Confirming
         assert_eq!(form.phase(), FormPhase::Confirming);
         let action = form.handle_key(key(KeyCode::Esc)); // cancel
@@ -2371,10 +2477,10 @@ mod tests {
 
     #[test]
     fn test_render_confirm_view_shows_values() {
-        let mut form = FormWidget::new("Create Server", vec![
-            FieldDef::text("Name", true),
-            FieldDef::text("Zone", false),
-        ]);
+        let mut form = FormWidget::new(
+            "Create Server",
+            vec![FieldDef::text("Name", true), FieldDef::text("Zone", false)],
+        );
         form.handle_key(key(KeyCode::Char('w')));
         form.handle_key(key(KeyCode::Char('e')));
         form.handle_key(key(KeyCode::Char('b')));
@@ -2387,35 +2493,49 @@ mod tests {
         assert_eq!(form.phase(), FormPhase::Confirming);
         let output = render_to_buffer(&form, 60, 15);
         // Confirm view should show "Confirm" in title
-        assert!(output.contains("Confirm"), "Confirm view should show Confirm title");
+        assert!(
+            output.contains("Confirm"),
+            "Confirm view should show Confirm title"
+        );
         // Confirm view should show field values
-        assert!(output.contains("web"), "Confirm view should show Name value");
+        assert!(
+            output.contains("web"),
+            "Confirm view should show Name value"
+        );
         assert!(output.contains("az"), "Confirm view should show Zone value");
         // Should show confirm-specific hint (different from editing hint)
-        assert!(output.contains("Enter Confirm"), "Confirm view should show Enter Confirm hint");
+        assert!(
+            output.contains("Enter Confirm"),
+            "Confirm view should show Enter Confirm hint"
+        );
     }
 
     #[test]
     fn test_confirm_view_masks_password() {
-        let mut form = FormWidget::new("Test", vec![
-            FieldDef::password("Secret", true),
-        ]);
+        let mut form = FormWidget::new("Test", vec![FieldDef::password("Secret", true)]);
         for c in "abc".chars() {
             form.handle_key(key(KeyCode::Char(c)));
         }
         form.handle_key(key(KeyCode::Enter)); // Confirming
         assert_eq!(form.phase(), FormPhase::Confirming);
         let output = render_to_buffer(&form, 50, 10);
-        assert!(output.contains("***"), "Password should be masked in confirm view");
-        assert!(!output.contains("abc"), "Password plaintext should not appear");
+        assert!(
+            output.contains("***"),
+            "Password should be masked in confirm view"
+        );
+        assert!(
+            !output.contains("abc"),
+            "Password plaintext should not appear"
+        );
     }
 
     #[test]
     fn test_render_hint_shows_required_legend() {
-        let form = FormWidget::new("Test", vec![
-            FieldDef::text("Name", true),
-        ]);
+        let form = FormWidget::new("Test", vec![FieldDef::text("Name", true)]);
         let output = render_to_buffer(&form, 60, 10);
-        assert!(output.contains("* = required"), "Required legend not shown in hint");
+        assert!(
+            output.contains("* = required"),
+            "Required legend not shown in hint"
+        );
     }
 }

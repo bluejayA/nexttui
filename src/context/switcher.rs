@@ -52,7 +52,13 @@ impl ContextSwitcher {
         session: Arc<dyn ContextSessionPort>,
         history: Arc<SyncMutex<ContextHistoryStore>>,
     ) -> Self {
-        Self { state, cancellation, resolver, session, history }
+        Self {
+            state,
+            cancellation,
+            resolver,
+            session,
+            history,
+        }
     }
 
     pub async fn switch(
@@ -167,10 +173,7 @@ impl ContextSwitcher {
         Ok((new_epoch, snapshot))
     }
 
-    async fn run_transition(
-        &self,
-        handle: &mut SessionHandle,
-    ) -> Result<(), SwitchError> {
+    async fn run_transition(&self, handle: &mut SessionHandle) -> Result<(), SwitchError> {
         self.session.rescope(handle).await?;
         self.session.refresh_catalog(handle).await?;
         Ok(())
@@ -222,10 +225,7 @@ mod tests {
 
     #[async_trait]
     impl ProjectDirectoryPort for FakeDirectory {
-        async fn list_projects(
-            &self,
-            cloud: &str,
-        ) -> Result<Vec<ProjectCandidate>, SwitchError> {
+        async fn list_projects(&self, cloud: &str) -> Result<Vec<ProjectCandidate>, SwitchError> {
             Ok(self
                 .data
                 .lock()
@@ -299,7 +299,14 @@ mod tests {
             session.clone() as Arc<dyn ContextSessionPort>,
             history.clone(),
         );
-        Fixture { switcher, session, epoch, cancellation, state, history }
+        Fixture {
+            switcher,
+            session,
+            epoch,
+            cancellation,
+            state,
+            history,
+        }
     }
 
     fn default_fixture() -> Fixture {
@@ -360,17 +367,17 @@ mod tests {
 
     #[tokio::test]
     async fn rescope_failure_rolls_back_and_resets_state() {
-        let session = MockContextSession::new(
-            scope("admin"),
-            token("old", "admin"),
-            token("new", "demo"),
-        )
-        .with_rescope_failure(SwitchError::RescopeRejected("forbidden".into()));
+        let session =
+            MockContextSession::new(scope("admin"), token("old", "admin"), token("new", "demo"))
+                .with_rescope_failure(SwitchError::RescopeRejected("forbidden".into()));
         let f = fixture_with(session);
 
         let (err_epoch, err) = f.switcher.switch(by_name("demo")).await.unwrap_err();
         assert!(matches!(err, SwitchError::RescopeRejected(_)));
-        assert_eq!(err_epoch, 1, "post-begin error stamps with the attempt's epoch");
+        assert_eq!(
+            err_epoch, 1,
+            "post-begin error stamps with the attempt's epoch"
+        );
         assert_eq!(
             f.session.transition_steps(),
             vec![
@@ -386,12 +393,9 @@ mod tests {
 
     #[tokio::test]
     async fn refresh_failure_rolls_back() {
-        let session = MockContextSession::new(
-            scope("admin"),
-            token("old", "admin"),
-            token("new", "demo"),
-        )
-        .with_refresh_failure(SwitchError::CatalogFailed("timeout".into()));
+        let session =
+            MockContextSession::new(scope("admin"), token("old", "admin"), token("new", "demo"))
+                .with_refresh_failure(SwitchError::CatalogFailed("timeout".into()));
         let f = fixture_with(session);
 
         let (_, err) = f.switcher.switch(by_name("demo")).await.unwrap_err();
@@ -410,12 +414,9 @@ mod tests {
 
     #[tokio::test]
     async fn begin_failure_does_not_call_rollback() {
-        let session = MockContextSession::new(
-            scope("admin"),
-            token("old", "admin"),
-            token("new", "demo"),
-        )
-        .with_begin_failure(SwitchError::Unsupported("bad cloud".into()));
+        let session =
+            MockContextSession::new(scope("admin"), token("old", "admin"), token("new", "demo"))
+                .with_begin_failure(SwitchError::Unsupported("bad cloud".into()));
         let f = fixture_with(session);
 
         let (_, err) = f.switcher.switch(by_name("demo")).await.unwrap_err();
@@ -426,12 +427,9 @@ mod tests {
 
     #[tokio::test]
     async fn commit_self_revert_surfaces_commit_failed() {
-        let session = MockContextSession::new(
-            scope("admin"),
-            token("old", "admin"),
-            token("new", "demo"),
-        )
-        .with_partial_commit_failure();
+        let session =
+            MockContextSession::new(scope("admin"), token("old", "admin"), token("new", "demo"))
+                .with_partial_commit_failure();
         let f = fixture_with(session);
 
         let (_, err) = f.switcher.switch(by_name("demo")).await.unwrap_err();
@@ -442,7 +440,10 @@ mod tests {
             .iter()
             .filter(|s| matches!(s, TransitionStep::Rollback))
             .count();
-        assert_eq!(rollback_count, 1, "only commit's internal rollback, not a caller rollback");
+        assert_eq!(
+            rollback_count, 1,
+            "only commit's internal rollback, not a caller rollback"
+        );
         assert!(f.state.is_idle());
     }
 
@@ -469,7 +470,13 @@ mod tests {
         f.switcher.switch(by_name("admin")).await.unwrap();
         // After admin switch, history stores the pre-switch context (demo).
         assert_eq!(
-            f.history.lock().unwrap().previous().unwrap().target.project_name,
+            f.history
+                .lock()
+                .unwrap()
+                .previous()
+                .unwrap()
+                .target
+                .project_name,
             "demo"
         );
 
@@ -506,7 +513,13 @@ mod tests {
         assert!(matches!(err, SwitchError::InProgress));
         // History entry must still be there for a retry.
         assert_eq!(
-            f.history.lock().unwrap().previous().unwrap().target.project_name,
+            f.history
+                .lock()
+                .unwrap()
+                .previous()
+                .unwrap()
+                .target
+                .project_name,
             "demo"
         );
     }

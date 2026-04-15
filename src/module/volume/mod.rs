@@ -3,12 +3,12 @@ pub mod view_model;
 use std::collections::HashSet;
 
 use crossterm::event::{KeyCode, KeyEvent};
-use ratatui::layout::Rect;
 use ratatui::Frame;
+use ratatui::layout::Rect;
 
 use crate::action::Action;
-use crate::context::ActionSender;
 use crate::component::Component;
+use crate::context::ActionSender;
 use crate::event::AppEvent;
 use crate::infra::transition_guard::is_volume_in_transition;
 use crate::models::cinder::Volume;
@@ -20,7 +20,9 @@ use crate::ui::form::{FormAction, FormWidget};
 use crate::ui::resource_list::{ResourceList, Row};
 use crate::ui::select_popup::{ItemHint, SelectItem, SelectPopup, SelectResult};
 
-use self::view_model::{volume_columns, volume_create_defs, volume_detail_data_with_servers, volume_to_row_with_servers};
+use self::view_model::{
+    volume_columns, volume_create_defs, volume_detail_data_with_servers, volume_to_row_with_servers,
+};
 
 pub struct VolumeModule {
     view_state: ViewState,
@@ -79,7 +81,10 @@ impl VolumeModule {
     }
 
     fn rows(&self) -> Vec<Row> {
-        self.volumes.iter().map(|v| volume_to_row_with_servers(v, self.all_tenants, &self.cached_servers)).collect()
+        self.volumes
+            .iter()
+            .map(|v| volume_to_row_with_servers(v, self.all_tenants, &self.cached_servers))
+            .collect()
     }
 
     fn resolve_action(pending: PendingAction) -> Option<Action> {
@@ -87,17 +92,38 @@ impl VolumeModule {
             PendingAction::DeleteVolume { id, .. } => {
                 Some(Action::DeleteVolume { id, force: false })
             }
-            PendingAction::AttachVolume { volume_id, server_id, device } => {
-                Some(Action::AttachVolume { volume_id, server_id, device })
-            }
-            PendingAction::DetachVolume { volume_id, server_id, attachment_id } => {
-                Some(Action::DetachVolume { volume_id, server_id, attachment_id })
-            }
-            PendingAction::ForceDetachVolume { volume_id, server_id, attachment_id } => {
-                Some(Action::ForceDetachVolume { volume_id, server_id, attachment_id })
-            }
+            PendingAction::AttachVolume {
+                volume_id,
+                server_id,
+                device,
+            } => Some(Action::AttachVolume {
+                volume_id,
+                server_id,
+                device,
+            }),
+            PendingAction::DetachVolume {
+                volume_id,
+                server_id,
+                attachment_id,
+            } => Some(Action::DetachVolume {
+                volume_id,
+                server_id,
+                attachment_id,
+            }),
+            PendingAction::ForceDetachVolume {
+                volume_id,
+                server_id,
+                attachment_id,
+            } => Some(Action::ForceDetachVolume {
+                volume_id,
+                server_id,
+                attachment_id,
+            }),
             PendingAction::ForceResetVolumeState { volume_id } => {
-                Some(Action::ForceResetVolumeState { volume_id, target_state: "available".into() })
+                Some(Action::ForceResetVolumeState {
+                    volume_id,
+                    target_state: "available".into(),
+                })
             }
             _ => None,
         }
@@ -137,7 +163,8 @@ impl VolumeModule {
         vol.attachments
             .iter()
             .map(|a| {
-                let server_name = self.cached_servers
+                let server_name = self
+                    .cached_servers
                     .iter()
                     .find(|s| s.id == a.server_id)
                     .map(|s| s.name.as_str())
@@ -289,22 +316,18 @@ impl VolumeModule {
                 self.view_state = ViewState::List;
                 None
             }
-            KeyCode::Char('x') => {
-                self.handle_detach_key()
-            }
-            KeyCode::Char('F') if self.is_admin => {
-                self.handle_force_detach_key()
-            }
-            KeyCode::Char('R') if self.is_admin => {
-                self.handle_state_reset_key()
-            }
+            KeyCode::Char('x') => self.handle_detach_key(),
+            KeyCode::Char('F') if self.is_admin => self.handle_force_detach_key(),
+            KeyCode::Char('R') if self.is_admin => self.handle_state_reset_key(),
             _ => None,
         }
     }
 
     fn handle_attach_server_selected(&mut self, server_id: String) -> Option<Action> {
         if let Some(vol) = self.selected_volume().filter(|v| v.status == "available") {
-            let server_name = self.cached_servers.iter()
+            let server_name = self
+                .cached_servers
+                .iter()
                 .find(|s| s.id == server_id)
                 .map(|s| s.name.as_str())
                 .unwrap_or("unknown");
@@ -330,7 +353,13 @@ impl VolumeModule {
             ViewState::Detail(ref id) => id.clone(),
             _ => return None,
         };
-        if let Some(vol) = self.volumes.iter().find(|v| v.id == vol_id).cloned().filter(|v| v.status == "in-use") {
+        if let Some(vol) = self
+            .volumes
+            .iter()
+            .find(|v| v.id == vol_id)
+            .cloned()
+            .filter(|v| v.status == "in-use")
+        {
             self.open_detach_confirm(&vol, &selected_id);
         }
         None
@@ -363,7 +392,8 @@ impl VolumeModule {
         let att = vol.attachments.iter().find(|a| a.id == attachment_id);
         let Some(att) = att else { return };
 
-        let server_name = self.cached_servers
+        let server_name = self
+            .cached_servers
             .iter()
             .find(|s| s.id == att.server_id)
             .map(|s| s.name.as_str())
@@ -427,12 +457,8 @@ impl VolumeModule {
 
                 let name = vol.name.as_deref().unwrap_or("-");
                 let first_att = vol.attachments.first();
-                let server_id = first_att
-                    .map(|a| a.server_id.clone())
-                    .unwrap_or_default();
-                let attachment_id = first_att
-                    .map(|a| a.id.clone())
-                    .unwrap_or_default();
+                let server_id = first_att.map(|a| a.server_id.clone()).unwrap_or_default();
+                let attachment_id = first_att.map(|a| a.id.clone()).unwrap_or_default();
                 let details = Self::volume_detail_lines(vol);
                 let mut details_with_warn = details;
                 details_with_warn.push("  WARNING: May cause data corruption!".into());
@@ -504,39 +530,47 @@ impl VolumeModule {
                         _ => None,
                     })
                     .unwrap_or(1);
-                let volume_type = values
-                    .get("Type")
-                    .and_then(|v| match v {
-                        crate::ui::form::FormValue::Text(s) => {
-                            if s.is_empty() { None } else { Some(s.clone()) }
+                let volume_type = values.get("Type").and_then(|v| match v {
+                    crate::ui::form::FormValue::Text(s) => {
+                        if s.is_empty() {
+                            None
+                        } else {
+                            Some(s.clone())
                         }
-                        _ => None,
-                    });
-                let description = values
-                    .get("Description")
-                    .and_then(|v| match v {
-                        crate::ui::form::FormValue::Text(s) => {
-                            if s.is_empty() { None } else { Some(s.clone()) }
+                    }
+                    _ => None,
+                });
+                let description = values.get("Description").and_then(|v| match v {
+                    crate::ui::form::FormValue::Text(s) => {
+                        if s.is_empty() {
+                            None
+                        } else {
+                            Some(s.clone())
                         }
-                        _ => None,
-                    });
-                let availability_zone = values
-                    .get("Availability Zone")
-                    .and_then(|v| match v {
-                        crate::ui::form::FormValue::Text(s) => {
-                            if s.is_empty() { None } else { Some(s.clone()) }
+                    }
+                    _ => None,
+                });
+                let availability_zone = values.get("Availability Zone").and_then(|v| match v {
+                    crate::ui::form::FormValue::Text(s) => {
+                        if s.is_empty() {
+                            None
+                        } else {
+                            Some(s.clone())
                         }
-                        _ => None,
-                    });
+                    }
+                    _ => None,
+                });
 
                 self.close_form();
-                let _ = self.action_tx.send(Action::CreateVolume(VolumeCreateParams {
-                    name,
-                    size_gb,
-                    volume_type,
-                    description,
-                    availability_zone,
-                }));
+                let _ = self
+                    .action_tx
+                    .send(Action::CreateVolume(VolumeCreateParams {
+                        name,
+                        size_gb,
+                        volume_type,
+                        description,
+                        availability_zone,
+                    }));
                 Some(Action::ExitFormMode)
             }
             FormAction::Cancel => {
@@ -549,8 +583,12 @@ impl VolumeModule {
 }
 
 impl Component for VolumeModule {
-    fn refresh_action(&self) -> Option<Action> { Some(Action::FetchVolumes) }
-    fn is_modal(&self) -> bool { self.confirm.is_active() || self.form.is_some() || self.select_popup.is_some() }
+    fn refresh_action(&self) -> Option<Action> {
+        Some(Action::FetchVolumes)
+    }
+    fn is_modal(&self) -> bool {
+        self.confirm.is_active() || self.form.is_some() || self.select_popup.is_some()
+    }
 
     fn set_all_tenants(&mut self, v: bool) {
         self.all_tenants = v;
@@ -648,7 +686,9 @@ impl Component for VolumeModule {
         match &self.view_state {
             ViewState::List => None,
             ViewState::Detail(id) => {
-                let name = self.volumes.iter()
+                let name = self
+                    .volumes
+                    .iter()
                     .find(|r| r.id == *id)
                     .and_then(|r| r.name.as_deref())
                     .unwrap_or("...");
@@ -694,7 +734,13 @@ mod tests {
         }
     }
 
-    fn make_attached_volume(id: &str, name: &str, server_id: &str, device: &str, att_id: &str) -> Volume {
+    fn make_attached_volume(
+        id: &str,
+        name: &str,
+        server_id: &str,
+        device: &str,
+        att_id: &str,
+    ) -> Volume {
         Volume {
             status: "in-use".into(),
             attachments: vec![VolumeAttachment {
@@ -918,7 +964,10 @@ mod tests {
     #[test]
     fn test_refresh_action_returns_fetch_volumes() {
         let (module, _rx) = setup();
-        assert!(matches!(module.refresh_action(), Some(Action::FetchVolumes)));
+        assert!(matches!(
+            module.refresh_action(),
+            Some(Action::FetchVolumes)
+        ));
     }
 
     #[test]
@@ -952,14 +1001,20 @@ mod tests {
     #[test]
     fn test_help_hint_list() {
         let (module, _rx) = setup();
-        assert_eq!(module.help_hint(), "Enter:Detail c:Create a:Attach D:Delete r:Refresh");
+        assert_eq!(
+            module.help_hint(),
+            "Enter:Detail c:Create a:Attach D:Delete r:Refresh"
+        );
     }
 
     #[test]
     fn test_help_hint_detail() {
         let (mut module, _rx) = setup();
         module.handle_key(key(KeyCode::Enter));
-        assert_eq!(module.help_hint(), "Esc:Back x:Detach F:ForceDetach R:Reset");
+        assert_eq!(
+            module.help_hint(),
+            "Esc:Back x:Detach F:ForceDetach R:Reset"
+        );
     }
 
     #[test]
@@ -1048,9 +1103,9 @@ mod tests {
         let mut module = VolumeModule::new(tx);
         let vol = make_attached_volume("vol-1", "data", "srv-1", "/dev/vdb", "att-1");
         module.handle_event(&AppEvent::VolumesLoaded(vec![vol]));
-        module.handle_event(&AppEvent::ServersLoaded(vec![
-            make_server("srv-1", "web-01", "ACTIVE"),
-        ]));
+        module.handle_event(&AppEvent::ServersLoaded(vec![make_server(
+            "srv-1", "web-01", "ACTIVE",
+        )]));
         // Go to detail
         module.handle_key(key(KeyCode::Enter));
         assert!(matches!(*module.view_state(), ViewState::Detail(_)));
@@ -1065,8 +1120,16 @@ mod tests {
         let mut module = VolumeModule::new(tx);
         let mut vol = make_volume("vol-1", "data", "in-use");
         vol.attachments = vec![
-            VolumeAttachment { server_id: "srv-1".into(), device: "/dev/vdb".into(), id: "att-1".into() },
-            VolumeAttachment { server_id: "srv-2".into(), device: "/dev/vdc".into(), id: "att-2".into() },
+            VolumeAttachment {
+                server_id: "srv-1".into(),
+                device: "/dev/vdb".into(),
+                id: "att-1".into(),
+            },
+            VolumeAttachment {
+                server_id: "srv-2".into(),
+                device: "/dev/vdc".into(),
+                id: "att-2".into(),
+            },
         ];
         module.handle_event(&AppEvent::VolumesLoaded(vec![vol]));
         module.handle_event(&AppEvent::ServersLoaded(vec![
@@ -1111,9 +1174,9 @@ mod tests {
         let mut vol = make_attached_volume("vol-1", "boot-vol", "srv-1", "/dev/vda", "att-1");
         vol.bootable = "true".into();
         module.handle_event(&AppEvent::VolumesLoaded(vec![vol]));
-        module.handle_event(&AppEvent::ServersLoaded(vec![
-            make_server("srv-1", "web-01", "ACTIVE"),
-        ]));
+        module.handle_event(&AppEvent::ServersLoaded(vec![make_server(
+            "srv-1", "web-01", "ACTIVE",
+        )]));
         module.handle_key(key(KeyCode::Enter));
         module.handle_key(key(KeyCode::Char('x')));
         // Not admin → toast sent, no confirm
@@ -1130,9 +1193,9 @@ mod tests {
         let mut vol = make_attached_volume("vol-1", "boot-vol", "srv-1", "/dev/vda", "att-1");
         vol.bootable = "true".into();
         module.handle_event(&AppEvent::VolumesLoaded(vec![vol]));
-        module.handle_event(&AppEvent::ServersLoaded(vec![
-            make_server("srv-1", "web-01", "ACTIVE"),
-        ]));
+        module.handle_event(&AppEvent::ServersLoaded(vec![make_server(
+            "srv-1", "web-01", "ACTIVE",
+        )]));
         module.handle_key(key(KeyCode::Enter));
         module.handle_key(key(KeyCode::Char('x')));
         assert!(module.confirm.is_active());
@@ -1150,15 +1213,17 @@ mod tests {
         let mut module = VolumeModule::new(tx);
         let vol = make_attached_volume("vol-1", "data", "srv-1", "/dev/vdb", "att-1");
         module.handle_event(&AppEvent::VolumesLoaded(vec![vol]));
-        module.handle_event(&AppEvent::ServersLoaded(vec![
-            make_server("srv-1", "web-01", "ACTIVE"),
-        ]));
+        module.handle_event(&AppEvent::ServersLoaded(vec![make_server(
+            "srv-1", "web-01", "ACTIVE",
+        )]));
         module.handle_key(key(KeyCode::Enter));
         module.handle_key(key(KeyCode::Char('x')));
         assert!(module.confirm.is_active());
         // Y/N confirm
         let action = module.handle_key(key(KeyCode::Char('y')));
-        assert!(matches!(action, Some(Action::DetachVolume { volume_id, attachment_id, .. }) if volume_id == "vol-1" && attachment_id == "att-1"));
+        assert!(
+            matches!(action, Some(Action::DetachVolume { volume_id, attachment_id, .. }) if volume_id == "vol-1" && attachment_id == "att-1")
+        );
     }
 
     // -- Force Detach tests -------------------------------------------------
@@ -1278,7 +1343,9 @@ mod tests {
             module.handle_key(key(KeyCode::Char(c)));
         }
         let action = module.handle_key(key(KeyCode::Enter));
-        assert!(matches!(action, Some(Action::ForceResetVolumeState { volume_id, target_state }) if volume_id == "vol-1" && target_state == "available"));
+        assert!(
+            matches!(action, Some(Action::ForceResetVolumeState { volume_id, target_state }) if volume_id == "vol-1" && target_state == "available")
+        );
     }
 
     #[test]
@@ -1330,7 +1397,10 @@ mod tests {
     #[test]
     fn test_handle_event_volume_attached_refreshes() {
         let (mut module, mut rx) = setup();
-        module.handle_event(&AppEvent::VolumeAttached { volume_id: "vol-1".into(), server_id: "srv-1".into() });
+        module.handle_event(&AppEvent::VolumeAttached {
+            volume_id: "vol-1".into(),
+            server_id: "srv-1".into(),
+        });
         let action = rx.try_recv().unwrap();
         assert!(matches!(action, Action::FetchVolumes));
     }
@@ -1338,7 +1408,9 @@ mod tests {
     #[test]
     fn test_handle_event_volume_detached_refreshes() {
         let (mut module, mut rx) = setup();
-        module.handle_event(&AppEvent::VolumeDetached { volume_id: "vol-1".into() });
+        module.handle_event(&AppEvent::VolumeDetached {
+            volume_id: "vol-1".into(),
+        });
         let action = rx.try_recv().unwrap();
         assert!(matches!(action, Action::FetchVolumes));
     }
@@ -1346,7 +1418,9 @@ mod tests {
     #[test]
     fn test_handle_event_volume_force_detached_refreshes() {
         let (mut module, mut rx) = setup();
-        module.handle_event(&AppEvent::VolumeForceDetached { volume_id: "vol-1".into() });
+        module.handle_event(&AppEvent::VolumeForceDetached {
+            volume_id: "vol-1".into(),
+        });
         let action = rx.try_recv().unwrap();
         assert!(matches!(action, Action::FetchVolumes));
     }
@@ -1354,7 +1428,9 @@ mod tests {
     #[test]
     fn test_handle_event_volume_state_reset_refreshes() {
         let (mut module, mut rx) = setup();
-        module.handle_event(&AppEvent::VolumeStateReset { volume_id: "vol-1".into() });
+        module.handle_event(&AppEvent::VolumeStateReset {
+            volume_id: "vol-1".into(),
+        });
         let action = rx.try_recv().unwrap();
         assert!(matches!(action, Action::FetchVolumes));
     }
@@ -1392,9 +1468,9 @@ mod tests {
         let mut module = VolumeModule::new(tx);
         let volumes = vec![make_volume("vol-1", "data", "available")];
         module.handle_event(&AppEvent::VolumesLoaded(volumes));
-        module.handle_event(&AppEvent::ServersLoaded(vec![
-            make_server("srv-1", "web-01", "ACTIVE"),
-        ]));
+        module.handle_event(&AppEvent::ServersLoaded(vec![make_server(
+            "srv-1", "web-01", "ACTIVE",
+        )]));
 
         // Enter detail first
         module.handle_key(key(KeyCode::Enter));
@@ -1414,8 +1490,16 @@ mod tests {
         let mut module = VolumeModule::new(tx);
         let mut vol = make_volume("vol-1", "data", "in-use");
         vol.attachments = vec![
-            VolumeAttachment { server_id: "srv-1".into(), device: "/dev/vdb".into(), id: "att-1".into() },
-            VolumeAttachment { server_id: "srv-2".into(), device: "/dev/vdc".into(), id: "att-2".into() },
+            VolumeAttachment {
+                server_id: "srv-1".into(),
+                device: "/dev/vdb".into(),
+                id: "att-1".into(),
+            },
+            VolumeAttachment {
+                server_id: "srv-2".into(),
+                device: "/dev/vdc".into(),
+                id: "att-2".into(),
+            },
         ];
         module.handle_event(&AppEvent::VolumesLoaded(vec![vol]));
         module.handle_event(&AppEvent::ServersLoaded(vec![
@@ -1436,6 +1520,8 @@ mod tests {
 
         // Confirm
         let action = module.handle_key(key(KeyCode::Char('y')));
-        assert!(matches!(action, Some(Action::DetachVolume { volume_id, attachment_id, .. }) if volume_id == "vol-1" && attachment_id == "att-1"));
+        assert!(
+            matches!(action, Some(Action::DetachVolume { volume_id, attachment_id, .. }) if volume_id == "vol-1" && attachment_id == "att-1")
+        );
     }
 }

@@ -31,76 +31,157 @@ pub enum AppEvent {
 
     // CUD results
     ServerCreated(Server),
-    ServerDeleted { id: String, name: String },
-    ServerRebooted { id: String },
-    ServerStarted { id: String },
-    ServerStopped { id: String },
-    ServerSnapshotCreated { server_id: String, image_id: String },
+    ServerDeleted {
+        id: String,
+        name: String,
+    },
+    ServerRebooted {
+        id: String,
+    },
+    ServerStarted {
+        id: String,
+    },
+    ServerStopped {
+        id: String,
+    },
+    ServerSnapshotCreated {
+        server_id: String,
+        image_id: String,
+    },
     FlavorCreated(Flavor),
-    FlavorDeleted { id: String },
+    FlavorDeleted {
+        id: String,
+    },
     NetworkCreated(Network),
-    SubnetsLoaded { network_id: String, subnets: Vec<crate::port::types::Subnet> },
+    SubnetsLoaded {
+        network_id: String,
+        subnets: Vec<crate::port::types::Subnet>,
+    },
     SecurityGroupCreated(SecurityGroup),
-    SecurityGroupDeleted { id: String },
+    SecurityGroupDeleted {
+        id: String,
+    },
     SecurityGroupRuleCreated(crate::models::neutron::SecurityGroupRule),
-    SecurityGroupRuleDeleted { rule_id: String },
+    SecurityGroupRuleDeleted {
+        rule_id: String,
+    },
     VolumeCreated(Volume),
-    VolumeDeleted { id: String },
-    VolumeExtended { id: String },
+    VolumeDeleted {
+        id: String,
+    },
+    VolumeExtended {
+        id: String,
+    },
     SnapshotCreated(VolumeSnapshot),
-    SnapshotDeleted { id: String },
+    SnapshotDeleted {
+        id: String,
+    },
     ImageCreated(Image),
-    ImageDeleted { id: String },
+    ImageDeleted {
+        id: String,
+    },
     FloatingIpCreated(FloatingIp),
-    FloatingIpDeleted { id: String },
+    FloatingIpDeleted {
+        id: String,
+    },
 
     // Keystone CUD
     ProjectCreated(Project),
-    ProjectDeleted { id: String },
+    ProjectDeleted {
+        id: String,
+    },
     UserCreated(User),
-    UserDeleted { id: String },
+    UserDeleted {
+        id: String,
+    },
 
     // Resize results
-    ServerResized { id: String },
-    ResizeConfirmed { id: String },
-    ResizeReverted { id: String },
+    ServerResized {
+        id: String,
+    },
+    ResizeConfirmed {
+        id: String,
+    },
+    ResizeReverted {
+        id: String,
+    },
 
     // Migration results
-    ServerLiveMigrated { id: String },
-    ServerColdMigrated { id: String },
-    MigrationConfirmed { id: String },
-    MigrationReverted { id: String },
-    ServerEvacuated { id: String },
-    ServerEvacuateResult { id: String, result: Result<(), String> },
-    ComputeServiceToggled { hostname: String, enabled: bool },
-    MigrationProgressLoaded { server_id: String, migration: ServerMigration },
-    MigrationPollingStopped { server_id: String },
+    ServerLiveMigrated {
+        id: String,
+    },
+    ServerColdMigrated {
+        id: String,
+    },
+    MigrationConfirmed {
+        id: String,
+    },
+    MigrationReverted {
+        id: String,
+    },
+    ServerEvacuated {
+        id: String,
+    },
+    ServerEvacuateResult {
+        id: String,
+        result: Result<(), String>,
+    },
+    ComputeServiceToggled {
+        hostname: String,
+        enabled: bool,
+    },
+    MigrationProgressLoaded {
+        server_id: String,
+        migration: ServerMigration,
+    },
+    MigrationPollingStopped {
+        server_id: String,
+    },
 
     // Volume Attach/Detach results
-    VolumeAttached { volume_id: String, server_id: String },
-    VolumeDetached { volume_id: String },
-    VolumeForceDetached { volume_id: String },
-    VolumeStateReset { volume_id: String },
+    VolumeAttached {
+        volume_id: String,
+        server_id: String,
+    },
+    VolumeDetached {
+        volume_id: String,
+    },
+    VolumeForceDetached {
+        volume_id: String,
+    },
+    VolumeStateReset {
+        volume_id: String,
+    },
 
     // Floating IP Associate/Disassociate results
     FloatingIpAssociated(FloatingIp),
     FloatingIpDisassociated(FloatingIp),
 
     // Ports
-    PortsLoaded { server_id: String, ports: Vec<Port> },
+    PortsLoaded {
+        server_id: String,
+        ports: Vec<Port>,
+    },
 
     // Server status polling (resize / cold-migrate state transitions)
-    ServerStatusPolled { server: Server },
+    ServerStatusPolled {
+        server: Server,
+    },
 
     // Error
-    ApiError { operation: String, message: String },
+    ApiError {
+        operation: String,
+        message: String,
+    },
 
     // Auth
     TokenRefreshed(Vec<crate::port::types::TokenRole>),
     AuthFailed(String),
 
     // RBAC
-    PermissionDenied { operation: String },
+    PermissionDenied {
+        operation: String,
+    },
 
     // System
     CloudSwitched(String),
@@ -110,7 +191,9 @@ pub enum AppEvent {
     /// this and clear cached data so the user never sees stale rows.
     /// Epoch lives on the surrounding `VersionedEvent` envelope, not the
     /// payload — see `crate::context::VersionedEvent`.
-    ContextChanged { target: ContextTarget },
+    ContextChanged {
+        target: ContextTarget,
+    },
 }
 
 #[cfg(test)]
@@ -148,7 +231,10 @@ mod tests {
     #[test]
     fn test_token_refreshed_carries_roles() {
         use crate::port::types::TokenRole;
-        let role = TokenRole { id: "r1".into(), name: "admin".into() };
+        let role = TokenRole {
+            id: "r1".into(),
+            name: "admin".into(),
+        };
         let event = AppEvent::TokenRefreshed(vec![role]);
         match event {
             AppEvent::TokenRefreshed(roles) => {
@@ -236,12 +322,21 @@ mod tests {
 
     #[test]
     fn test_volume_fip_event_variants_exist() {
-        use crate::models::neutron::{FloatingIp, Port, FixedIp};
+        use crate::models::neutron::{FixedIp, FloatingIp, Port};
         let events: Vec<AppEvent> = vec![
-            AppEvent::VolumeAttached { volume_id: "v1".into(), server_id: "s1".into() },
-            AppEvent::VolumeDetached { volume_id: "v1".into() },
-            AppEvent::VolumeForceDetached { volume_id: "v1".into() },
-            AppEvent::VolumeStateReset { volume_id: "v1".into() },
+            AppEvent::VolumeAttached {
+                volume_id: "v1".into(),
+                server_id: "s1".into(),
+            },
+            AppEvent::VolumeDetached {
+                volume_id: "v1".into(),
+            },
+            AppEvent::VolumeForceDetached {
+                volume_id: "v1".into(),
+            },
+            AppEvent::VolumeStateReset {
+                volume_id: "v1".into(),
+            },
             AppEvent::FloatingIpAssociated(FloatingIp {
                 id: "fip-1".into(),
                 floating_ip_address: "203.0.113.10".into(),
@@ -268,7 +363,10 @@ mod tests {
                     id: "port-1".into(),
                     name: None,
                     network_id: "net-1".into(),
-                    fixed_ips: vec![FixedIp { subnet_id: "sub-1".into(), ip_address: "10.0.0.5".into() }],
+                    fixed_ips: vec![FixedIp {
+                        subnet_id: "sub-1".into(),
+                        ip_address: "10.0.0.5".into(),
+                    }],
                     device_id: Some("s1".into()),
                     device_owner: Some("compute:az1".into()),
                     status: "ACTIVE".into(),
@@ -302,7 +400,9 @@ mod tests {
 
     #[test]
     fn test_permission_denied_event() {
-        let event = AppEvent::PermissionDenied { operation: "CreateServer".into() };
+        let event = AppEvent::PermissionDenied {
+            operation: "CreateServer".into(),
+        };
         match event {
             AppEvent::PermissionDenied { operation } => {
                 assert_eq!(operation, "CreateServer");

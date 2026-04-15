@@ -27,23 +27,91 @@ struct CommandDef {
 }
 
 const COMMAND_TABLE: &[CommandDef] = &[
-    CommandDef { name: "servers", abbreviation: "srv", route: Route::Servers },
-    CommandDef { name: "networks", abbreviation: "net", route: Route::Networks },
-    CommandDef { name: "volumes", abbreviation: "vol", route: Route::Volumes },
-    CommandDef { name: "floatingip", abbreviation: "fip", route: Route::FloatingIps },
-    CommandDef { name: "security-groups", abbreviation: "sec", route: Route::SecurityGroups },
-    CommandDef { name: "images", abbreviation: "img", route: Route::Images },
-    CommandDef { name: "flavors", abbreviation: "flv", route: Route::Flavors },
-    CommandDef { name: "projects", abbreviation: "prj", route: Route::Projects },
-    CommandDef { name: "users", abbreviation: "usr", route: Route::Users },
-    CommandDef { name: "aggregates", abbreviation: "agg", route: Route::Aggregates },
-    CommandDef { name: "hypervisors", abbreviation: "hyp", route: Route::Hosts },
-    CommandDef { name: "hosts", abbreviation: "host", route: Route::Hosts },
-    CommandDef { name: "migrations", abbreviation: "mig", route: Route::Migrations },
-    CommandDef { name: "snapshots", abbreviation: "snap", route: Route::Snapshots },
-    CommandDef { name: "compute-services", abbreviation: "svc", route: Route::ComputeServices },
-    CommandDef { name: "agents", abbreviation: "agt", route: Route::Agents },
-    CommandDef { name: "usage", abbreviation: "usg", route: Route::Usage },
+    CommandDef {
+        name: "servers",
+        abbreviation: "srv",
+        route: Route::Servers,
+    },
+    CommandDef {
+        name: "networks",
+        abbreviation: "net",
+        route: Route::Networks,
+    },
+    CommandDef {
+        name: "volumes",
+        abbreviation: "vol",
+        route: Route::Volumes,
+    },
+    CommandDef {
+        name: "floatingip",
+        abbreviation: "fip",
+        route: Route::FloatingIps,
+    },
+    CommandDef {
+        name: "security-groups",
+        abbreviation: "sec",
+        route: Route::SecurityGroups,
+    },
+    CommandDef {
+        name: "images",
+        abbreviation: "img",
+        route: Route::Images,
+    },
+    CommandDef {
+        name: "flavors",
+        abbreviation: "flv",
+        route: Route::Flavors,
+    },
+    CommandDef {
+        name: "projects",
+        abbreviation: "prj",
+        route: Route::Projects,
+    },
+    CommandDef {
+        name: "users",
+        abbreviation: "usr",
+        route: Route::Users,
+    },
+    CommandDef {
+        name: "aggregates",
+        abbreviation: "agg",
+        route: Route::Aggregates,
+    },
+    CommandDef {
+        name: "hypervisors",
+        abbreviation: "hyp",
+        route: Route::Hosts,
+    },
+    CommandDef {
+        name: "hosts",
+        abbreviation: "host",
+        route: Route::Hosts,
+    },
+    CommandDef {
+        name: "migrations",
+        abbreviation: "mig",
+        route: Route::Migrations,
+    },
+    CommandDef {
+        name: "snapshots",
+        abbreviation: "snap",
+        route: Route::Snapshots,
+    },
+    CommandDef {
+        name: "compute-services",
+        abbreviation: "svc",
+        route: Route::ComputeServices,
+    },
+    CommandDef {
+        name: "agents",
+        abbreviation: "agt",
+        route: Route::Agents,
+    },
+    CommandDef {
+        name: "usage",
+        abbreviation: "usg",
+        route: Route::Usage,
+    },
 ];
 
 fn build_abbreviations() -> HashMap<String, String> {
@@ -184,7 +252,11 @@ impl CommandParser {
     /// All valid command names (for auto-complete).
     pub fn available_commands(&self) -> Vec<String> {
         let mut cmds: Vec<String> = self.route_map.keys().cloned().collect();
-        cmds.extend(["quit", "refresh", "help", "ctx"].iter().map(|s| s.to_string()));
+        cmds.extend(
+            ["quit", "refresh", "help", "ctx"]
+                .iter()
+                .map(|s| s.to_string()),
+        );
         cmds.sort();
         cmds
     }
@@ -257,15 +329,12 @@ impl CommandHistory {
     fn save(&self) -> Result<()> {
         if let Some(parent) = self.file_path.parent() {
             fs::create_dir_all(parent).map_err(|e| {
-                crate::error::AppError::Other(format!(
-                    "Failed to create history directory: {e}"
-                ))
+                crate::error::AppError::Other(format!("Failed to create history directory: {e}"))
             })?;
         }
         let content = self.entries.join("\n");
-        fs::write(&self.file_path, content).map_err(|e| {
-            crate::error::AppError::Other(format!("Failed to save history: {e}"))
-        })
+        fs::write(&self.file_path, content)
+            .map_err(|e| crate::error::AppError::Other(format!("Failed to save history: {e}")))
     }
 
     fn load(&mut self) -> Result<()> {
@@ -443,7 +512,7 @@ mod tests {
         // Verify every abbreviation maps to a valid route
         let abbr = build_abbreviations();
         let routes = build_route_map();
-        for (_abbr_key, full_name) in &abbr {
+        for full_name in abbr.values() {
             assert!(
                 routes.contains_key(full_name),
                 "abbreviation maps to '{full_name}' but no route defined"

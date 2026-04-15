@@ -71,7 +71,9 @@ impl KeyMap {
     /// Generate context help string for status bar.
     pub fn context_help(&self, mode: AppMode) -> String {
         match mode {
-            AppMode::Normal => "j/k:move  Enter:select  /:search  ::cmd  Tab:sidebar  q:quit".into(),
+            AppMode::Normal => {
+                "j/k:move  Enter:select  /:search  ::cmd  Tab:sidebar  q:quit".into()
+            }
             AppMode::Command => "Enter:run  Tab:complete  Up/Down:history  Esc:cancel".into(),
             AppMode::Search => "Enter:apply  Esc:cancel  (type to filter)".into(),
             AppMode::Form => "Tab:next  Shift+Tab:prev  Enter:submit  Esc:cancel".into(),
@@ -179,45 +181,102 @@ mod tests {
     #[test]
     fn test_normal_mode_navigation() {
         let km = KeyMap::new();
-        assert_eq!(km.resolve(AppMode::Normal, key(KeyCode::Char('j'))), KeyAction::MoveDown);
-        assert_eq!(km.resolve(AppMode::Normal, key(KeyCode::Char('k'))), KeyAction::MoveUp);
-        assert_eq!(km.resolve(AppMode::Normal, key(KeyCode::Char('g'))), KeyAction::MoveToTop);
-        assert_eq!(km.resolve(AppMode::Normal, key(KeyCode::Char('G'))), KeyAction::MoveToBottom);
-        assert_eq!(km.resolve(AppMode::Normal, key(KeyCode::Enter)), KeyAction::Select);
-        assert_eq!(km.resolve(AppMode::Normal, key(KeyCode::Esc)), KeyAction::Back);
+        assert_eq!(
+            km.resolve(AppMode::Normal, key(KeyCode::Char('j'))),
+            KeyAction::MoveDown
+        );
+        assert_eq!(
+            km.resolve(AppMode::Normal, key(KeyCode::Char('k'))),
+            KeyAction::MoveUp
+        );
+        assert_eq!(
+            km.resolve(AppMode::Normal, key(KeyCode::Char('g'))),
+            KeyAction::MoveToTop
+        );
+        assert_eq!(
+            km.resolve(AppMode::Normal, key(KeyCode::Char('G'))),
+            KeyAction::MoveToBottom
+        );
+        assert_eq!(
+            km.resolve(AppMode::Normal, key(KeyCode::Enter)),
+            KeyAction::Select
+        );
+        assert_eq!(
+            km.resolve(AppMode::Normal, key(KeyCode::Esc)),
+            KeyAction::Back
+        );
     }
 
     #[test]
     fn test_normal_mode_switching() {
         let km = KeyMap::new();
-        assert_eq!(km.resolve(AppMode::Normal, key(KeyCode::Char(':'))), KeyAction::EnterCommandMode);
-        assert_eq!(km.resolve(AppMode::Normal, key(KeyCode::Char('/'))), KeyAction::EnterSearchMode);
-        assert_eq!(km.resolve(AppMode::Normal, key(KeyCode::Tab)), KeyAction::ToggleSidebar);
+        assert_eq!(
+            km.resolve(AppMode::Normal, key(KeyCode::Char(':'))),
+            KeyAction::EnterCommandMode
+        );
+        assert_eq!(
+            km.resolve(AppMode::Normal, key(KeyCode::Char('/'))),
+            KeyAction::EnterSearchMode
+        );
+        assert_eq!(
+            km.resolve(AppMode::Normal, key(KeyCode::Tab)),
+            KeyAction::ToggleSidebar
+        );
     }
 
     #[test]
     fn test_normal_mode_actions() {
         let km = KeyMap::new();
-        assert_eq!(km.resolve(AppMode::Normal, key(KeyCode::Char('c'))), KeyAction::Create);
-        assert_eq!(km.resolve(AppMode::Normal, key(KeyCode::Char('r'))), KeyAction::Refresh);
-        assert_eq!(km.resolve(AppMode::Normal, key(KeyCode::Char('q'))), KeyAction::Quit);
+        assert_eq!(
+            km.resolve(AppMode::Normal, key(KeyCode::Char('c'))),
+            KeyAction::Create
+        );
+        assert_eq!(
+            km.resolve(AppMode::Normal, key(KeyCode::Char('r'))),
+            KeyAction::Refresh
+        );
+        assert_eq!(
+            km.resolve(AppMode::Normal, key(KeyCode::Char('q'))),
+            KeyAction::Quit
+        );
     }
 
     #[test]
     fn test_command_mode() {
         let km = KeyMap::new();
-        assert_eq!(km.resolve(AppMode::Command, key(KeyCode::Enter)), KeyAction::Select);
-        assert_eq!(km.resolve(AppMode::Command, key(KeyCode::Esc)), KeyAction::Back);
-        assert_eq!(km.resolve(AppMode::Command, key(KeyCode::Tab)), KeyAction::NextField);
-        assert_eq!(km.resolve(AppMode::Command, key(KeyCode::Char('a'))), KeyAction::CharInput('a'));
+        assert_eq!(
+            km.resolve(AppMode::Command, key(KeyCode::Enter)),
+            KeyAction::Select
+        );
+        assert_eq!(
+            km.resolve(AppMode::Command, key(KeyCode::Esc)),
+            KeyAction::Back
+        );
+        assert_eq!(
+            km.resolve(AppMode::Command, key(KeyCode::Tab)),
+            KeyAction::NextField
+        );
+        assert_eq!(
+            km.resolve(AppMode::Command, key(KeyCode::Char('a'))),
+            KeyAction::CharInput('a')
+        );
     }
 
     #[test]
     fn test_search_mode() {
         let km = KeyMap::new();
-        assert_eq!(km.resolve(AppMode::Search, key(KeyCode::Enter)), KeyAction::Select);
-        assert_eq!(km.resolve(AppMode::Search, key(KeyCode::Esc)), KeyAction::Back);
-        assert_eq!(km.resolve(AppMode::Search, key(KeyCode::Char('w'))), KeyAction::CharInput('w'));
+        assert_eq!(
+            km.resolve(AppMode::Search, key(KeyCode::Enter)),
+            KeyAction::Select
+        );
+        assert_eq!(
+            km.resolve(AppMode::Search, key(KeyCode::Esc)),
+            KeyAction::Back
+        );
+        assert_eq!(
+            km.resolve(AppMode::Search, key(KeyCode::Char('w'))),
+            KeyAction::CharInput('w')
+        );
     }
 
     #[test]

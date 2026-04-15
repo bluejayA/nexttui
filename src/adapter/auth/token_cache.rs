@@ -18,7 +18,9 @@ pub struct TokenCacheStore {
 
 impl TokenCacheStore {
     pub fn new(cache_dir: impl Into<PathBuf>) -> Self {
-        Self { cache_dir: cache_dir.into() }
+        Self {
+            cache_dir: cache_dir.into(),
+        }
     }
 
     pub fn cache_dir(&self) -> &Path {
@@ -70,7 +72,11 @@ pub fn cache_dir_path(cloud_key: &str) -> PathBuf {
 /// Save a token to the cache directory, keyed by scope.
 /// Creates parent directories if needed.
 /// On Unix, creates the file with 0o600 permissions atomically (no TOCTOU window).
-pub fn save_token(token: &Token, cache_dir: &Path, scope: &TokenScope) -> Result<(), std::io::Error> {
+pub fn save_token(
+    token: &Token,
+    cache_dir: &Path,
+    scope: &TokenScope,
+) -> Result<(), std::io::Error> {
     use std::io::Write;
 
     // Create cache directory with restricted permissions on Unix (0o700)
@@ -78,7 +84,10 @@ pub fn save_token(token: &Token, cache_dir: &Path, scope: &TokenScope) -> Result
     {
         use std::fs::DirBuilder;
         use std::os::unix::fs::DirBuilderExt;
-        DirBuilder::new().recursive(true).mode(0o700).create(cache_dir)?;
+        DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(cache_dir)?;
     }
     #[cfg(not(unix))]
     {
@@ -173,13 +182,13 @@ fn parse_scope_from_filename(filename: &str) -> Option<TokenScope> {
         return Some(TokenScope::Unscoped);
     }
     // Format: "project@{name}@{domain}" (@ separator avoids _ ambiguity)
-    if let Some(rest) = filename.strip_prefix("project@") {
-        if let Some((name, domain)) = rest.split_once('@') {
-            return Some(TokenScope::Project {
-                name: name.to_string(),
-                domain: domain.to_string(),
-            });
-        }
+    if let Some(rest) = filename.strip_prefix("project@")
+        && let Some((name, domain)) = rest.split_once('@')
+    {
+        return Some(TokenScope::Project {
+            name: name.to_string(),
+            domain: domain.to_string(),
+        });
     }
     None
 }
@@ -187,8 +196,8 @@ fn parse_scope_from_filename(filename: &str) -> Option<TokenScope> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{Duration, Utc};
     use crate::port::types::*;
+    use chrono::{Duration, Utc};
     use tempfile::TempDir;
 
     fn sample_token(expires_in_minutes: i64) -> Token {
@@ -366,9 +375,15 @@ mod tests {
     fn test_parse_scope_from_filename() {
         assert_eq!(
             parse_scope_from_filename("project@admin@default"),
-            Some(TokenScope::Project { name: "admin".to_string(), domain: "default".to_string() })
+            Some(TokenScope::Project {
+                name: "admin".to_string(),
+                domain: "default".to_string()
+            })
         );
-        assert_eq!(parse_scope_from_filename("unscoped"), Some(TokenScope::Unscoped));
+        assert_eq!(
+            parse_scope_from_filename("unscoped"),
+            Some(TokenScope::Unscoped)
+        );
         assert_eq!(parse_scope_from_filename("unknown_file"), None);
     }
 
@@ -376,7 +391,10 @@ mod tests {
     fn test_parse_scope_with_underscore_in_name() {
         assert_eq!(
             parse_scope_from_filename("project@my_project@my_domain"),
-            Some(TokenScope::Project { name: "my_project".to_string(), domain: "my_domain".to_string() })
+            Some(TokenScope::Project {
+                name: "my_project".to_string(),
+                domain: "my_domain".to_string()
+            })
         );
     }
 
@@ -396,7 +414,10 @@ mod tests {
         };
         assert_eq!(
             TokenScope::from_credential(&cred),
-            TokenScope::Project { name: "admin".to_string(), domain: "default".to_string() }
+            TokenScope::Project {
+                name: "admin".to_string(),
+                domain: "default".to_string()
+            }
         );
 
         let unsoped_cred = AuthCredential {
@@ -408,7 +429,10 @@ mod tests {
             },
             project_scope: None,
         };
-        assert_eq!(TokenScope::from_credential(&unsoped_cred), TokenScope::Unscoped);
+        assert_eq!(
+            TokenScope::from_credential(&unsoped_cred),
+            TokenScope::Unscoped
+        );
     }
 
     #[test]

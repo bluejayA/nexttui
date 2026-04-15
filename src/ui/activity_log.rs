@@ -59,11 +59,23 @@ impl ActivityLog {
             for entry in &self.entries {
                 let elapsed = now.duration_since(entry.timestamp);
                 let time_str = format_relative_time(elapsed);
-                let icon = if entry.success { "\u{2713}" } else { "\u{2717}" };
-                if entry.success || entry.message.is_empty() {
-                    writeln!(buf, "{time_str}\t{icon}\t{}\t{}", entry.operation, entry.resource_name)?;
+                let icon = if entry.success {
+                    "\u{2713}"
                 } else {
-                    writeln!(buf, "{time_str}\t{icon}\t{}\t{}\t{}", entry.operation, entry.resource_name, entry.message)?;
+                    "\u{2717}"
+                };
+                if entry.success || entry.message.is_empty() {
+                    writeln!(
+                        buf,
+                        "{time_str}\t{icon}\t{}\t{}",
+                        entry.operation, entry.resource_name
+                    )?;
+                } else {
+                    writeln!(
+                        buf,
+                        "{time_str}\t{icon}\t{}\t{}\t{}",
+                        entry.operation, entry.resource_name, entry.message
+                    )?;
                 }
             }
         }
@@ -131,7 +143,7 @@ impl ActivityLogPopup {
         use ratatui::layout::Rect;
         use ratatui::style::{Color, Style};
         use ratatui::text::{Line, Span};
-        use ratatui::widgets::{Block, Borders, BorderType, Clear, Paragraph};
+        use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 
         // Centered popup: 80% width, 50% height
         let popup_width = area.width * 80 / 100;
@@ -171,10 +183,7 @@ impl ActivityLogPopup {
                         format!("[{:>4}] ", time_str),
                         Style::default().fg(Color::DarkGray),
                     ),
-                    Span::styled(
-                        format!("{icon} "),
-                        Style::default().fg(icon_color),
-                    ),
+                    Span::styled(format!("{icon} "), Style::default().fg(icon_color)),
                     Span::raw(format!("{} {}", entry.operation, entry.resource_name)),
                 ];
                 if !entry.success && !entry.message.is_empty() {
@@ -257,8 +266,8 @@ mod tests {
     fn test_unread_error_count() {
         let mut log = ActivityLog::new();
         log.push(make_entry("Op1", false, false)); // unread error
-        log.push(make_entry("Op2", false, true));  // read error
-        log.push(make_entry("Op3", true, false));  // success (not counted)
+        log.push(make_entry("Op2", false, true)); // read error
+        log.push(make_entry("Op3", true, false)); // success (not counted)
         assert_eq!(log.unread_error_count(), 1);
     }
 

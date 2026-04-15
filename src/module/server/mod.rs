@@ -1,12 +1,12 @@
 pub mod view_model;
 
 use crossterm::event::{KeyCode, KeyEvent};
-use ratatui::layout::Rect;
 use ratatui::Frame;
+use ratatui::layout::Rect;
 
 use crate::action::Action;
-use crate::context::ActionSender;
 use crate::component::Component;
+use crate::context::ActionSender;
 use crate::event::AppEvent;
 use crate::models::cinder::Volume;
 use crate::models::common::is_terminal_server_status;
@@ -20,8 +20,8 @@ use crate::ui::resource_list::{ResourceList, Row};
 use crate::ui::select_popup::{ItemHint, SelectItem, SelectPopup, SelectResult};
 
 use self::view_model::{
-    server_columns_full, server_create_defs, server_detail_data, server_to_row_full,
-    ServerViewContext,
+    ServerViewContext, server_columns_full, server_create_defs, server_detail_data,
+    server_to_row_full,
 };
 
 #[derive(Debug, Clone)]
@@ -147,10 +147,7 @@ impl ServerModule {
             PendingAction::Resize { id, flavor_id } => Some(Action::ResizeServer { id, flavor_id }),
             PendingAction::ConfirmResize { id } => Some(Action::ConfirmResize { id }),
             PendingAction::RevertResize { id } => Some(Action::RevertResize { id }),
-            PendingAction::LiveMigrate { id } => Some(Action::LiveMigrateServer {
-                id,
-                host: None,
-            }),
+            PendingAction::LiveMigrate { id } => Some(Action::LiveMigrateServer { id, host: None }),
             PendingAction::ColdMigrate { id } => Some(Action::ColdMigrateServer { id }),
             PendingAction::ConfirmMigrate { id } => Some(Action::ConfirmMigration { id }),
             PendingAction::RevertMigrate { id } => Some(Action::RevertMigration { id }),
@@ -158,12 +155,24 @@ impl ServerModule {
                 id,
                 params: EvacuateParams::default(),
             }),
-            PendingAction::AttachVolume { volume_id, server_id, device } => {
-                Some(Action::AttachVolume { volume_id, server_id, device })
-            }
-            PendingAction::DetachVolume { volume_id, server_id, attachment_id } => {
-                Some(Action::DetachVolume { volume_id, server_id, attachment_id })
-            }
+            PendingAction::AttachVolume {
+                volume_id,
+                server_id,
+                device,
+            } => Some(Action::AttachVolume {
+                volume_id,
+                server_id,
+                device,
+            }),
+            PendingAction::DetachVolume {
+                volume_id,
+                server_id,
+                attachment_id,
+            } => Some(Action::DetachVolume {
+                volume_id,
+                server_id,
+                attachment_id,
+            }),
             PendingAction::AssociateFloatingIp { fip_id, port_id } => {
                 Some(Action::AssociateFloatingIp { fip_id, port_id })
             }
@@ -240,7 +249,11 @@ impl ServerModule {
         }
     }
 
-    fn build_flavor_items(&self, current_flavor_id: &str, current_disk: Option<u32>) -> Vec<SelectItem> {
+    fn build_flavor_items(
+        &self,
+        current_flavor_id: &str,
+        current_disk: Option<u32>,
+    ) -> Vec<SelectItem> {
         self.cached_flavors
             .iter()
             .map(|f| {
@@ -279,20 +292,25 @@ impl ServerModule {
     fn build_attached_volume_items(&self, server_id: &str) -> Vec<SelectItem> {
         self.cached_volumes
             .iter()
-            .filter(|v| v.status == "in-use" && v.attachments.iter().any(|a| a.server_id == server_id))
+            .filter(|v| {
+                v.status == "in-use" && v.attachments.iter().any(|a| a.server_id == server_id)
+            })
             .flat_map(|v| {
-                v.attachments.iter().filter(|a| a.server_id == server_id).map(move |a| {
-                    let name = v.name.as_deref().unwrap_or("-");
-                    SelectItem {
-                        id: format!("{}:{}", v.id, a.id),
-                        label: format!("{name} ({}, {}GB)", a.device, v.size),
-                        hint: if v.bootable == "true" {
-                            ItemHint::Warning("boot".into())
-                        } else {
-                            ItemHint::Normal
-                        },
-                    }
-                })
+                v.attachments
+                    .iter()
+                    .filter(|a| a.server_id == server_id)
+                    .map(move |a| {
+                        let name = v.name.as_deref().unwrap_or("-");
+                        SelectItem {
+                            id: format!("{}:{}", v.id, a.id),
+                            label: format!("{name} ({}, {}GB)", a.device, v.size),
+                            hint: if v.bootable == "true" {
+                                ItemHint::Warning("boot".into())
+                            } else {
+                                ItemHint::Normal
+                            },
+                        }
+                    })
             })
             .collect()
     }
@@ -327,7 +345,9 @@ impl ServerModule {
         };
         let vol = self.cached_volumes.iter().find(|v| v.id == volume_id);
         let Some(vol) = vol else { return };
-        let server_name = self.servers.iter()
+        let server_name = self
+            .servers
+            .iter()
             .find(|s| s.id == server_id)
             .map(|s| s.name.as_str())
             .unwrap_or("unknown");
@@ -354,7 +374,9 @@ impl ServerModule {
     fn handle_detach_volume_selected(&mut self, composite_id: String) {
         // composite_id = "volume_id:attachment_id"
         let parts: Vec<&str> = composite_id.splitn(2, ':').collect();
-        if parts.len() != 2 { return; }
+        if parts.len() != 2 {
+            return;
+        }
         let volume_id = parts[0].to_string();
         let attachment_id = parts[1].to_string();
 
@@ -363,7 +385,9 @@ impl ServerModule {
         let att = vol.attachments.iter().find(|a| a.id == attachment_id);
         let Some(att) = att else { return };
 
-        let server_name = self.servers.iter()
+        let server_name = self
+            .servers
+            .iter()
             .find(|s| s.id == att.server_id)
             .map(|s| s.name.as_str())
             .unwrap_or("unknown");
@@ -428,7 +452,9 @@ impl ServerModule {
         self.cached_ports = ports;
         self.loading_ports = false;
 
-        let Some(fip_id) = self.pending_fip_id.clone() else { return };
+        let Some(fip_id) = self.pending_fip_id.clone() else {
+            return;
+        };
 
         if self.cached_ports.is_empty() {
             let _ = self.action_tx.send(Action::ShowToast {
@@ -447,7 +473,9 @@ impl ServerModule {
                 return;
             };
             let server_name = match &self.view_state {
-                ViewState::Detail(id) => self.servers.iter()
+                ViewState::Detail(id) => self
+                    .servers
+                    .iter()
                     .find(|s| s.id == *id)
                     .map(|s| s.name.as_str())
                     .unwrap_or("unknown"),
@@ -460,7 +488,10 @@ impl ServerModule {
             ];
             self.confirm.open(
                 ConfirmDialog::yes_no_with_details(
-                    format!("Associate {} to port {}?", fip.floating_ip_address, port_label),
+                    format!(
+                        "Associate {} to port {}?",
+                        fip.floating_ip_address, port_label
+                    ),
                     details,
                 ),
                 PendingAction::AssociateFloatingIp {
@@ -479,14 +510,20 @@ impl ServerModule {
     }
 
     fn handle_port_selected(&mut self, port_id: String) {
-        let Some(fip_id) = self.pending_fip_id.take() else { return };
+        let Some(fip_id) = self.pending_fip_id.take() else {
+            return;
+        };
         let port = self.cached_ports.iter().find(|p| p.id == port_id);
         let fip = self.cached_floating_ips.iter().find(|f| f.id == fip_id);
-        let (Some(port), Some(fip)) = (port, fip) else { return };
+        let (Some(port), Some(fip)) = (port, fip) else {
+            return;
+        };
 
         let port_label = port.display_label(&self.cached_networks);
         let server_name = match &self.view_state {
-            ViewState::Detail(id) => self.servers.iter()
+            ViewState::Detail(id) => self
+                .servers
+                .iter()
                 .find(|s| s.id == *id)
                 .map(|s| s.name.as_str())
                 .unwrap_or("unknown"),
@@ -499,7 +536,10 @@ impl ServerModule {
         ];
         self.confirm.open(
             ConfirmDialog::yes_no_with_details(
-                format!("Associate {} to port {}?", fip.floating_ip_address, port_label),
+                format!(
+                    "Associate {} to port {}?",
+                    fip.floating_ip_address, port_label
+                ),
                 details,
             ),
             PendingAction::AssociateFloatingIp {
@@ -519,7 +559,9 @@ impl ServerModule {
                     self.popup_kind = None;
                     match ctx {
                         DetailPopupKind::Resize => {
-                            let flavor_name = self.cached_flavors.iter()
+                            let flavor_name = self
+                                .cached_flavors
+                                .iter()
                                 .find(|f| f.id == selected_id)
                                 .map(|f| f.name.as_str())
                                 .unwrap_or(&selected_id);
@@ -528,7 +570,10 @@ impl ServerModule {
                                 let id = id.clone();
                                 self.confirm.open(
                                     ConfirmDialog::yes_no(msg),
-                                    PendingAction::Resize { id, flavor_id: selected_id },
+                                    PendingAction::Resize {
+                                        id,
+                                        flavor_id: selected_id,
+                                    },
                                 );
                             }
                         }
@@ -596,7 +641,8 @@ impl ServerModule {
                         if self.cached_flavors.is_empty() {
                             let _ = self.action_tx.send(Action::FetchFlavors);
                         } else {
-                            let current_flavor_id = server.map(|s| s.flavor.id.as_str()).unwrap_or("");
+                            let current_flavor_id =
+                                server.map(|s| s.flavor.id.as_str()).unwrap_or("");
                             let current_disk = server.and_then(|s| s.flavor.disk);
                             let items = self.build_flavor_items(current_flavor_id, current_disk);
                             self.select_popup = Some(SelectPopup::new("Select Flavor", items));
@@ -633,7 +679,8 @@ impl ServerModule {
                     let server = self.servers.iter().find(|s| s.id == *id);
                     if server.is_some_and(|s| s.status == "VERIFY_RESIZE") {
                         let id = id.clone();
-                        let is_resize = self.resize_pending
+                        let is_resize = self
+                            .resize_pending
                             .as_ref()
                             .is_some_and(|rp| rp.server_id == id);
                         if is_resize {
@@ -656,7 +703,8 @@ impl ServerModule {
                     let server = self.servers.iter().find(|s| s.id == *id);
                     if server.is_some_and(|s| s.status == "VERIFY_RESIZE") {
                         let id = id.clone();
-                        let is_resize = self.resize_pending
+                        let is_resize = self
+                            .resize_pending
                             .as_ref()
                             .is_some_and(|rp| rp.server_id == id);
                         if is_resize {
@@ -725,18 +773,12 @@ impl ServerModule {
                 None
             }
             // Resource navigation shortcuts
-            KeyCode::Char('v') => {
-                return Some(Action::Navigate(crate::models::common::Route::Volumes));
-            }
-            KeyCode::Char('n') => {
-                return Some(Action::Navigate(crate::models::common::Route::Networks));
-            }
-            KeyCode::Char('s') => {
-                return Some(Action::Navigate(crate::models::common::Route::SecurityGroups));
-            }
-            KeyCode::Char('i') => {
-                return Some(Action::Navigate(crate::models::common::Route::Images));
-            }
+            KeyCode::Char('v') => Some(Action::Navigate(crate::models::common::Route::Volumes)),
+            KeyCode::Char('n') => Some(Action::Navigate(crate::models::common::Route::Networks)),
+            KeyCode::Char('s') => Some(Action::Navigate(
+                crate::models::common::Route::SecurityGroups,
+            )),
+            KeyCode::Char('i') => Some(Action::Navigate(crate::models::common::Route::Images)),
             // Associate floating IP
             KeyCode::Char('f') => {
                 let items = self.build_available_fip_items();
@@ -794,44 +836,52 @@ impl ServerModule {
                         _ => None,
                     })
                     .unwrap_or_default();
-                let security_group = values
-                    .get("Security Group")
-                    .and_then(|v| match v {
-                        crate::ui::form::FormValue::Selected(s) => {
-                            if s.is_empty() { None } else { Some(vec![s.clone()]) }
+                let security_group = values.get("Security Group").and_then(|v| match v {
+                    crate::ui::form::FormValue::Selected(s) => {
+                        if s.is_empty() {
+                            None
+                        } else {
+                            Some(vec![s.clone()])
                         }
-                        _ => None,
-                    });
-                let key_name = values
-                    .get("Key Pair")
-                    .and_then(|v| match v {
-                        crate::ui::form::FormValue::Text(s) => {
-                            if s.is_empty() { None } else { Some(s.clone()) }
+                    }
+                    _ => None,
+                });
+                let key_name = values.get("Key Pair").and_then(|v| match v {
+                    crate::ui::form::FormValue::Text(s) => {
+                        if s.is_empty() {
+                            None
+                        } else {
+                            Some(s.clone())
                         }
-                        _ => None,
-                    });
-                let availability_zone = values
-                    .get("Availability Zone")
-                    .and_then(|v| match v {
-                        crate::ui::form::FormValue::Text(s) => {
-                            if s.is_empty() { None } else { Some(s.clone()) }
+                    }
+                    _ => None,
+                });
+                let availability_zone = values.get("Availability Zone").and_then(|v| match v {
+                    crate::ui::form::FormValue::Text(s) => {
+                        if s.is_empty() {
+                            None
+                        } else {
+                            Some(s.clone())
                         }
-                        _ => None,
-                    });
+                    }
+                    _ => None,
+                });
 
                 self.close_form();
-                let _ = self.action_tx.send(Action::CreateServer(ServerCreateParams {
-                    name,
-                    image_id,
-                    flavor_id,
-                    networks: vec![NetworkAttachment {
-                        uuid: network_id,
-                        fixed_ip: None,
-                    }],
-                    security_groups: security_group,
-                    key_name,
-                    availability_zone,
-                }));
+                let _ = self
+                    .action_tx
+                    .send(Action::CreateServer(ServerCreateParams {
+                        name,
+                        image_id,
+                        flavor_id,
+                        networks: vec![NetworkAttachment {
+                            uuid: network_id,
+                            fixed_ip: None,
+                        }],
+                        security_groups: security_group,
+                        key_name,
+                        availability_zone,
+                    }));
                 Some(Action::ExitFormMode)
             }
             FormAction::Cancel => {
@@ -844,11 +894,17 @@ impl ServerModule {
 }
 
 impl Component for ServerModule {
-    fn refresh_action(&self) -> Option<Action> { Some(Action::FetchServers) }
-    fn has_transitional_resources(&self) -> bool {
-        self.servers.iter().any(|s| !is_terminal_server_status(&s.status))
+    fn refresh_action(&self) -> Option<Action> {
+        Some(Action::FetchServers)
     }
-    fn is_modal(&self) -> bool { self.confirm.is_active() || self.form.is_some() || self.select_popup.is_some() }
+    fn has_transitional_resources(&self) -> bool {
+        self.servers
+            .iter()
+            .any(|s| !is_terminal_server_status(&s.status))
+    }
+    fn is_modal(&self) -> bool {
+        self.confirm.is_active() || self.form.is_some() || self.select_popup.is_some()
+    }
 
     fn set_all_tenants(&mut self, v: bool) {
         self.all_tenants = v;
@@ -883,7 +939,8 @@ impl Component for ServerModule {
                 self.resource_list.set_rows(rows);
                 // Clear stale resize_pending if server is no longer VERIFY_RESIZE
                 if let Some(ref rp) = self.resize_pending {
-                    let still_verify = servers.iter()
+                    let still_verify = servers
+                        .iter()
                         .find(|s| s.id == rp.server_id)
                         .is_some_and(|s| s.status == "VERIFY_RESIZE");
                     if !still_verify {
@@ -906,7 +963,10 @@ impl Component for ServerModule {
             AppEvent::ResizeConfirmed { .. } | AppEvent::ResizeReverted { .. } => {
                 self.resize_pending = None;
             }
-            AppEvent::MigrationProgressLoaded { server_id, migration } => {
+            AppEvent::MigrationProgressLoaded {
+                server_id,
+                migration,
+            } => {
                 self.migration_progress = Some((server_id.clone(), migration.clone()));
             }
             AppEvent::ServerLiveMigrated { .. }
@@ -920,7 +980,12 @@ impl Component for ServerModule {
                 self.cached_flavors = flavors.clone();
                 let opts: Vec<SelectOption> = flavors
                     .iter()
-                    .map(|f| SelectOption::new(&f.id, format!("{} ({}vCPU/{}MB/{}GB)", f.name, f.vcpus, f.ram, f.disk)))
+                    .map(|f| {
+                        SelectOption::new(
+                            &f.id,
+                            format!("{} ({}vCPU/{}MB/{}GB)", f.name, f.vcpus, f.ram, f.disk),
+                        )
+                    })
                     .collect();
                 self.cached_flavor_opts = opts.clone();
                 if let Some(form) = &mut self.form {
@@ -994,8 +1059,14 @@ impl Component for ServerModule {
             }
             ViewState::Detail(id) => {
                 if let Some(server) = self.servers.iter().find(|s| s.id == *id) {
-                    let matched_flavor = self.cached_flavors.iter().find(|f| f.id == server.flavor.id);
-                    let is_resize = self.resize_pending.as_ref().is_some_and(|rp| rp.server_id == *id);
+                    let matched_flavor = self
+                        .cached_flavors
+                        .iter()
+                        .find(|f| f.id == server.flavor.id);
+                    let is_resize = self
+                        .resize_pending
+                        .as_ref()
+                        .is_some_and(|rp| rp.server_id == *id);
                     let data = server_detail_data(&ServerViewContext {
                         server,
                         migration_progress: self.migration_progress_for(id),
@@ -1032,7 +1103,9 @@ impl Component for ServerModule {
         match &self.view_state {
             ViewState::List => None,
             ViewState::Detail(id) => {
-                let name = self.servers.iter()
+                let name = self
+                    .servers
+                    .iter()
                     .find(|s| s.id == *id)
                     .map(|s| s.name.as_str())
                     .unwrap_or("...");
@@ -1334,7 +1407,11 @@ mod tests {
         assert!(actions.iter().any(|a| matches!(a, Action::FetchFlavors)));
         assert!(actions.iter().any(|a| matches!(a, Action::FetchImages)));
         assert!(actions.iter().any(|a| matches!(a, Action::FetchNetworks)));
-        assert!(actions.iter().any(|a| matches!(a, Action::FetchSecurityGroups)));
+        assert!(
+            actions
+                .iter()
+                .any(|a| matches!(a, Action::FetchSecurityGroups))
+        );
     }
 
     #[test]
@@ -1422,20 +1499,23 @@ mod tests {
     #[test]
     fn test_migration_progress_cleared_on_confirm() {
         let (mut module, _rx) = setup();
-        module.migration_progress = Some(("s1".into(), ServerMigration {
-            id: 1,
-            status: "running".into(),
-            source_compute: "c1".into(),
-            dest_compute: "c2".into(),
-            memory_total_bytes: None,
-            memory_processed_bytes: None,
-            memory_remaining_bytes: None,
-            disk_total_bytes: None,
-            disk_processed_bytes: None,
-            disk_remaining_bytes: None,
-            created_at: None,
-            updated_at: None,
-        }));
+        module.migration_progress = Some((
+            "s1".into(),
+            ServerMigration {
+                id: 1,
+                status: "running".into(),
+                source_compute: "c1".into(),
+                dest_compute: "c2".into(),
+                memory_total_bytes: None,
+                memory_processed_bytes: None,
+                memory_remaining_bytes: None,
+                disk_total_bytes: None,
+                disk_processed_bytes: None,
+                disk_remaining_bytes: None,
+                created_at: None,
+                updated_at: None,
+            },
+        ));
         module.handle_event(&AppEvent::MigrationConfirmed { id: "s1".into() });
         assert!(module.migration_progress().is_none());
     }
@@ -1569,7 +1649,8 @@ mod tests {
 
     #[test]
     fn test_resolve_confirm_migrate() {
-        let action = ServerModule::resolve_action(PendingAction::ConfirmMigrate { id: "s1".into() });
+        let action =
+            ServerModule::resolve_action(PendingAction::ConfirmMigrate { id: "s1".into() });
         assert!(matches!(action, Some(Action::ConfirmMigration { id }) if id == "s1"));
     }
 
@@ -1605,20 +1686,23 @@ mod tests {
     #[test]
     fn test_migration_progress_cleared_on_evacuate() {
         let (mut module, _rx) = setup();
-        module.migration_progress = Some(("s1".into(), ServerMigration {
-            id: 1,
-            status: "running".into(),
-            source_compute: "c1".into(),
-            dest_compute: "c2".into(),
-            memory_total_bytes: None,
-            memory_processed_bytes: None,
-            memory_remaining_bytes: None,
-            disk_total_bytes: None,
-            disk_processed_bytes: None,
-            disk_remaining_bytes: None,
-            created_at: None,
-            updated_at: None,
-        }));
+        module.migration_progress = Some((
+            "s1".into(),
+            ServerMigration {
+                id: 1,
+                status: "running".into(),
+                source_compute: "c1".into(),
+                dest_compute: "c2".into(),
+                memory_total_bytes: None,
+                memory_processed_bytes: None,
+                memory_remaining_bytes: None,
+                disk_total_bytes: None,
+                disk_processed_bytes: None,
+                disk_remaining_bytes: None,
+                created_at: None,
+                updated_at: None,
+            },
+        ));
         module.handle_event(&AppEvent::ServerEvacuated { id: "s1".into() });
         assert!(module.migration_progress().is_none());
     }
@@ -1670,7 +1754,11 @@ mod tests {
         module.handle_key(key(KeyCode::Char('c')));
         let form = module.form.as_ref().unwrap();
         if let (crate::ui::form::FieldDef::Dropdown { options, .. }, _) = &form.fields()[2] {
-            assert_eq!(options.len(), 1, "Cached flavor options should be applied on form open");
+            assert_eq!(
+                options.len(),
+                1,
+                "Cached flavor options should be applied on form open"
+            );
             assert_eq!(options[0].value, "flv-1");
         } else {
             panic!("Expected Dropdown for Flavor field");
@@ -1691,15 +1779,24 @@ mod tests {
     fn test_help_hint_detail_view_admin() {
         let (module, _rx) = setup_admin_detail("ACTIVE");
         let hint = module.help_hint();
-        assert!(hint.contains("M:Migrate"), "Admin detail hint should mention Migrate");
+        assert!(
+            hint.contains("M:Migrate"),
+            "Admin detail hint should mention Migrate"
+        );
     }
 
     #[test]
     fn test_help_hint_detail_verify_resize() {
         let (module, _rx) = setup_admin_detail("VERIFY_RESIZE");
         let hint = module.help_hint();
-        assert!(hint.contains("Y:Confirm"), "VERIFY_RESIZE hint should mention Confirm");
-        assert!(hint.contains("N:Revert"), "VERIFY_RESIZE hint should mention Revert");
+        assert!(
+            hint.contains("Y:Confirm"),
+            "VERIFY_RESIZE hint should mention Confirm"
+        );
+        assert!(
+            hint.contains("N:Revert"),
+            "VERIFY_RESIZE hint should mention Revert"
+        );
     }
 
     #[test]
@@ -1707,7 +1804,10 @@ mod tests {
         let (mut module, _rx) = setup();
         module.handle_key(key(KeyCode::Enter)); // enter detail
         let hint = module.help_hint();
-        assert!(!hint.contains("M:Migrate"), "Non-admin should not see Migrate");
+        assert!(
+            !hint.contains("M:Migrate"),
+            "Non-admin should not see Migrate"
+        );
         assert!(hint.contains("F:Resize"), "Non-admin should see Resize");
     }
 
@@ -1720,8 +1820,22 @@ mod tests {
         let servers = vec![make_test_server("s1", "web-01", "ACTIVE")];
         module.handle_event(&AppEvent::ServersLoaded(servers));
         module.handle_event(&AppEvent::FlavorsLoaded(vec![
-            Flavor { id: "flv-1".into(), name: "m1.small".into(), vcpus: 1, ram: 2048, disk: 20, is_public: true },
-            Flavor { id: "flv-2".into(), name: "m1.medium".into(), vcpus: 2, ram: 4096, disk: 40, is_public: true },
+            Flavor {
+                id: "flv-1".into(),
+                name: "m1.small".into(),
+                vcpus: 1,
+                ram: 2048,
+                disk: 20,
+                is_public: true,
+            },
+            Flavor {
+                id: "flv-2".into(),
+                name: "m1.medium".into(),
+                vcpus: 2,
+                ram: 4096,
+                disk: 40,
+                is_public: true,
+            },
         ]));
         (module, rx)
     }
@@ -1742,9 +1856,14 @@ mod tests {
         let mut module = ServerModule::new(tx);
         let servers = vec![make_test_server("s1", "web-01", "SHUTOFF")];
         module.handle_event(&AppEvent::ServersLoaded(servers));
-        module.handle_event(&AppEvent::FlavorsLoaded(vec![
-            Flavor { id: "flv-1".into(), name: "m1.small".into(), vcpus: 1, ram: 2048, disk: 20, is_public: true },
-        ]));
+        module.handle_event(&AppEvent::FlavorsLoaded(vec![Flavor {
+            id: "flv-1".into(),
+            name: "m1.small".into(),
+            vcpus: 1,
+            ram: 2048,
+            disk: 20,
+            is_public: true,
+        }]));
         module.handle_key(key(KeyCode::Enter));
         module.handle_key(key(KeyCode::Char('F')));
         assert!(module.select_popup.is_some(), "F should work on SHUTOFF");
@@ -1757,12 +1876,20 @@ mod tests {
         let mut module = ServerModule::new(tx);
         let servers = vec![make_test_server("s1", "web-01", "ERROR")];
         module.handle_event(&AppEvent::ServersLoaded(servers));
-        module.handle_event(&AppEvent::FlavorsLoaded(vec![
-            Flavor { id: "flv-1".into(), name: "m1.small".into(), vcpus: 1, ram: 2048, disk: 20, is_public: true },
-        ]));
+        module.handle_event(&AppEvent::FlavorsLoaded(vec![Flavor {
+            id: "flv-1".into(),
+            name: "m1.small".into(),
+            vcpus: 1,
+            ram: 2048,
+            disk: 20,
+            is_public: true,
+        }]));
         module.handle_key(key(KeyCode::Enter));
         module.handle_key(key(KeyCode::Char('F')));
-        assert!(module.select_popup.is_none(), "F should not work on ERROR status");
+        assert!(
+            module.select_popup.is_none(),
+            "F should not work on ERROR status"
+        );
     }
 
     #[test]
@@ -1770,7 +1897,10 @@ mod tests {
         let (mut module, mut rx) = setup();
         module.handle_key(key(KeyCode::Enter)); // detail
         module.handle_key(key(KeyCode::Char('F')));
-        assert!(module.select_popup.is_none(), "No popup when flavors not cached");
+        assert!(
+            module.select_popup.is_none(),
+            "No popup when flavors not cached"
+        );
         let action = rx.try_recv().unwrap();
         assert!(matches!(action, Action::FetchFlavors));
     }
@@ -1804,7 +1934,9 @@ mod tests {
         module.handle_key(key(KeyCode::Enter)); // select
         // Now confirm dialog is active
         let action = module.handle_key(key(KeyCode::Char('y'))); // confirm
-        assert!(matches!(action, Some(Action::ResizeServer { id, flavor_id }) if id == "s1" && flavor_id == "flv-2"));
+        assert!(
+            matches!(action, Some(Action::ResizeServer { id, flavor_id }) if id == "s1" && flavor_id == "flv-2")
+        );
     }
 
     #[test]
@@ -1862,7 +1994,9 @@ mod tests {
             make_test_server("s2", "web-02", "VERIFY_RESIZE"),
         ];
         module.handle_event(&AppEvent::ServersLoaded(servers));
-        module.resize_pending = Some(ResizePendingInfo { server_id: "s1".into() });
+        module.resize_pending = Some(ResizePendingInfo {
+            server_id: "s1".into(),
+        });
         // Navigate to s2 detail
         module.handle_key(key(KeyCode::Char('j'))); // select s2
         module.handle_key(key(KeyCode::Enter)); // detail s2
@@ -1876,7 +2010,9 @@ mod tests {
     #[test]
     fn test_stale_resize_pending_cleared_on_servers_loaded() {
         let (mut module, _rx) = setup();
-        module.resize_pending = Some(ResizePendingInfo { server_id: "s1".into() });
+        module.resize_pending = Some(ResizePendingInfo {
+            server_id: "s1".into(),
+        });
         // Server s1 is now ACTIVE (not VERIFY_RESIZE) → resize_pending should be cleared
         let servers = vec![make_test_server("s1", "web-01", "ACTIVE")];
         module.handle_event(&AppEvent::ServersLoaded(servers));
@@ -1886,7 +2022,9 @@ mod tests {
     #[test]
     fn test_resize_pending_kept_while_verify_resize() {
         let (mut module, _rx) = setup();
-        module.resize_pending = Some(ResizePendingInfo { server_id: "s1".into() });
+        module.resize_pending = Some(ResizePendingInfo {
+            server_id: "s1".into(),
+        });
         let servers = vec![make_test_server("s1", "web-01", "VERIFY_RESIZE")];
         module.handle_event(&AppEvent::ServersLoaded(servers));
         assert!(module.resize_pending.is_some());
@@ -1923,9 +2061,12 @@ mod tests {
     #[test]
     fn test_resolve_resize() {
         let action = ServerModule::resolve_action(PendingAction::Resize {
-            id: "s1".into(), flavor_id: "f2".into(),
+            id: "s1".into(),
+            flavor_id: "f2".into(),
         });
-        assert!(matches!(action, Some(Action::ResizeServer { id, flavor_id }) if id == "s1" && flavor_id == "f2"));
+        assert!(
+            matches!(action, Some(Action::ResizeServer { id, flavor_id }) if id == "s1" && flavor_id == "f2")
+        );
     }
 
     #[test]
@@ -1951,7 +2092,10 @@ mod tests {
     #[test]
     fn test_refresh_action_returns_fetch_servers() {
         let (module, _rx) = setup();
-        assert!(matches!(module.refresh_action(), Some(Action::FetchServers)));
+        assert!(matches!(
+            module.refresh_action(),
+            Some(Action::FetchServers)
+        ));
     }
 
     #[test]
@@ -2015,7 +2159,14 @@ mod tests {
         }
     }
 
-    fn make_volume_attached(id: &str, name: &str, size: u32, server_id: &str, device: &str, att_id: &str) -> Volume {
+    fn make_volume_attached(
+        id: &str,
+        name: &str,
+        size: u32,
+        server_id: &str,
+        device: &str,
+        att_id: &str,
+    ) -> Volume {
         Volume {
             id: id.into(),
             name: Some(name.into()),
@@ -2054,7 +2205,10 @@ mod tests {
             id: id.into(),
             name: None,
             network_id: net_id.into(),
-            fixed_ips: vec![FixedIp { subnet_id: "sub-1".into(), ip_address: ip.into() }],
+            fixed_ips: vec![FixedIp {
+                subnet_id: "sub-1".into(),
+                ip_address: ip.into(),
+            }],
             device_id: device_id.map(|s| s.into()),
             device_owner: Some("compute:az1".into()),
             status: "ACTIVE".into(),
@@ -2118,7 +2272,10 @@ mod tests {
     fn test_detail_shift_a_opens_attach_volume_popup() {
         let (mut module, _rx) = setup_detail_with_volumes();
         module.handle_key(key(KeyCode::Char('A')));
-        assert!(module.select_popup.is_some(), "Shift+A should open attach volume popup");
+        assert!(
+            module.select_popup.is_some(),
+            "Shift+A should open attach volume popup"
+        );
         assert_eq!(module.popup_kind, Some(DetailPopupKind::AttachVolume));
     }
 
@@ -2137,7 +2294,10 @@ mod tests {
         module.handle_key(key(KeyCode::Char('A'))); // open popup
         module.handle_key(key(KeyCode::Enter)); // select first volume (v1)
         assert!(module.select_popup.is_none());
-        assert!(module.confirm.is_active(), "Selecting volume should open confirm");
+        assert!(
+            module.confirm.is_active(),
+            "Selecting volume should open confirm"
+        );
     }
 
     #[test]
@@ -2146,8 +2306,10 @@ mod tests {
         module.handle_key(key(KeyCode::Char('A'))); // open popup
         module.handle_key(key(KeyCode::Enter)); // select v1
         let action = module.handle_key(key(KeyCode::Char('y'))); // confirm
-        assert!(matches!(action, Some(Action::AttachVolume { volume_id, server_id, .. })
-            if volume_id == "v1" && server_id == "s1"));
+        assert!(
+            matches!(action, Some(Action::AttachVolume { volume_id, server_id, .. })
+            if volume_id == "v1" && server_id == "s1")
+        );
     }
 
     #[test]
@@ -2157,9 +2319,9 @@ mod tests {
         let servers = vec![make_test_server("s1", "web-01", "ACTIVE")];
         module.handle_event(&AppEvent::ServersLoaded(servers));
         // Only in-use volumes
-        module.handle_event(&AppEvent::VolumesLoaded(vec![
-            make_volume_attached("v3", "boot-vol", 40, "s1", "/dev/vda", "att-3"),
-        ]));
+        module.handle_event(&AppEvent::VolumesLoaded(vec![make_volume_attached(
+            "v3", "boot-vol", 40, "s1", "/dev/vda", "att-3",
+        )]));
         module.handle_key(key(KeyCode::Enter)); // detail
         module.handle_key(key(KeyCode::Char('A')));
         assert!(module.select_popup.is_none());
@@ -2185,9 +2347,9 @@ mod tests {
         let mut module = ServerModule::new(tx);
         let servers = vec![make_test_server("s1", "web-01", "ACTIVE")];
         module.handle_event(&AppEvent::ServersLoaded(servers));
-        module.handle_event(&AppEvent::VolumesLoaded(vec![
-            make_volume_attached("v3", "boot-vol", 40, "s1", "/dev/vda", "att-3"),
-        ]));
+        module.handle_event(&AppEvent::VolumesLoaded(vec![make_volume_attached(
+            "v3", "boot-vol", 40, "s1", "/dev/vda", "att-3",
+        )]));
         module.handle_key(key(KeyCode::Enter)); // detail
         module.handle_key(key(KeyCode::Char('x'))); // detach
         // Single attachment → direct confirm, no popup
@@ -2210,9 +2372,13 @@ mod tests {
         let mut module = ServerModule::new(tx);
         let servers = vec![make_test_server("s1", "web-01", "ACTIVE")];
         module.handle_event(&AppEvent::ServersLoaded(servers));
-        module.handle_event(&AppEvent::VolumesLoaded(vec![
-            make_volume("v1", "data-vol", "available", 100, "SSD"),
-        ]));
+        module.handle_event(&AppEvent::VolumesLoaded(vec![make_volume(
+            "v1",
+            "data-vol",
+            "available",
+            100,
+            "SSD",
+        )]));
         module.handle_key(key(KeyCode::Enter)); // detail
         module.handle_key(key(KeyCode::Char('x')));
         let action = rx.try_recv().unwrap();
@@ -2225,14 +2391,16 @@ mod tests {
         let mut module = ServerModule::new(tx);
         let servers = vec![make_test_server("s1", "web-01", "ACTIVE")];
         module.handle_event(&AppEvent::ServersLoaded(servers));
-        module.handle_event(&AppEvent::VolumesLoaded(vec![
-            make_volume_attached("v3", "boot-vol", 40, "s1", "/dev/vda", "att-3"),
-        ]));
+        module.handle_event(&AppEvent::VolumesLoaded(vec![make_volume_attached(
+            "v3", "boot-vol", 40, "s1", "/dev/vda", "att-3",
+        )]));
         module.handle_key(key(KeyCode::Enter)); // detail
         module.handle_key(key(KeyCode::Char('x'))); // detach
         let action = module.handle_key(key(KeyCode::Char('y'))); // confirm
-        assert!(matches!(action, Some(Action::DetachVolume { volume_id, attachment_id, .. })
-            if volume_id == "v3" && attachment_id == "att-3"));
+        assert!(
+            matches!(action, Some(Action::DetachVolume { volume_id, attachment_id, .. })
+            if volume_id == "v3" && attachment_id == "att-3")
+        );
     }
 
     #[test]
@@ -2243,8 +2411,10 @@ mod tests {
         module.handle_key(key(KeyCode::Enter)); // select
         assert!(module.confirm.is_active());
         let action = module.handle_key(key(KeyCode::Char('y'))); // confirm
-        assert!(matches!(action, Some(Action::DetachVolume { volume_id, attachment_id, .. })
-            if volume_id == "v4" && attachment_id == "att-4"));
+        assert!(
+            matches!(action, Some(Action::DetachVolume { volume_id, attachment_id, .. })
+            if volume_id == "v4" && attachment_id == "att-4")
+        );
     }
 
     // -- Associate FIP tests --------------------------------------------------
@@ -2303,8 +2473,10 @@ mod tests {
             ports: vec![make_port("port-1", "10.0.0.5", "net-1", Some("s1"))],
         });
         let action = module.handle_key(key(KeyCode::Char('y')));
-        assert!(matches!(action, Some(Action::AssociateFloatingIp { fip_id, port_id })
-            if fip_id == "fip-1" && port_id == "port-1"));
+        assert!(
+            matches!(action, Some(Action::AssociateFloatingIp { fip_id, port_id })
+            if fip_id == "fip-1" && port_id == "port-1")
+        );
     }
 
     #[test]
@@ -2338,8 +2510,10 @@ mod tests {
         module.handle_key(key(KeyCode::Enter)); // select port-1
         assert!(module.confirm.is_active());
         let action = module.handle_key(key(KeyCode::Char('y')));
-        assert!(matches!(action, Some(Action::AssociateFloatingIp { fip_id, port_id })
-            if fip_id == "fip-1" && port_id == "port-1"));
+        assert!(
+            matches!(action, Some(Action::AssociateFloatingIp { fip_id, port_id })
+            if fip_id == "fip-1" && port_id == "port-1")
+        );
     }
 
     #[test]
@@ -2376,9 +2550,11 @@ mod tests {
         let servers = vec![make_test_server("s1", "web-01", "ACTIVE")];
         module.handle_event(&AppEvent::ServersLoaded(servers));
         // All FIPs are associated
-        module.handle_event(&AppEvent::FloatingIpsLoaded(vec![
-            make_fip("fip-2", "203.0.113.20", Some("port-99")),
-        ]));
+        module.handle_event(&AppEvent::FloatingIpsLoaded(vec![make_fip(
+            "fip-2",
+            "203.0.113.20",
+            Some("port-99"),
+        )]));
         module.handle_key(key(KeyCode::Enter)); // detail
         module.handle_key(key(KeyCode::Char('f')));
         let action = rx.try_recv().unwrap();
@@ -2392,9 +2568,13 @@ mod tests {
         let (tx, _rx) = test_action_channel();
         let mut module = ServerModule::new(tx);
         assert!(module.cached_volumes.is_empty());
-        module.handle_event(&AppEvent::VolumesLoaded(vec![
-            make_volume("v1", "test-vol", "available", 50, "SSD"),
-        ]));
+        module.handle_event(&AppEvent::VolumesLoaded(vec![make_volume(
+            "v1",
+            "test-vol",
+            "available",
+            50,
+            "SSD",
+        )]));
         assert_eq!(module.cached_volumes.len(), 1);
     }
 
@@ -2403,9 +2583,11 @@ mod tests {
         let (tx, _rx) = test_action_channel();
         let mut module = ServerModule::new(tx);
         assert!(module.cached_floating_ips.is_empty());
-        module.handle_event(&AppEvent::FloatingIpsLoaded(vec![
-            make_fip("fip-1", "203.0.113.10", None),
-        ]));
+        module.handle_event(&AppEvent::FloatingIpsLoaded(vec![make_fip(
+            "fip-1",
+            "203.0.113.10",
+            None,
+        )]));
         assert_eq!(module.cached_floating_ips.len(), 1);
     }
 
@@ -2456,8 +2638,10 @@ mod tests {
             server_id: "s1".into(),
             device: None,
         });
-        assert!(matches!(action, Some(Action::AttachVolume { volume_id, server_id, .. })
-            if volume_id == "v1" && server_id == "s1"));
+        assert!(
+            matches!(action, Some(Action::AttachVolume { volume_id, server_id, .. })
+            if volume_id == "v1" && server_id == "s1")
+        );
     }
 
     #[test]
@@ -2467,8 +2651,10 @@ mod tests {
             server_id: "s1".into(),
             attachment_id: "att-1".into(),
         });
-        assert!(matches!(action, Some(Action::DetachVolume { volume_id, attachment_id, .. })
-            if volume_id == "v1" && attachment_id == "att-1"));
+        assert!(
+            matches!(action, Some(Action::DetachVolume { volume_id, attachment_id, .. })
+            if volume_id == "v1" && attachment_id == "att-1")
+        );
     }
 
     #[test]
@@ -2477,8 +2663,10 @@ mod tests {
             fip_id: "fip-1".into(),
             port_id: "port-1".into(),
         });
-        assert!(matches!(action, Some(Action::AssociateFloatingIp { fip_id, port_id })
-            if fip_id == "fip-1" && port_id == "port-1"));
+        assert!(
+            matches!(action, Some(Action::AssociateFloatingIp { fip_id, port_id })
+            if fip_id == "fip-1" && port_id == "port-1")
+        );
     }
 
     // -- help_hint includes new keys ------------------------------------------
@@ -2488,7 +2676,10 @@ mod tests {
         let (mut module, _rx) = setup();
         module.handle_key(key(KeyCode::Enter)); // detail
         let hint = module.help_hint();
-        assert!(hint.contains("A:AttachVol"), "Detail hint should mention AttachVol");
+        assert!(
+            hint.contains("A:AttachVol"),
+            "Detail hint should mention AttachVol"
+        );
     }
 
     #[test]
@@ -2496,7 +2687,10 @@ mod tests {
         let (mut module, _rx) = setup();
         module.handle_key(key(KeyCode::Enter));
         let hint = module.help_hint();
-        assert!(hint.contains("x:DetachVol"), "Detail hint should mention DetachVol");
+        assert!(
+            hint.contains("x:DetachVol"),
+            "Detail hint should mention DetachVol"
+        );
     }
 
     #[test]
@@ -2504,7 +2698,10 @@ mod tests {
         let (mut module, _rx) = setup();
         module.handle_key(key(KeyCode::Enter));
         let hint = module.help_hint();
-        assert!(hint.contains("f:AssocFIP"), "Detail hint should mention AssocFIP");
+        assert!(
+            hint.contains("f:AssocFIP"),
+            "Detail hint should mention AssocFIP"
+        );
     }
 
     // -- Popup cancel tests ---------------------------------------------------
@@ -2545,7 +2742,11 @@ mod tests {
         // s1 is current server, v3 and v4 are attached to s1, v5 to s2
         module.handle_key(key(KeyCode::Char('x')));
         let popup = module.select_popup.as_ref().unwrap();
-        assert_eq!(popup.item_count(), 2, "Should only show s1's volumes (v3, v4), not s2's");
+        assert_eq!(
+            popup.item_count(),
+            2,
+            "Should only show s1's volumes (v3, v4), not s2's"
+        );
     }
 
     // -- PortsLoaded is only handled when pending_fip_id is set ---------------
@@ -2586,7 +2787,10 @@ mod tests {
         let (mut module, _rx) = setup();
         module.handle_key(key(KeyCode::Enter));
         let action = module.handle_key(key(KeyCode::Char('s')));
-        assert!(matches!(action, Some(Action::Navigate(Route::SecurityGroups))));
+        assert!(matches!(
+            action,
+            Some(Action::Navigate(Route::SecurityGroups))
+        ));
     }
 
     #[test]

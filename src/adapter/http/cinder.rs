@@ -4,12 +4,12 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use super::{Link, encode_param, append_pagination_parts, extract_next_marker, paginated_list};
+use super::{Link, append_pagination_parts, encode_param, extract_next_marker, paginated_list};
 use crate::adapter::http::base::BaseHttpClient;
 use crate::models::cinder::{Volume, VolumeSnapshot};
 use crate::port::auth::AuthProvider;
-use crate::port::error::{ApiError, ApiResult};
 use crate::port::cinder::CinderPort;
+use crate::port::error::{ApiError, ApiResult};
 use crate::port::types::*;
 
 pub struct CinderHttpAdapter {
@@ -148,10 +148,16 @@ impl CinderPort for CinderHttpAdapter {
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<Volume>> {
         let query = build_volume_query(filter, pagination);
-        paginated_list(&self.base, "/volumes/detail", &query, |resp: CinderVolumesResponse| {
-            let next = resp.volumes_links.as_deref().and_then(extract_next_marker);
-            (resp.volumes, next)
-        }).await
+        paginated_list(
+            &self.base,
+            "/volumes/detail",
+            &query,
+            |resp: CinderVolumesResponse| {
+                let next = resp.volumes_links.as_deref().and_then(extract_next_marker);
+                (resp.volumes, next)
+            },
+        )
+        .await
     }
 
     async fn get_volume(&self, volume_id: &str) -> ApiResult<Volume> {
@@ -279,10 +285,19 @@ impl CinderPort for CinderHttpAdapter {
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<VolumeSnapshot>> {
         let query = build_snapshot_query(filter, pagination);
-        paginated_list(&self.base, "/snapshots/detail", &query, |resp: CinderSnapshotsResponse| {
-            let next = resp.snapshots_links.as_deref().and_then(extract_next_marker);
-            (resp.snapshots, next)
-        }).await
+        paginated_list(
+            &self.base,
+            "/snapshots/detail",
+            &query,
+            |resp: CinderSnapshotsResponse| {
+                let next = resp
+                    .snapshots_links
+                    .as_deref()
+                    .and_then(extract_next_marker);
+                (resp.snapshots, next)
+            },
+        )
+        .await
     }
 
     async fn get_snapshot(&self, snapshot_id: &str) -> ApiResult<VolumeSnapshot> {
@@ -353,10 +368,7 @@ impl CinderPort for CinderHttpAdapter {
     async fn get_volume_quota(&self, project_id: &str) -> ApiResult<VolumeQuota> {
         let req = self
             .base
-            .get(&format!(
-                "/os-quota-sets/{}",
-                encode_param(project_id)
-            ))
+            .get(&format!("/os-quota-sets/{}", encode_param(project_id)))
             .await?;
         let resp: CinderQuotaResponse = self.base.send_json(req).await?;
         Ok(resp.quota_set)

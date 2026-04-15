@@ -56,11 +56,7 @@ impl ServiceCatalog {
     }
 
     /// Get endpoint for a service type with explicit region override.
-    pub fn endpoint_in_region(
-        &self,
-        service_type: ServiceType,
-        region: &str,
-    ) -> Result<String> {
+    pub fn endpoint_in_region(&self, service_type: ServiceType, region: &str) -> Result<String> {
         self.resolve(service_type, Some(region))
     }
 
@@ -112,9 +108,10 @@ impl ServiceCatalog {
 
     /// Common endpoint resolution logic shared by `endpoint` and `endpoint_in_region`.
     fn resolve(&self, service_type: ServiceType, region: Option<&str>) -> Result<String> {
-        let catalog = self.catalog.read().map_err(|_| {
-            AppError::Other("Failed to read service catalog".to_string())
-        })?;
+        let catalog = self
+            .catalog
+            .read()
+            .map_err(|_| AppError::Other("Failed to read service catalog".to_string()))?;
         let pref = self
             .interface_preference
             .read()
@@ -191,24 +188,46 @@ mod tests {
                 service_type: "compute".to_string(),
                 service_name: "nova".to_string(),
                 endpoints: vec![
-                    make_endpoint("RegionOne", EndpointInterface::Internal, "https://nova-int:8774"),
-                    make_endpoint("RegionOne", EndpointInterface::Public, "https://nova-pub:8774"),
-                    make_endpoint("RegionTwo", EndpointInterface::Internal, "https://nova-r2:8774"),
+                    make_endpoint(
+                        "RegionOne",
+                        EndpointInterface::Internal,
+                        "https://nova-int:8774",
+                    ),
+                    make_endpoint(
+                        "RegionOne",
+                        EndpointInterface::Public,
+                        "https://nova-pub:8774",
+                    ),
+                    make_endpoint(
+                        "RegionTwo",
+                        EndpointInterface::Internal,
+                        "https://nova-r2:8774",
+                    ),
                 ],
             },
             CatalogEntry {
                 service_type: "network".to_string(),
                 service_name: "neutron".to_string(),
-                endpoints: vec![
-                    make_endpoint("RegionOne", EndpointInterface::Internal, "https://neutron:9696"),
-                ],
+                endpoints: vec![make_endpoint(
+                    "RegionOne",
+                    EndpointInterface::Internal,
+                    "https://neutron:9696",
+                )],
             },
             CatalogEntry {
                 service_type: "identity".to_string(),
                 service_name: "keystone".to_string(),
                 endpoints: vec![
-                    make_endpoint("RegionOne", EndpointInterface::Public, "https://keystone:5000"),
-                    make_endpoint("RegionOne", EndpointInterface::Admin, "https://keystone:35357"),
+                    make_endpoint(
+                        "RegionOne",
+                        EndpointInterface::Public,
+                        "https://keystone:5000",
+                    ),
+                    make_endpoint(
+                        "RegionOne",
+                        EndpointInterface::Admin,
+                        "https://keystone:35357",
+                    ),
                 ],
             },
         ]

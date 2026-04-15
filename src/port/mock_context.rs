@@ -28,14 +28,20 @@ impl MockHttpEndpointCache {
     }
 
     pub fn invalidate_count(&self) -> usize {
-        *self.invalidate_count.lock().unwrap_or_else(|e| e.into_inner())
+        *self
+            .invalidate_count
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
     }
 }
 
 #[async_trait]
 impl HttpEndpointCache for MockHttpEndpointCache {
     async fn invalidate(&self) {
-        *self.invalidate_count.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+        *self
+            .invalidate_count
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) += 1;
     }
 }
 
@@ -59,11 +65,17 @@ impl MockScopedAuthPort {
     }
 
     pub fn fail_next_set_active(&self, err: SwitchError) {
-        *self.set_active_error.lock().unwrap_or_else(|e| e.into_inner()) = Some(err);
+        *self
+            .set_active_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(err);
     }
 
     pub fn set_active_calls(&self) -> Vec<(TokenScope, Token)> {
-        self.set_active_calls.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.set_active_calls
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 }
 
@@ -78,10 +90,18 @@ impl ScopedAuthPort for MockScopedAuthPort {
     }
 
     async fn set_active(&self, scope: TokenScope, token: Token) -> Result<(), SwitchError> {
-        if let Some(err) = self.set_active_error.lock().unwrap_or_else(|e| e.into_inner()).take() {
+        if let Some(err) = self
+            .set_active_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
             return Err(err);
         }
-        self.set_active_calls.lock().unwrap_or_else(|e| e.into_inner()).push((scope.clone(), token.clone()));
+        self.set_active_calls
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push((scope.clone(), token.clone()));
         *self.scope.lock().unwrap_or_else(|e| e.into_inner()) = scope;
         *self.token.lock().unwrap_or_else(|e| e.into_inner()) = token;
         Ok(())
@@ -133,30 +153,48 @@ impl MockContextSession {
     }
 
     pub fn with_begin_failure(self, err: SwitchError) -> Self {
-        self.failures.lock().unwrap_or_else(|e| e.into_inner()).begin = Some(err);
+        self.failures
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .begin = Some(err);
         self
     }
 
     pub fn with_rescope_failure(self, err: SwitchError) -> Self {
-        self.failures.lock().unwrap_or_else(|e| e.into_inner()).rescope = Some(err);
+        self.failures
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .rescope = Some(err);
         self
     }
 
     pub fn with_refresh_failure(self, err: SwitchError) -> Self {
-        self.failures.lock().unwrap_or_else(|e| e.into_inner()).refresh = Some(err);
+        self.failures
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .refresh = Some(err);
         self
     }
 
     pub fn with_commit_failure(self, err: SwitchError) -> Self {
-        self.failures.lock().unwrap_or_else(|e| e.into_inner()).commit = Some(err);
+        self.failures
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .commit = Some(err);
         self
     }
 
     /// Simulates commit self-revert: commit will run its internal rollback
     /// and return CommitFailed without the caller touching `rollback`.
     pub fn with_partial_commit_failure(self) -> Self {
-        self.failures.lock().unwrap_or_else(|e| e.into_inner()).commit = Some(SwitchError::CommitFailed("staged step failed".into()));
-        *self.commit_auto_revert.lock().unwrap_or_else(|e| e.into_inner()) = true;
+        self.failures
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .commit = Some(SwitchError::CommitFailed("staged step failed".into()));
+        *self
+            .commit_auto_revert
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = true;
         self
     }
 
@@ -165,7 +203,10 @@ impl MockContextSession {
     }
 
     pub fn rollback_called(&self) -> bool {
-        *self.rollback_called.lock().unwrap_or_else(|e| e.into_inner())
+        *self
+            .rollback_called
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
     }
 }
 
@@ -176,8 +217,17 @@ impl ContextSessionPort for MockContextSession {
         target: &ContextTarget,
         epoch: Epoch,
     ) -> Result<SessionHandle, SwitchError> {
-        self.steps.lock().unwrap_or_else(|e| e.into_inner()).push(TransitionStep::Begin);
-        if let Some(err) = self.failures.lock().unwrap_or_else(|e| e.into_inner()).begin.take() {
+        self.steps
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(TransitionStep::Begin);
+        if let Some(err) = self
+            .failures
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .begin
+            .take()
+        {
             return Err(err);
         }
         Ok(SessionHandle::new(
@@ -189,8 +239,17 @@ impl ContextSessionPort for MockContextSession {
     }
 
     async fn rescope(&self, handle: &mut SessionHandle) -> Result<(), SwitchError> {
-        self.steps.lock().unwrap_or_else(|e| e.into_inner()).push(TransitionStep::Rescope);
-        if let Some(err) = self.failures.lock().unwrap_or_else(|e| e.into_inner()).rescope.take() {
+        self.steps
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(TransitionStep::Rescope);
+        if let Some(err) = self
+            .failures
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .rescope
+            .take()
+        {
             return Err(err);
         }
         handle.stage_token(self.new_token.clone());
@@ -198,19 +257,44 @@ impl ContextSessionPort for MockContextSession {
     }
 
     async fn refresh_catalog(&self, _handle: &mut SessionHandle) -> Result<(), SwitchError> {
-        self.steps.lock().unwrap_or_else(|e| e.into_inner()).push(TransitionStep::Refresh);
-        if let Some(err) = self.failures.lock().unwrap_or_else(|e| e.into_inner()).refresh.take() {
+        self.steps
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(TransitionStep::Refresh);
+        if let Some(err) = self
+            .failures
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .refresh
+            .take()
+        {
             return Err(err);
         }
         Ok(())
     }
 
     async fn commit(&self, handle: SessionHandle) -> Result<ContextSnapshot, SwitchError> {
-        self.steps.lock().unwrap_or_else(|e| e.into_inner()).push(TransitionStep::Commit);
-        if let Some(err) = self.failures.lock().unwrap_or_else(|e| e.into_inner()).commit.take() {
+        self.steps
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(TransitionStep::Commit);
+        if let Some(err) = self
+            .failures
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .commit
+            .take()
+        {
             // Self-revert simulates commit's atomic contract.
-            if *self.commit_auto_revert.lock().unwrap_or_else(|e| e.into_inner()) {
-                self.steps.lock().unwrap_or_else(|e| e.into_inner()).push(TransitionStep::Rollback);
+            if *self
+                .commit_auto_revert
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+            {
+                self.steps
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .push(TransitionStep::Rollback);
             }
             return Err(err);
         }
@@ -224,8 +308,14 @@ impl ContextSessionPort for MockContextSession {
     }
 
     async fn rollback(&self, _handle: SessionHandle) {
-        self.steps.lock().unwrap_or_else(|e| e.into_inner()).push(TransitionStep::Rollback);
-        *self.rollback_called.lock().unwrap_or_else(|e| e.into_inner()) = true;
+        self.steps
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(TransitionStep::Rollback);
+        *self
+            .rollback_called
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = true;
     }
 }
 
@@ -265,8 +355,11 @@ mod tests {
             name: "admin".into(),
             domain: "default".into(),
         };
-        let session =
-            MockContextSession::new(prev_scope, make_token("old", "admin"), make_token("new", "demo"));
+        let session = MockContextSession::new(
+            prev_scope,
+            make_token("old", "admin"),
+            make_token("new", "demo"),
+        );
         let target = make_target("demo");
 
         let mut handle = session.begin(&target, 7).await.unwrap();

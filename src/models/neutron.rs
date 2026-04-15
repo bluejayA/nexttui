@@ -83,10 +83,18 @@ pub struct FixedIp {
 
 impl Port {
     pub fn display_label(&self, networks: &[Network]) -> String {
-        let ip = self.fixed_ips.first().map(|f| f.ip_address.as_str()).unwrap_or("no-ip");
+        let ip = self
+            .fixed_ips
+            .first()
+            .map(|f| f.ip_address.as_str())
+            .unwrap_or("no-ip");
         let net = networks.iter().find(|n| n.id == self.network_id);
         let net_name = net.map(|n| n.name.as_str()).unwrap_or("unknown-net");
-        let ext_badge = if net.is_some_and(|n| n.external) { " [EXT]" } else { "" };
+        let ext_badge = if net.is_some_and(|n| n.external) {
+            " [EXT]"
+        } else {
+            ""
+        };
         format!("{ip} on {net_name}{ext_badge}")
     }
 }
@@ -208,7 +216,10 @@ mod tests {
             id: "port-1".into(),
             name: None,
             network_id: "net-1".into(),
-            fixed_ips: vec![FixedIp { subnet_id: "sub-1".into(), ip_address: "10.0.0.5".into() }],
+            fixed_ips: vec![FixedIp {
+                subnet_id: "sub-1".into(),
+                ip_address: "10.0.0.5".into(),
+            }],
             device_id: None,
             device_owner: None,
             status: "ACTIVE".into(),
@@ -239,7 +250,10 @@ mod tests {
             id: "port-1".into(),
             name: None,
             network_id: "ext-1".into(),
-            fixed_ips: vec![FixedIp { subnet_id: "sub-1".into(), ip_address: "203.0.113.10".into() }],
+            fixed_ips: vec![FixedIp {
+                subnet_id: "sub-1".into(),
+                ip_address: "203.0.113.10".into(),
+            }],
             device_id: None,
             device_owner: None,
             status: "ACTIVE".into(),
@@ -261,7 +275,10 @@ mod tests {
             provider_segmentation_id: None,
             tenant_id: None,
         }];
-        assert_eq!(port.display_label(&networks), "203.0.113.10 on public [EXT]");
+        assert_eq!(
+            port.display_label(&networks),
+            "203.0.113.10 on public [EXT]"
+        );
     }
 
     #[test]

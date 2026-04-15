@@ -1,6 +1,5 @@
 /// SearchFilter operates on `&[Vec<String>]` (cell data) to avoid coupling
 /// with the UI layer's Row type. The caller extracts cells before passing.
-
 pub struct SearchFilter {
     active: bool,
     term: String,

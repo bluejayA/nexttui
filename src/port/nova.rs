@@ -39,7 +39,11 @@ pub trait NovaPort: Send + Sync {
     async fn revert_migration(&self, server_id: &str) -> ApiResult<()>;
     async fn evacuate_server(&self, server_id: &str, params: &EvacuateParams) -> ApiResult<()>;
     async fn list_server_migrations(&self, server_id: &str) -> ApiResult<Vec<ServerMigration>>;
-    async fn get_server_migration(&self, server_id: &str, migration_id: i64) -> ApiResult<ServerMigration>;
+    async fn get_server_migration(
+        &self,
+        server_id: &str,
+        migration_id: i64,
+    ) -> ApiResult<ServerMigration>;
 
     // Flavors
     async fn list_flavors(

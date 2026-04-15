@@ -129,7 +129,9 @@ impl AuditLogger {
             let to = rotated_path(&self.log_path, i + 1);
             if from.exists() {
                 fs::rename(&from, &to).map_err(|e| {
-                    AppError::Other(format!("Failed to rotate audit log {from:?} -> {to:?}: {e}"))
+                    AppError::Other(format!(
+                        "Failed to rotate audit log {from:?} -> {to:?}: {e}"
+                    ))
                 })?;
             }
         }
@@ -141,14 +143,15 @@ impl AuditLogger {
         writer
             .flush()
             .map_err(|e| AppError::Other(format!("Failed to flush before rotation: {e}")))?;
-        fs::rename(&self.log_path, &rotated).map_err(|e| {
-            AppError::Other(format!("Failed to rotate current audit log: {e}"))
-        })?;
+        fs::rename(&self.log_path, &rotated)
+            .map_err(|e| AppError::Other(format!("Failed to rotate current audit log: {e}")))?;
         let file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&self.log_path)
-            .map_err(|e| AppError::Other(format!("Failed to reopen audit log after rotation: {e}")))?;
+            .map_err(|e| {
+                AppError::Other(format!("Failed to reopen audit log after rotation: {e}"))
+            })?;
         *writer = BufWriter::new(file);
         Ok(())
     }

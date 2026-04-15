@@ -57,11 +57,19 @@ pub fn volume_to_row(volume: &Volume, show_tenant: bool) -> Row {
     volume_to_row_with_servers(volume, show_tenant, &[])
 }
 
-pub fn volume_to_row_with_servers(volume: &Volume, show_tenant: bool, cached_servers: &[crate::models::nova::Server]) -> Row {
+pub fn volume_to_row_with_servers(
+    volume: &Volume,
+    show_tenant: bool,
+    cached_servers: &[crate::models::nova::Server],
+) -> Row {
     let (icon, style) = volume_status_display(&volume.status);
     let name = volume.name.as_deref().unwrap_or("-");
     let vol_type = volume.volume_type.as_deref().unwrap_or("-");
-    let bootable_icon = if volume.bootable == "true" { "✓" } else { "✗" };
+    let bootable_icon = if volume.bootable == "true" {
+        "✓"
+    } else {
+        "✗"
+    };
     let attached = if volume.attachments.is_empty() {
         "-".to_string()
     } else {
@@ -80,10 +88,7 @@ pub fn volume_to_row_with_servers(volume: &Volume, show_tenant: bool, cached_ser
             .join(", ")
     };
 
-    let mut cells = vec![
-        icon.to_string(),
-        name.to_string(),
-    ];
+    let mut cells = vec![icon.to_string(), name.to_string()];
     if show_tenant {
         cells.push(volume.tenant_id.as_deref().unwrap_or("-").to_string());
     }
@@ -120,7 +125,10 @@ pub fn volume_detail_data(volume: &Volume) -> DetailData {
     volume_detail_data_with_servers(volume, &[])
 }
 
-pub fn volume_detail_data_with_servers(volume: &Volume, cached_servers: &[crate::models::nova::Server]) -> DetailData {
+pub fn volume_detail_data_with_servers(
+    volume: &Volume,
+    cached_servers: &[crate::models::nova::Server],
+) -> DetailData {
     let mut sections = vec![];
 
     // Basic info
@@ -192,7 +200,12 @@ pub fn volume_detail_data_with_servers(volume: &Volume, cached_servers: &[crate:
 
     // Attachments
     if !volume.attachments.is_empty() {
-        let columns = vec!["Server Name".into(), "Server ID".into(), "Device".into(), "Attachment ID".into()];
+        let columns = vec![
+            "Server Name".into(),
+            "Server ID".into(),
+            "Device".into(),
+            "Attachment ID".into(),
+        ];
         let rows: Vec<Vec<String>> = volume
             .attachments
             .iter()
@@ -202,7 +215,12 @@ pub fn volume_detail_data_with_servers(volume: &Volume, cached_servers: &[crate:
                     .find(|s| s.id == a.server_id)
                     .map(|s| s.name.clone())
                     .unwrap_or_else(|| "-".into());
-                vec![server_name, a.server_id.clone(), a.device.clone(), a.id.clone()]
+                vec![
+                    server_name,
+                    a.server_id.clone(),
+                    a.device.clone(),
+                    a.id.clone(),
+                ]
             })
             .collect();
         sections.push(DetailSection {
@@ -297,12 +315,24 @@ mod tests {
 
     #[test]
     fn test_volume_status_display() {
-        assert_eq!(volume_status_display("available"), ("●", RowStyleHint::Active));
+        assert_eq!(
+            volume_status_display("available"),
+            ("●", RowStyleHint::Active)
+        );
         assert_eq!(volume_status_display("in-use"), ("◆", RowStyleHint::Active));
         assert_eq!(volume_status_display("error"), ("✗", RowStyleHint::Error));
-        assert_eq!(volume_status_display("creating"), ("◐", RowStyleHint::Warning));
-        assert_eq!(volume_status_display("maintenance"), ("○", RowStyleHint::Disabled));
-        assert_eq!(volume_status_display("UNKNOWN"), ("?", RowStyleHint::Normal));
+        assert_eq!(
+            volume_status_display("creating"),
+            ("◐", RowStyleHint::Warning)
+        );
+        assert_eq!(
+            volume_status_display("maintenance"),
+            ("○", RowStyleHint::Disabled)
+        );
+        assert_eq!(
+            volume_status_display("UNKNOWN"),
+            ("?", RowStyleHint::Normal)
+        );
     }
 
     #[test]

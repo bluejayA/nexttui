@@ -91,10 +91,16 @@ impl GlancePort for GlanceHttpAdapter {
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<Image>> {
         let query = build_image_query(filter, pagination);
-        paginated_list(&self.base, "/v2/images", &query, |resp: GlanceImagesResponse| {
-            let next = extract_glance_marker(resp.next.as_deref());
-            (resp.images, next)
-        }).await
+        paginated_list(
+            &self.base,
+            "/v2/images",
+            &query,
+            |resp: GlanceImagesResponse| {
+                let next = extract_glance_marker(resp.next.as_deref());
+                (resp.images, next)
+            },
+        )
+        .await
     }
 
     async fn get_image(&self, image_id: &str) -> ApiResult<Image> {
@@ -120,11 +126,7 @@ impl GlancePort for GlanceHttpAdapter {
         Ok(image)
     }
 
-    async fn update_image(
-        &self,
-        image_id: &str,
-        params: &ImageUpdateParams,
-    ) -> ApiResult<Image> {
+    async fn update_image(&self, image_id: &str, params: &ImageUpdateParams) -> ApiResult<Image> {
         let body = ImageUpdateBody {
             name: params.name.clone(),
             visibility: params.visibility.clone(),

@@ -1,8 +1,8 @@
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::Span;
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToastSeverity {
@@ -154,7 +154,11 @@ mod tests {
         let t = ToastMessage::info(&long_text);
         let display = t.display_text();
         let char_count = display.chars().count();
-        assert!(char_count <= 75, "display_text should be <= 75 chars, got {}", char_count);
+        assert!(
+            char_count <= 75,
+            "display_text should be <= 75 chars, got {}",
+            char_count
+        );
         assert!(display.ends_with('…'));
     }
 

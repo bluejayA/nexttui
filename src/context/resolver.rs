@@ -82,7 +82,11 @@ impl ContextTargetResolver {
     /// against [`ProjectDirectoryPort`].
     pub async fn resolve(&self, request: ContextRequest) -> Result<ContextTarget, SwitchError> {
         match request {
-            ContextRequest::ByName { cloud, project, domain } => {
+            ContextRequest::ByName {
+                cloud,
+                project,
+                domain,
+            } => {
                 let (cloud, project_name) = normalize_cloud_project(cloud, project, &*self.clouds)?;
                 let candidates = self.directory.list_projects(&cloud).await?;
                 let mut iter = candidates
@@ -99,8 +103,7 @@ impl ContextTargetResolver {
                     (None, _) => Err(SwitchError::NotFound(project_name)),
                     (Some(only), None) => Ok(only.into()),
                     (Some(first), Some(second)) => {
-                        let mut candidates: Vec<ContextTarget> =
-                            vec![first.into(), second.into()];
+                        let mut candidates: Vec<ContextTarget> = vec![first.into(), second.into()];
                         candidates.extend(iter.map(Into::into));
                         Err(SwitchError::Ambiguous { candidates })
                     }
@@ -233,9 +236,7 @@ mod tests {
         })
     }
 
-    fn directory(
-        data: &[(&str, Vec<ProjectCandidate>)],
-    ) -> Arc<dyn ProjectDirectoryPort> {
+    fn directory(data: &[(&str, Vec<ProjectCandidate>)]) -> Arc<dyn ProjectDirectoryPort> {
         let mut map = std::collections::HashMap::new();
         for (cloud, projects) in data {
             map.insert((*cloud).to_string(), projects.clone());
@@ -344,7 +345,10 @@ mod tests {
         let resolver = ContextTargetResolver::new(
             clouds("devstack", &["devstack", "prod"]),
             directory(&[
-                ("devstack", vec![candidate("devstack", "admin", "d-1", "default")]),
+                (
+                    "devstack",
+                    vec![candidate("devstack", "admin", "d-1", "default")],
+                ),
                 ("prod", vec![candidate("prod", "admin", "p-1", "default")]),
             ]),
         );
@@ -365,7 +369,10 @@ mod tests {
         let resolver = ContextTargetResolver::new(
             clouds("devstack", &["devstack", "prod"]),
             directory(&[
-                ("devstack", vec![candidate("devstack", "admin", "d-1", "default")]),
+                (
+                    "devstack",
+                    vec![candidate("devstack", "admin", "d-1", "default")],
+                ),
                 ("prod", vec![candidate("prod", "admin", "p-1", "default")]),
             ]),
         );

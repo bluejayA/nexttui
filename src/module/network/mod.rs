@@ -1,12 +1,12 @@
 pub mod view_model;
 
 use crossterm::event::{KeyCode, KeyEvent};
-use ratatui::layout::Rect;
 use ratatui::Frame;
+use ratatui::layout::Rect;
 
 use crate::action::Action;
-use crate::context::ActionSender;
 use crate::component::Component;
+use crate::context::ActionSender;
 use crate::event::AppEvent;
 use crate::models::neutron::Network;
 use crate::module::ViewState;
@@ -65,7 +65,10 @@ impl NetworkModule {
     }
 
     fn rows(&self) -> Vec<Row> {
-        self.networks.iter().map(|n| network_to_row(n, self.all_tenants)).collect()
+        self.networks
+            .iter()
+            .map(|n| network_to_row(n, self.all_tenants))
+            .collect()
     }
 
     fn open_create_form(&mut self) {
@@ -90,9 +93,7 @@ impl NetworkModule {
                     let id = network.id.clone();
                     self.subnets.clear();
                     self.view_state = ViewState::Detail(id.clone());
-                    let _ = self.action_tx.send(Action::FetchSubnets {
-                        network_id: id,
-                    });
+                    let _ = self.action_tx.send(Action::FetchSubnets { network_id: id });
                 }
                 None
             }
@@ -139,34 +140,30 @@ impl NetworkModule {
                         _ => None,
                     })
                     .unwrap_or(true);
-                let shared = values
-                    .get("Shared")
-                    .and_then(|v| match v {
-                        crate::ui::form::FormValue::Bool(b) => Some(*b),
-                        _ => None,
-                    });
-                let external = values
-                    .get("External")
-                    .and_then(|v| match v {
-                        crate::ui::form::FormValue::Bool(b) => Some(*b),
-                        _ => None,
-                    });
-                let mtu = values
-                    .get("MTU")
-                    .and_then(|v| match v {
-                        crate::ui::form::FormValue::Text(s) => s.parse::<u32>().ok(),
-                        _ => None,
-                    });
+                let shared = values.get("Shared").and_then(|v| match v {
+                    crate::ui::form::FormValue::Bool(b) => Some(*b),
+                    _ => None,
+                });
+                let external = values.get("External").and_then(|v| match v {
+                    crate::ui::form::FormValue::Bool(b) => Some(*b),
+                    _ => None,
+                });
+                let mtu = values.get("MTU").and_then(|v| match v {
+                    crate::ui::form::FormValue::Text(s) => s.parse::<u32>().ok(),
+                    _ => None,
+                });
 
                 self.close_form();
-                let _ = self.action_tx.send(Action::CreateNetwork(NetworkCreateParams {
-                    name,
-                    admin_state_up,
-                    shared,
-                    external,
-                    mtu,
-                    port_security_enabled: None,
-                }));
+                let _ = self
+                    .action_tx
+                    .send(Action::CreateNetwork(NetworkCreateParams {
+                        name,
+                        admin_state_up,
+                        shared,
+                        external,
+                        mtu,
+                        port_security_enabled: None,
+                    }));
                 Some(Action::ExitFormMode)
             }
             FormAction::Cancel => {
@@ -179,8 +176,12 @@ impl NetworkModule {
 }
 
 impl Component for NetworkModule {
-    fn refresh_action(&self) -> Option<Action> { Some(Action::FetchNetworks) }
-    fn is_modal(&self) -> bool { self.form.is_some() }
+    fn refresh_action(&self) -> Option<Action> {
+        Some(Action::FetchNetworks)
+    }
+    fn is_modal(&self) -> bool {
+        self.form.is_some()
+    }
 
     fn set_all_tenants(&mut self, v: bool) {
         self.all_tenants = v;
@@ -204,11 +205,14 @@ impl Component for NetworkModule {
                 let rows = self.rows();
                 self.resource_list.set_rows(rows);
             }
-            AppEvent::SubnetsLoaded { network_id, subnets } => {
-                if let ViewState::Detail(ref current_id) = self.view_state {
-                    if current_id == network_id {
-                        self.subnets = subnets.clone();
-                    }
+            AppEvent::SubnetsLoaded {
+                network_id,
+                subnets,
+            } => {
+                if let ViewState::Detail(ref current_id) = self.view_state
+                    && current_id == network_id
+                {
+                    self.subnets = subnets.clone();
                 }
             }
             AppEvent::NetworkCreated(_) => {
@@ -252,7 +256,9 @@ impl Component for NetworkModule {
         match &self.view_state {
             ViewState::List => None,
             ViewState::Detail(id) => {
-                let name = self.networks.iter()
+                let name = self
+                    .networks
+                    .iter()
                     .find(|r| r.id == *id)
                     .map(|r| r.name.as_str())
                     .unwrap_or("...");

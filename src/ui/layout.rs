@@ -144,10 +144,19 @@ mod tests {
         ];
         ys.sort_by_key(|&(y, _)| y);
         for w in ys.windows(2) {
-            assert!(w[0].0 + w[0].1 <= w[1].0, "areas overlap: {:?} vs {:?}", w[0], w[1]);
+            assert!(
+                w[0].0 + w[0].1 <= w[1].0,
+                "areas overlap: {:?} vs {:?}",
+                w[0],
+                w[1]
+            );
         }
         // Total should fill 24 rows
-        let total: u16 = areas.header.height + areas.content.height + areas.input_bar.height + areas.toast_bar.height + areas.status_bar.height;
+        let total: u16 = areas.header.height
+            + areas.content.height
+            + areas.input_bar.height
+            + areas.toast_bar.height
+            + areas.status_bar.height;
         assert_eq!(total, 24);
     }
 

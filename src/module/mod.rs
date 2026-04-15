@@ -31,40 +31,107 @@ pub enum ViewState {
 /// Pending confirmed action — wraps what should happen after user confirms.
 #[derive(Debug, Clone)]
 pub enum PendingAction {
-    Delete { id: String, name: String },
-    Reboot { id: String, hard: bool },
-    Stop { id: String },
+    Delete {
+        id: String,
+        name: String,
+    },
+    Reboot {
+        id: String,
+        hard: bool,
+    },
+    Stop {
+        id: String,
+    },
     Submit,
     // Neutron
-    DeleteSecurityGroup { id: String, name: String },
-    DeleteSecurityGroupRule { rule_id: String },
-    DeleteFloatingIp { id: String, ip: String },
+    DeleteSecurityGroup {
+        id: String,
+        name: String,
+    },
+    DeleteSecurityGroupRule {
+        rule_id: String,
+    },
+    DeleteFloatingIp {
+        id: String,
+        ip: String,
+    },
     // Cinder
-    DeleteVolume { id: String, name: String },
-    DeleteSnapshot { id: String, name: String },
+    DeleteVolume {
+        id: String,
+        name: String,
+    },
+    DeleteSnapshot {
+        id: String,
+        name: String,
+    },
     // Glance
-    DeleteImage { id: String, name: String },
+    DeleteImage {
+        id: String,
+        name: String,
+    },
     // Keystone
-    DeleteProject { id: String, name: String },
-    DeleteUser { id: String, name: String },
+    DeleteProject {
+        id: String,
+        name: String,
+    },
+    DeleteUser {
+        id: String,
+        name: String,
+    },
     // Nova: Resize
-    Resize { id: String, flavor_id: String },
-    ConfirmResize { id: String },
-    RevertResize { id: String },
+    Resize {
+        id: String,
+        flavor_id: String,
+    },
+    ConfirmResize {
+        id: String,
+    },
+    RevertResize {
+        id: String,
+    },
     // Cinder: Attach/Detach
-    AttachVolume { volume_id: String, server_id: String, device: Option<String> },
-    DetachVolume { volume_id: String, server_id: String, attachment_id: String },
-    ForceDetachVolume { volume_id: String, server_id: String, attachment_id: String },
-    ForceResetVolumeState { volume_id: String },
+    AttachVolume {
+        volume_id: String,
+        server_id: String,
+        device: Option<String>,
+    },
+    DetachVolume {
+        volume_id: String,
+        server_id: String,
+        attachment_id: String,
+    },
+    ForceDetachVolume {
+        volume_id: String,
+        server_id: String,
+        attachment_id: String,
+    },
+    ForceResetVolumeState {
+        volume_id: String,
+    },
     // Neutron: Floating IP
-    AssociateFloatingIp { fip_id: String, port_id: String },
-    DisassociateFloatingIp { fip_id: String },
+    AssociateFloatingIp {
+        fip_id: String,
+        port_id: String,
+    },
+    DisassociateFloatingIp {
+        fip_id: String,
+    },
     // Nova: Migration / Evacuate
-    LiveMigrate { id: String },
-    ColdMigrate { id: String },
-    ConfirmMigrate { id: String },
-    RevertMigrate { id: String },
-    Evacuate { id: String },
+    LiveMigrate {
+        id: String,
+    },
+    ColdMigrate {
+        id: String,
+    },
+    ConfirmMigrate {
+        id: String,
+    },
+    RevertMigrate {
+        id: String,
+    },
+    Evacuate {
+        id: String,
+    },
 }
 
 /// Shared confirm dialog handler. Wraps the ConfirmDialog + PendingAction
@@ -72,6 +139,12 @@ pub enum PendingAction {
 pub struct ConfirmHandler {
     pub dialog: Option<ConfirmDialog>,
     pub pending: Option<PendingAction>,
+}
+
+impl Default for ConfirmHandler {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ConfirmHandler {
@@ -184,12 +257,31 @@ mod tests {
     #[test]
     fn test_volume_fip_pending_action_variants() {
         let actions: Vec<PendingAction> = vec![
-            PendingAction::AttachVolume { volume_id: "v1".into(), server_id: "s1".into(), device: Some("/dev/vdb".into()) },
-            PendingAction::DetachVolume { volume_id: "v1".into(), server_id: "s1".into(), attachment_id: "att-1".into() },
-            PendingAction::ForceDetachVolume { volume_id: "v1".into(), server_id: "s1".into(), attachment_id: "att-1".into() },
-            PendingAction::ForceResetVolumeState { volume_id: "v1".into() },
-            PendingAction::AssociateFloatingIp { fip_id: "fip-1".into(), port_id: "port-1".into() },
-            PendingAction::DisassociateFloatingIp { fip_id: "fip-1".into() },
+            PendingAction::AttachVolume {
+                volume_id: "v1".into(),
+                server_id: "s1".into(),
+                device: Some("/dev/vdb".into()),
+            },
+            PendingAction::DetachVolume {
+                volume_id: "v1".into(),
+                server_id: "s1".into(),
+                attachment_id: "att-1".into(),
+            },
+            PendingAction::ForceDetachVolume {
+                volume_id: "v1".into(),
+                server_id: "s1".into(),
+                attachment_id: "att-1".into(),
+            },
+            PendingAction::ForceResetVolumeState {
+                volume_id: "v1".into(),
+            },
+            PendingAction::AssociateFloatingIp {
+                fip_id: "fip-1".into(),
+                port_id: "port-1".into(),
+            },
+            PendingAction::DisassociateFloatingIp {
+                fip_id: "fip-1".into(),
+            },
         ];
         assert_eq!(actions.len(), 6);
     }
@@ -209,7 +301,10 @@ mod tests {
     #[test]
     fn test_resize_pending_action_variants() {
         let actions: Vec<PendingAction> = vec![
-            PendingAction::Resize { id: "s1".into(), flavor_id: "f2".into() },
+            PendingAction::Resize {
+                id: "s1".into(),
+                flavor_id: "f2".into(),
+            },
             PendingAction::ConfirmResize { id: "s1".into() },
             PendingAction::RevertResize { id: "s1".into() },
         ];

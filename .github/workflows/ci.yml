@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  # One live run per ref. A fresh push to the same PR / branch cancels
+  # the in-flight run so we don't pay for stale CI.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The rust-toolchain.toml at the repo root pins the channel and the
+      # required components (clippy, rustfmt). The action reads it, so no
+      # explicit `toolchain: stable` here.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format (rustfmt --check)
+        run: cargo fmt --all -- --check
+
+      - name: Unit tests (lib)
+        run: cargo test --lib --locked
+
+      - name: Clippy gate
+        # Mirrors the canonical acceptance command pinned in
+        # devflow-docs/backlog.md (BL-P2-063). Keeping `--lib --tests`
+        # means test-site regressions can't hide behind the main gate.
+        # `--locked` matches the test/build steps so a drifted Cargo.lock
+        # can't silently change the dep tree clippy inspects.
+        run: cargo clippy --lib --tests --locked -- -D warnings
+
+      - name: Binary compile
+        # The lib-only tests miss `src/main.rs`; compile the bin
+        # explicitly so a stale main.rs can't merge.
+        run: cargo build --bin nexttui --locked
