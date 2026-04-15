@@ -120,20 +120,6 @@
 필요 작업: `app.rs::tests`에 통합 테스트 추가 — (1) action 큐에 스테이지, (2) try_begin → epoch bump, (3) worker가 큐에서 꺼내 응답, (4) dispatcher가 stale event drop 확인.
 **Ref**: Cargo Review PR #68 missing test
 
-### BL-P2-064: `cargo audit` CI 통합 (공급망 보안)
-**Priority**: High
-**Category**: Security / CI
-**Description**: BL-P2-063 (PR #70) cargo-review의 maintainability reviewer 제안. `Cargo.lock`이 존재하므로 즉시 적용 가능한 공급망 보안 기본선.
-필요 작업:
-1. `rustsec/audit-check@v2` GitHub Action을 `.github/workflows/ci.yml`에 추가
-2. 기존 4-gate(fmt / test / clippy / bin) 뒤에 5번째 audit step으로 삽입
-3. audit DB 캐시 설정 (매 run마다 DB 최신 유지 + 런타임 최적화)
-4. 고위 CVE 발견 시 CI fail, 낮은 심각도는 warn (정책 결정 필요)
-
-**Acceptance**: PR마다 RustSec advisory database 대비 dep tree 감사. 고위험 CVE는 머지 차단.
-**예상 작업량**: 30분 (workflow YAML 추가 + 정책 1~2줄).
-**Ref**: BL-P2-063 PR #70 cargo-review (agent C — maintainability reviewer 제안)
-
 ### BL-P2-065: Rust toolchain 정확한 버전 핀
 **Priority**: Medium
 **Category**: Reproducibility / CI
@@ -542,3 +528,4 @@ AI 개발 맥락에서 이는 "preference" 수준이 아니라 **claude-code 세
 - **BL-P2-012**: 통합 조회 — SG 섹션 + 리소스 네비게이션 (PR #63, 2026-04-08)
 - **BL-P2-013**: UsageModule — btop 스타일 사용량 대시보드 (PR #64, 2026-04-10)
 - **BL-P2-005**: ViewModel 분리 — ViewContext 패턴 도입 (PR #65, 2026-04-10)
+- **BL-P2-064**: cargo audit CI gate + rustls-webpki CVE fix (PR #73, 2026-04-15)
