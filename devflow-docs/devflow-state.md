@@ -4,7 +4,7 @@
 CONSTRUCTION
 
 ## Current Stage
-code-generation (Unit 4 + Council 반영 완료 — Unit 3b 진입 대기)
+code-generation (Unit 3b T1+T2 완료 + 리뷰 반영 — T3 main.rs wire 진입 대기)
 
 ## Completed Units
 - [x] Unit 1 (Foundation Types) — commit befc71a, +23 tests
@@ -17,6 +17,11 @@ code-generation (Unit 4 + Council 반영 완료 — Unit 3b 진입 대기)
   - 4d Action/AppEvent VersionedEvent migration — d747d69 (+2, all modules wired)
   - 4e App.switch_context + ContextChanged dispatch — 1abfa53 (+3)
   - 4f Council findings (C1/H1/H2/H3/H4) — bab45d7 (+3)
+- [x] Unit 3b T1 (KeystoneRescopeAdapter) — c95526f, +25 tests (1229 total). R1+Codex 리뷰 B1~B4 + Q3 반영
+- [x] Unit 3b T2 (KeystoneAuthAdapter ScopedAuthPort) — 6891ce3, +4 tests (1233 total)
+  - P0 fix C1+C2 — 2842f73, +5 tests (1238 total). Refresh-scope guard + current_token Option
+  - P0 fix S1 — 59d7ea8, +2 tests (1240 total). authenticate() initial-scope guard
+  - Doc sync + backlog (BL-P2-052~059) — cfb82c3
 
 ## Completed Stages
 - workspace-detection
@@ -38,30 +43,29 @@ A안 (안전 완전): application-design Standard, units-generation Standard, co
 ## Worktree
 - branch: feature/runtime-context-switch
 - path: .worktrees/runtime-context-switch
-- baseline: 1116 tests → 현재 1204 tests (+88)
+- baseline: 1116 tests → 현재 1240 tests (+124)
+- HEAD: cfb82c3
 
 ## PR1 Status
-- Unit 1 + 2 + 3a + 4 완료 (5/5 switch-core components)
-- Council 리뷰 반영 완료 (Codex + Gemini): C1/H1/H2/H3/H4 모두 fix
-- 남은 PR1: **Unit 3b** (실제 KeystoneRescopeAdapter HTTP impl + KeystoneAuthAdapter ScopedAuthPort impl)
-- App.switcher는 wire_context_switch으로 주입만 하면 작동 (실제 adapter 필요)
+- Unit 1 + 2 + 3a + 4 + 3b T1+T2 완료 (모든 switch-core + adapter 완성)
+- Council 리뷰 반영 완료 (Codex + Gemini): Unit 4 C1/H1/H2/H3/H4
+- T1 R1+Codex 리뷰 반영: B1~B4 + Q3
+- T2 R1+Codex 리뷰 반영: P0a (C1 refresh-scope guard), P0b (C2 current_token Option), P0c (S1 authenticate guard)
+- 남은 PR1: **Unit 3b T3** (main.rs `app.wire_context_switch(...)` 호출로 최종 연결)
+- 후속 BL: BL-P2-052(Rescoped 자동 refresh), 053(Error variants), 054(Drop::abort), 055~059
 
 ## Next Action on Resume
 
-**A) Unit 3b (실제 Keystone HTTP 어댑터)** — PR1 완성 경로 (권장)
-- `KeystoneRescopeAdapter` HTTP impl (`/v3/auth/tokens` rescope)
-- `KeystoneAuthAdapter`에 `ScopedAuthPort` impl 추가
-- `ScopedAuthSession` (`ContextSessionPort` impl) 구성
-- `EndpointCatalogInvalidator` 실제 구현
-- main.rs에서 `app.wire_context_switch(...)` 호출로 최종 연결
-- PR1 머지 가능
+**A) Unit 3b T3** — PR1 머지 경로 완성
+- main.rs에서 KeystoneRescopeAdapter + EndpointCatalogInvalidator + TokenCacheStore로 ScopedAuthSession 구성
+- ContextSwitcher::new → app.wire_context_switch(switcher, event_tx)
+- 통합 테스트 (가능하면)
+- 빌드 + smoke test 후 PR1 push
 
-**B) PR1 push + 원격 PR 작성** — main 머지 전 리뷰 단계
-- Unit 3b 없이 switch-core만 선행 머지하는 경우 (단, switch 기능 미활성)
-
-**C) M/L 폴리싱** — Gemini의 Medium/Low 제안 (M1 state.fail error 저장, M2 resolver active-cloud 우선 등)
+**B) PR1 push + 원격 PR 작성** — T3 없이 선행 push (switch 기능은 wire 안 된 상태)
 
 ## Session Note
 - 2026-04-13: Unit 1 + 3a + 2 commit, 1116 → 1167 tests (+51)
 - 2026-04-14: Unit 4 전체 commit + Council 반영, 1167 → 1204 tests (+37)
+- 2026-04-15: Unit 3b T1 (+25), T2 (+4), P0 fixes (+7) → 1204 → 1240 tests (+36). 4 commits
 - 새 세션에서 `devflow 재개` → 이 게이트로 즉시 부팅
