@@ -82,6 +82,32 @@
 필요 작업: `Switching { target: Box<ContextTarget>, ... }`로 변경 검토. clone 경로 전반에 영향. bench로 실제 영향 측정 후 결정.
 **Ref**: Cargo Review PR #68 clippy
 
+### BL-P2-063: Pre-existing clippy `-D warnings` 38건 일괄 정리 + CI 게이트
+**Priority**: Medium
+**Category**: Code quality / Tech debt
+**Description**: PR1 cargo-review에서 `cargo clippy --lib -- -D warnings` 실행 시 PR1 무관 pre-existing 38개 위반 발견. 유형:
+- `clippy::map_or` simplification (다수)
+- `clippy::collapsible_if` / `collapsible_match`
+- `clippy::doc_lazy_continuation` (doc 렌더링 깨짐)
+- `clippy::manual_map`
+- `clippy::result_large_err` (BL-P2-060과 중복 영역)
+- `clippy::large_enum_variant` (BL-P2-061과 중복 영역)
+
+기타 sed/scaffold 시점부터 누적된 idiom 위반.
+
+**작업 스코프**:
+1. `cargo clippy --fix --lib --allow-dirty` 자동 수정 → diff 검토
+2. 수동 수정 필요한 항목 (성능 카테고리, large_enum_variant 등)은 BL-P2-060/061로 위임
+3. 잔여 위반 없이 `cargo clippy --lib -- -D warnings` 통과 확인
+4. CI 워크플로우에 `cargo clippy --lib -- -D warnings`를 머지 차단 게이트로 추가 (`.github/workflows/ci.yml` 또는 동등 위치)
+5. `Cargo.toml`의 `[lints.clippy]`에 추가 deny할 lint 검토 (현재 unwrap_used/expect_used/enum_glob_use만 deny)
+
+**Acceptance**: `cargo clippy --lib -- -D warnings` 0 errors. CI에서 동일 명령 실행 + 실패 시 머지 차단.
+
+**예상 작업량**: 1세션 (1~2시간). 자동 수정으로 70~80% 처리 예상.
+
+**Ref**: Cargo Review PR #68 — "기존 clippy 위반 38개 — pre-existing, 본 PR 무관" 후속 처리
+
 ### BL-P2-062: Stale action drop E2E 통합 테스트
 **Priority**: Low
 **Category**: Test coverage
