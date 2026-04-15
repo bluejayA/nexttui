@@ -92,16 +92,6 @@ pub(crate) fn build_rescope_body(
     })
 }
 
-/// Splits non-2xx responses by Keystone semantics so the caller can pick the
-/// right retry policy:
-/// - **401/403** → [`SwitchError::RescopeRejected`]: policy decision, retry is
-///   pointless without re-authentication.
-/// - **404** → [`SwitchError::NotFound`]: target project/endpoint gone, retry
-///   after resolver refresh.
-/// - **429** → [`ApiError::RateLimited`]: back off, retry later.
-/// - **5xx** → [`ApiError::ServiceUnavailable`]: transient, retry with backoff.
-/// - **400** → [`ApiError::BadRequest`]: caller built a bad request; no retry.
-/// - **other** → [`ApiError::Unexpected`]: unknown status, preserve for audit.
 /// Truncates and scrubs a Keystone error body before it enters [`SwitchError`]
 /// messages. Without this, the body would flow through `err.to_string()` into
 /// UI toasts and `tracing::warn!` — leaking any echoed `Set-Cookie`,
@@ -141,6 +131,16 @@ pub(crate) fn protocol_error(reason: impl Into<String>) -> SwitchError {
     SwitchError::Api(ApiError::Parse(reason.into()))
 }
 
+/// Splits non-2xx responses by Keystone semantics so the caller can pick the
+/// right retry policy:
+/// - **401/403** → [`SwitchError::RescopeRejected`]: policy decision, retry is
+///   pointless without re-authentication.
+/// - **404** → [`SwitchError::NotFound`]: target project/endpoint gone, retry
+///   after resolver refresh.
+/// - **429** → [`ApiError::RateLimited`]: back off, retry later.
+/// - **5xx** → [`ApiError::ServiceUnavailable`]: transient, retry with backoff.
+/// - **400** → [`ApiError::BadRequest`]: caller built a bad request; no retry.
+/// - **other** → [`ApiError::Unexpected`]: unknown status, preserve for audit.
 pub(crate) fn map_rescope_http_error(
     status: reqwest::StatusCode,
     body: String,

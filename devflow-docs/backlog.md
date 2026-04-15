@@ -2,12 +2,22 @@
 
 ## Pending
 
-### BL-P2-052: Rescoped 토큰 자동 refresh (RescopeRefresher)
+### BL-P2-052: Rescoped 토큰 자동 refresh + ContextChanged handler
 **Priority**: High
 **Category**: Auth / Functional Regression
-**Description**: BL-P2-031 Unit 3b T2 review S2. C1 가드 도입으로 KeystoneAuthAdapter는 initial scope 토큰만 자동 refresh. set_active(demo) 후 demo 토큰이 expire되면 `get_token`이 영구 실패 (`refresh_token` 가드가 AuthFailed 반환). 사용자 영향: ~55분 후 demo 세션이 모든 API 호출 실패.
+**Description**: BL-P2-031 Unit 3b T2 review S2 + PR1 cargo-review integration finding.
+
+**Part A — Rescoped 토큰 자동 refresh**: C1 가드 도입으로 KeystoneAuthAdapter는 initial scope 토큰만 자동 refresh. set_active(demo) 후 demo 토큰이 expire되면 `get_token`이 영구 실패 (`refresh_token` 가드가 AuthFailed 반환). 사용자 영향: ~55분 후 demo 세션이 모든 API 호출 실패.
 필요 작업: ScopedAuthSession 또는 신규 RescopeRefresher가 active scope 토큰의 near-expiry를 감지 → KeystoneRescopePort로 새 토큰 발급 → set_active로 갱신. 또는 최소한 get_token 에러 메시지를 "session expired, please switch context again"으로 명확화.
-**Ref**: Security Reviewer S2 (P0 fix 리뷰)
+
+**Part B — `AppEvent::ContextChanged` handler 구현**: 현재 ContextChanged는 fire-and-forget. handle_event에 arm이 없어 switch 성공 후 16개 모듈 캐시(Vec<Server> 등)가 이전 project 데이터 유지. T3 wire 이후에도 동일 문제. 필요 작업:
+- `App.handle_event::ContextChanged` arm 구현
+- 16개 Resource Module 캐시 invalidate (Vec 비움 + is_loading=true)
+- `Fetch*` 일괄 dispatch
+- router reset (필요 시) + toast ("Switched to project X")
+
+**Acceptance**: switch 성공 → UI 즉시 새 project 데이터로 전환 + token expiry 자동 처리.
+**Ref**: Security Reviewer S2 (P0 fix 리뷰), Cargo Review PR #68 통합 finding
 
 ### BL-P2-053: SwitchError NotAuthenticated variant + ApiError ScopeDrift variant
 **Priority**: Medium
@@ -57,6 +67,27 @@
 **Description**: BL-P2-031 Unit 3b T2 Security I2. KeystoneAuthAdapter의 모든 락에서 `unwrap_or_else(|e| e.into_inner())` 사용 → poison 무시. 토큰 같은 security-critical 데이터에 대해 fail-secure 원칙과 충돌. 실제 panic 가능성은 낮으나 OWASP 권고와 대비.
 필요 작업: auth 경로 한정으로 poison 시 인증 무효화 + 강제 재인증 트리거. 또는 각 사이트에 "왜 안전한가" 주석 추가.
 **Ref**: Security Reviewer I2
+
+### BL-P2-060: Action channel `Result<(), SendError<VersionedEvent<Action>>>` boxing
+**Priority**: Low
+**Category**: Performance / Code size
+**Description**: PR1 cargo-review clippy `result_large_err`. `src/context/action_channel.rs:81`의 `pub fn send(&self, action: Action) -> Result<(), SendError<VersionedEvent<Action>>>`에서 Err variant가 176 bytes. send() 콜사이트가 수백 곳 (16개 모듈 전반)이라 모든 Result가 stack에 176-byte 슬롯 점유.
+필요 작업: `Box<SendError<VersionedEvent<Action>>>`로 감싸거나 Action enum 자체를 Box화. bench로 실제 영향 (instruction cache miss, frame size) 측정 후 결정.
+**Ref**: Cargo Review PR #68 clippy
+
+### BL-P2-061: `SwitchStateView::Switching` large_enum_variant
+**Priority**: Low
+**Category**: Performance / Code size
+**Description**: PR1 cargo-review clippy `large_enum_variant`. `src/context/state_machine.rs:55`의 `SwitchStateView::Switching` variant가 `ContextTarget`을 직접 보유 (적어도 352 bytes 큰 variant). state machine은 sync 코드라 핫 경로일 가능성.
+필요 작업: `Switching { target: Box<ContextTarget>, ... }`로 변경 검토. clone 경로 전반에 영향. bench로 실제 영향 측정 후 결정.
+**Ref**: Cargo Review PR #68 clippy
+
+### BL-P2-062: Stale action drop E2E 통합 테스트
+**Priority**: Low
+**Category**: Test coverage
+**Description**: PR1 cargo-review missing test. switch 도중 큐에 쌓인 old-epoch action (e.g., FetchServers) → worker가 처리 → response event가 dispatcher epoch 게이트에서 drop되는 경로를 E2E로 검증하는 테스트가 없음. unit-level은 spawn_versioned/dispatcher 각자 검증되지만 통합 시나리오는 미커버.
+필요 작업: `app.rs::tests`에 통합 테스트 추가 — (1) action 큐에 스테이지, (2) try_begin → epoch bump, (3) worker가 큐에서 꺼내 응답, (4) dispatcher가 stale event drop 확인.
+**Ref**: Cargo Review PR #68 missing test
 
 ### BL-P2-050: LogPanel 텍스트 정제 (제어문자 필터링)
 **Priority**: Low

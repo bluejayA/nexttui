@@ -85,20 +85,25 @@ impl ContextTargetResolver {
             ContextRequest::ByName { cloud, project, domain } => {
                 let (cloud, project_name) = normalize_cloud_project(cloud, project, &*self.clouds)?;
                 let candidates = self.directory.list_projects(&cloud).await?;
-                let filtered: Vec<ProjectCandidate> = candidates
+                let mut iter = candidates
                     .into_iter()
                     .filter(|c| c.project_name == project_name)
                     .filter(|c| match &domain {
                         Some(d) => &c.domain == d,
                         None => true,
-                    })
-                    .collect();
-                match filtered.len() {
-                    0 => Err(SwitchError::NotFound(project_name)),
-                    1 => Ok(filtered.into_iter().next().unwrap().into()),
-                    _ => Err(SwitchError::Ambiguous {
-                        candidates: filtered.into_iter().map(Into::into).collect(),
-                    }),
+                    });
+                // Pull at most two — single match: Ok; two-or-more: Ambiguous;
+                // none: NotFound. Avoids a panic-prone `.unwrap()` while keeping
+                // the disambiguation policy identical.
+                match (iter.next(), iter.next()) {
+                    (None, _) => Err(SwitchError::NotFound(project_name)),
+                    (Some(only), None) => Ok(only.into()),
+                    (Some(first), Some(second)) => {
+                        let mut candidates: Vec<ContextTarget> =
+                            vec![first.into(), second.into()];
+                        candidates.extend(iter.map(Into::into));
+                        Err(SwitchError::Ambiguous { candidates })
+                    }
                 }
             }
             ContextRequest::ById { cloud, project_id } => {
