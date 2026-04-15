@@ -1,3 +1,4 @@
+use crate::context::ContextRequest;
 use crate::models::common::Route;
 use crate::port::types::EvacuateParams;
 
@@ -106,6 +107,16 @@ pub enum Action {
     RefreshAll,
     SwitchCloud(String),
     Quit,
+
+    // Runtime context switch (BL-P2-031)
+    /// Initiate a runtime cloud/project switch via Keystone rescoping.
+    /// The payload is unresolved user input — the resolver maps it to a
+    /// concrete target before any side effect is performed.
+    SwitchContext(ContextRequest),
+
+    /// Restore the previous context (1-step history). No-op if no previous
+    /// snapshot exists.
+    SwitchBack,
 }
 
 #[cfg(test)]

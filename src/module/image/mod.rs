@@ -3,9 +3,9 @@ pub mod view_model;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
 use ratatui::Frame;
-use tokio::sync::mpsc;
 
 use crate::action::Action;
+use crate::context::ActionSender;
 use crate::component::Component;
 use crate::event::AppEvent;
 use crate::models::glance::Image;
@@ -28,11 +28,11 @@ pub struct ImageModule {
     resource_list: ResourceList,
     form: Option<FormWidget>,
     all_tenants: bool,
-    action_tx: mpsc::UnboundedSender<Action>,
+    action_tx: ActionSender,
 }
 
 impl ImageModule {
-    pub fn new(action_tx: mpsc::UnboundedSender<Action>) -> Self {
+    pub fn new(action_tx: ActionSender) -> Self {
         Self {
             view_state: ViewState::List,
             images: Vec::new(),
@@ -307,6 +307,7 @@ impl Component for ImageModule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::{ActionReceiver, test_action_channel};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::from(code)
@@ -329,8 +330,8 @@ mod tests {
         }
     }
 
-    fn setup(is_admin: bool) -> (ImageModule, mpsc::UnboundedReceiver<Action>) {
-        let (tx, rx) = mpsc::unbounded_channel();
+    fn setup(is_admin: bool) -> (ImageModule, ActionReceiver) {
+        let (tx, rx) = test_action_channel();
         let mut module = ImageModule::new(tx);
         module.set_admin(is_admin);
         let images = vec![
@@ -344,7 +345,7 @@ mod tests {
 
     #[test]
     fn test_initial_state_is_list() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let module = ImageModule::new(tx);
         assert_eq!(*module.view_state(), ViewState::List);
         assert!(module.images().is_empty());
@@ -416,7 +417,7 @@ mod tests {
 
     #[test]
     fn test_handle_event_images_loaded() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = ImageModule::new(tx);
         let images = vec![make_image("img-1", "test", "active")];
         module.handle_event(&AppEvent::ImagesLoaded(images));

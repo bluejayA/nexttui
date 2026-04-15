@@ -3,9 +3,9 @@ pub mod view_model;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
 use ratatui::Frame;
-use tokio::sync::mpsc;
 
 use crate::action::Action;
+use crate::context::ActionSender;
 use crate::component::Component;
 use crate::event::AppEvent;
 use crate::models::keystone::Project;
@@ -27,11 +27,11 @@ pub struct ProjectModule {
     resource_list: ResourceList,
     form: Option<FormWidget>,
     cached_domain_opts: Vec<SelectOption>,
-    action_tx: mpsc::UnboundedSender<Action>,
+    action_tx: ActionSender,
 }
 
 impl ProjectModule {
-    pub fn new(action_tx: mpsc::UnboundedSender<Action>) -> Self {
+    pub fn new(action_tx: ActionSender) -> Self {
         Self {
             view_state: ViewState::List,
             projects: Vec::new(),
@@ -269,12 +269,13 @@ impl Component for ProjectModule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::{ActionReceiver, test_action_channel};
     fn key(code: KeyCode) -> KeyEvent { KeyEvent::from(code) }
     fn make_project(id: &str, name: &str) -> Project {
         Project { id: id.into(), name: name.into(), description: None, enabled: true, domain_id: Some("default".into()) }
     }
-    fn setup() -> (ProjectModule, mpsc::UnboundedReceiver<Action>) {
-        let (tx, rx) = mpsc::unbounded_channel();
+    fn setup() -> (ProjectModule, ActionReceiver) {
+        let (tx, rx) = test_action_channel();
         let mut m = ProjectModule::new(tx);
         m.handle_event(&AppEvent::ProjectsLoaded(vec![
             make_project("p1", "admin"), make_project("p2", "demo"),
@@ -282,7 +283,7 @@ mod tests {
         (m, rx)
     }
 
-    #[test] fn test_initial_state() { let (tx, _) = mpsc::unbounded_channel(); let m = ProjectModule::new(tx); assert_eq!(*m.view_state(), ViewState::List); }
+    #[test] fn test_initial_state() { let (tx, _) = test_action_channel(); let m = ProjectModule::new(tx); assert_eq!(*m.view_state(), ViewState::List); }
     #[test] fn test_nav() { let (mut m, _) = setup(); m.handle_key(key(KeyCode::Char('j'))); assert_eq!(m.selected_index(), 1); }
     #[test] fn test_enter_detail() { let (mut m, _) = setup(); m.handle_key(key(KeyCode::Enter)); assert_eq!(*m.view_state(), ViewState::Detail("p1".into())); }
     #[test] fn test_esc_to_list() { let (mut m, _) = setup(); m.handle_key(key(KeyCode::Enter)); m.handle_key(key(KeyCode::Esc)); assert_eq!(*m.view_state(), ViewState::List); }
@@ -297,7 +298,7 @@ mod tests {
     }
     #[test] fn test_refresh() { let (mut m, _) = setup(); assert!(matches!(m.handle_key(key(KeyCode::Char('r'))), Some(Action::FetchProjects))); }
     #[test] fn test_event_loaded() {
-        let (tx, _) = mpsc::unbounded_channel(); let mut m = ProjectModule::new(tx);
+        let (tx, _) = test_action_channel(); let mut m = ProjectModule::new(tx);
         m.handle_event(&AppEvent::ProjectsLoaded(vec![make_project("p1", "t")]));
         assert_eq!(m.projects().len(), 1);
     }

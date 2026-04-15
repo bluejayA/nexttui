@@ -3,9 +3,9 @@ pub mod view_model;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
 use ratatui::Frame;
-use tokio::sync::mpsc;
 
 use crate::action::Action;
+use crate::context::ActionSender;
 use crate::component::Component;
 use crate::event::AppEvent;
 use crate::models::neutron::Network;
@@ -26,11 +26,11 @@ pub struct NetworkModule {
     resource_list: ResourceList,
     form: Option<FormWidget>,
     all_tenants: bool,
-    action_tx: mpsc::UnboundedSender<Action>,
+    action_tx: ActionSender,
 }
 
 impl NetworkModule {
-    pub fn new(action_tx: mpsc::UnboundedSender<Action>) -> Self {
+    pub fn new(action_tx: ActionSender) -> Self {
         Self {
             view_state: ViewState::List,
             networks: Vec::new(),
@@ -274,6 +274,7 @@ impl Component for NetworkModule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::{ActionReceiver, test_action_channel};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::from(code)
@@ -298,8 +299,8 @@ mod tests {
         }
     }
 
-    fn setup() -> (NetworkModule, mpsc::UnboundedReceiver<Action>) {
-        let (tx, rx) = mpsc::unbounded_channel();
+    fn setup() -> (NetworkModule, ActionReceiver) {
+        let (tx, rx) = test_action_channel();
         let mut module = NetworkModule::new(tx);
         let networks = vec![
             make_network("net-1", "private", "ACTIVE"),
@@ -312,7 +313,7 @@ mod tests {
 
     #[test]
     fn test_initial_state_is_list() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let module = NetworkModule::new(tx);
         assert_eq!(*module.view_state(), ViewState::List);
         assert!(module.networks().is_empty());
@@ -377,7 +378,7 @@ mod tests {
 
     #[test]
     fn test_handle_event_networks_loaded() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = NetworkModule::new(tx);
         assert!(module.networks().is_empty());
 

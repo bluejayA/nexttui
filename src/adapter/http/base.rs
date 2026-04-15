@@ -5,8 +5,11 @@ use reqwest::{Method, RequestBuilder, Response};
 use serde::de::DeserializeOwned;
 use tokio::sync::RwLock;
 
+use async_trait::async_trait;
+
 use crate::port::auth::AuthProvider;
 use crate::port::error::{ApiError, ApiResult};
+use crate::port::http_endpoint_cache::HttpEndpointCache;
 use crate::port::types::EndpointInterface;
 
 /// Shared HTTP plumbing for all service adapters.
@@ -191,6 +194,13 @@ impl BaseHttpClient {
                 body,
             }),
         }
+    }
+}
+
+#[async_trait]
+impl HttpEndpointCache for BaseHttpClient {
+    async fn invalidate(&self) {
+        self.invalidate_endpoint().await;
     }
 }
 

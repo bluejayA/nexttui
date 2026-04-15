@@ -3,9 +3,9 @@ pub mod view_model;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
 use ratatui::Frame;
-use tokio::sync::mpsc;
 
 use crate::action::Action;
+use crate::context::ActionSender;
 use crate::component::Component;
 use crate::event::AppEvent;
 use crate::models::cinder::Volume;
@@ -66,11 +66,11 @@ pub struct ServerModule {
     cached_image_opts: Vec<SelectOption>,
     cached_network_opts: Vec<SelectOption>,
     cached_sg_opts: Vec<SelectOption>,
-    action_tx: mpsc::UnboundedSender<Action>,
+    action_tx: ActionSender,
 }
 
 impl ServerModule {
-    pub fn new(action_tx: mpsc::UnboundedSender<Action>) -> Self {
+    pub fn new(action_tx: ActionSender) -> Self {
         Self {
             view_state: ViewState::List,
             servers: Vec::new(),
@@ -1070,6 +1070,7 @@ impl Component for ServerModule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::{ActionReceiver, test_action_channel};
     use crate::models::common::Route;
     use crate::models::nova::{FlavorRef, ImageRef};
     use std::collections::HashMap;
@@ -1104,8 +1105,8 @@ mod tests {
         }
     }
 
-    fn setup() -> (ServerModule, mpsc::UnboundedReceiver<Action>) {
-        let (tx, rx) = mpsc::unbounded_channel();
+    fn setup() -> (ServerModule, ActionReceiver) {
+        let (tx, rx) = test_action_channel();
         let mut module = ServerModule::new(tx);
         let servers = vec![
             make_test_server("s1", "web-01", "ACTIVE"),
@@ -1118,7 +1119,7 @@ mod tests {
 
     #[test]
     fn test_initial_state_is_list() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let module = ServerModule::new(tx);
         assert_eq!(*module.view_state(), ViewState::List);
         assert!(module.servers().is_empty());
@@ -1216,7 +1217,7 @@ mod tests {
 
     #[test]
     fn test_handle_event_servers_loaded() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = ServerModule::new(tx);
         assert!(module.servers().is_empty());
 
@@ -1439,8 +1440,8 @@ mod tests {
         assert!(module.migration_progress().is_none());
     }
 
-    fn setup_admin_detail(status: &str) -> (ServerModule, mpsc::UnboundedReceiver<Action>) {
-        let (tx, rx) = mpsc::unbounded_channel();
+    fn setup_admin_detail(status: &str) -> (ServerModule, ActionReceiver) {
+        let (tx, rx) = test_action_channel();
         let mut module = ServerModule::new(tx);
         module.is_admin = true;
         let servers = vec![make_test_server("s1", "web-01", status)];
@@ -1712,9 +1713,9 @@ mod tests {
 
     // -- Resize keybinding tests -----------------------------------------------
 
-    fn setup_with_flavors() -> (ServerModule, mpsc::UnboundedReceiver<Action>) {
+    fn setup_with_flavors() -> (ServerModule, ActionReceiver) {
         use crate::models::nova::Flavor;
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = test_action_channel();
         let mut module = ServerModule::new(tx);
         let servers = vec![make_test_server("s1", "web-01", "ACTIVE")];
         module.handle_event(&AppEvent::ServersLoaded(servers));
@@ -1737,7 +1738,7 @@ mod tests {
     #[test]
     fn test_detail_f_no_op_on_shutoff() {
         use crate::models::nova::Flavor;
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = ServerModule::new(tx);
         let servers = vec![make_test_server("s1", "web-01", "SHUTOFF")];
         module.handle_event(&AppEvent::ServersLoaded(servers));
@@ -1752,7 +1753,7 @@ mod tests {
     #[test]
     fn test_detail_f_no_op_on_error_status() {
         use crate::models::nova::Flavor;
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = ServerModule::new(tx);
         let servers = vec![make_test_server("s1", "web-01", "ERROR")];
         module.handle_event(&AppEvent::ServersLoaded(servers));
@@ -1836,7 +1837,7 @@ mod tests {
 
     #[test]
     fn test_y_confirm_resize_when_resize_pending() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = ServerModule::new(tx);
         let servers = vec![make_test_server("s1", "web-01", "VERIFY_RESIZE")];
         module.handle_event(&AppEvent::ServersLoaded(servers));
@@ -1853,7 +1854,7 @@ mod tests {
     #[test]
     fn test_y_confirm_migration_for_different_server_resize_pending() {
         // C-1 fix: resize_pending for s1, but viewing s2 in VERIFY_RESIZE → migration
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = ServerModule::new(tx);
         module.is_admin = true;
         let servers = vec![
@@ -1903,7 +1904,7 @@ mod tests {
 
     #[test]
     fn test_n_revert_resize_when_resize_pending() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = ServerModule::new(tx);
         let servers = vec![make_test_server("s1", "web-01", "VERIFY_RESIZE")];
         module.handle_event(&AppEvent::ServersLoaded(servers));
@@ -1982,7 +1983,7 @@ mod tests {
 
     #[test]
     fn test_has_transitional_with_migrating() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = ServerModule::new(tx);
         let servers = vec![
             make_test_server("s1", "web-01", "ACTIVE"),
@@ -2080,8 +2081,8 @@ mod tests {
         }
     }
 
-    fn setup_detail_with_volumes() -> (ServerModule, mpsc::UnboundedReceiver<Action>) {
-        let (tx, rx) = mpsc::unbounded_channel();
+    fn setup_detail_with_volumes() -> (ServerModule, ActionReceiver) {
+        let (tx, rx) = test_action_channel();
         let mut module = ServerModule::new(tx);
         let servers = vec![make_test_server("s1", "web-01", "ACTIVE")];
         module.handle_event(&AppEvent::ServersLoaded(servers));
@@ -2096,8 +2097,8 @@ mod tests {
         (module, rx)
     }
 
-    fn setup_detail_with_fips() -> (ServerModule, mpsc::UnboundedReceiver<Action>) {
-        let (tx, rx) = mpsc::unbounded_channel();
+    fn setup_detail_with_fips() -> (ServerModule, ActionReceiver) {
+        let (tx, rx) = test_action_channel();
         let mut module = ServerModule::new(tx);
         let servers = vec![make_test_server("s1", "web-01", "ACTIVE")];
         module.handle_event(&AppEvent::ServersLoaded(servers));
@@ -2151,7 +2152,7 @@ mod tests {
 
     #[test]
     fn test_detail_shift_a_no_available_volumes_shows_toast() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = test_action_channel();
         let mut module = ServerModule::new(tx);
         let servers = vec![make_test_server("s1", "web-01", "ACTIVE")];
         module.handle_event(&AppEvent::ServersLoaded(servers));
@@ -2180,7 +2181,7 @@ mod tests {
 
     #[test]
     fn test_detail_x_single_attached_direct_confirm() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = ServerModule::new(tx);
         let servers = vec![make_test_server("s1", "web-01", "ACTIVE")];
         module.handle_event(&AppEvent::ServersLoaded(servers));
@@ -2205,7 +2206,7 @@ mod tests {
 
     #[test]
     fn test_detail_x_no_attached_volumes_shows_toast() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = test_action_channel();
         let mut module = ServerModule::new(tx);
         let servers = vec![make_test_server("s1", "web-01", "ACTIVE")];
         module.handle_event(&AppEvent::ServersLoaded(servers));
@@ -2220,7 +2221,7 @@ mod tests {
 
     #[test]
     fn test_detail_x_confirm_dispatches_detach() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = ServerModule::new(tx);
         let servers = vec![make_test_server("s1", "web-01", "ACTIVE")];
         module.handle_event(&AppEvent::ServersLoaded(servers));
@@ -2370,7 +2371,7 @@ mod tests {
 
     #[test]
     fn test_detail_f_no_unassociated_fips_shows_toast() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = test_action_channel();
         let mut module = ServerModule::new(tx);
         let servers = vec![make_test_server("s1", "web-01", "ACTIVE")];
         module.handle_event(&AppEvent::ServersLoaded(servers));
@@ -2388,7 +2389,7 @@ mod tests {
 
     #[test]
     fn test_volumes_loaded_caches_volumes() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = ServerModule::new(tx);
         assert!(module.cached_volumes.is_empty());
         module.handle_event(&AppEvent::VolumesLoaded(vec![
@@ -2399,7 +2400,7 @@ mod tests {
 
     #[test]
     fn test_floating_ips_loaded_caches_fips() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = ServerModule::new(tx);
         assert!(module.cached_floating_ips.is_empty());
         module.handle_event(&AppEvent::FloatingIpsLoaded(vec![

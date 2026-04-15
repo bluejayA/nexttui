@@ -83,7 +83,7 @@ impl Default for ModuleRegistry {
 /// Register all standard modules. Shared by main.rs and demo.rs.
 pub fn register_all_modules(
     registry: &mut ModuleRegistry,
-    action_tx: &tokio::sync::mpsc::UnboundedSender<Action>,
+    action_tx: &crate::context::ActionSender,
 ) {
     use crate::module::{
         server::ServerModule, flavor::FlavorModule, network::NetworkModule,

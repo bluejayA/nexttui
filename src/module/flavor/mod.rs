@@ -3,9 +3,9 @@ pub mod view_model;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
 use ratatui::Frame;
-use tokio::sync::mpsc;
 
 use crate::action::Action;
+use crate::context::ActionSender;
 use crate::component::Component;
 use crate::event::AppEvent;
 use crate::models::nova::Flavor;
@@ -26,11 +26,11 @@ pub struct FlavorModule {
     confirm: ConfirmHandler,
     resource_list: ResourceList,
     form: Option<FormWidget>,
-    action_tx: mpsc::UnboundedSender<Action>,
+    action_tx: ActionSender,
 }
 
 impl FlavorModule {
-    pub fn new(action_tx: mpsc::UnboundedSender<Action>) -> Self {
+    pub fn new(action_tx: ActionSender) -> Self {
         Self {
             view_state: ViewState::List,
             flavors: Vec::new(),
@@ -268,6 +268,7 @@ impl Component for FlavorModule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::{ActionReceiver, test_action_channel};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::from(code)
@@ -284,8 +285,8 @@ mod tests {
         }
     }
 
-    fn setup(is_admin: bool) -> (FlavorModule, mpsc::UnboundedReceiver<Action>) {
-        let (tx, rx) = mpsc::unbounded_channel();
+    fn setup(is_admin: bool) -> (FlavorModule, ActionReceiver) {
+        let (tx, rx) = test_action_channel();
         let mut module = FlavorModule::new(tx);
         module.set_admin(is_admin);
         let flavors = vec![
@@ -299,7 +300,7 @@ mod tests {
 
     #[test]
     fn test_initial_state_is_list() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let module = FlavorModule::new(tx);
         assert_eq!(*module.view_state(), ViewState::List);
         assert!(module.flavors().is_empty());
@@ -351,7 +352,7 @@ mod tests {
 
     #[test]
     fn test_handle_event_flavors_loaded() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = FlavorModule::new(tx);
         assert!(module.flavors().is_empty());
 
@@ -399,7 +400,7 @@ mod tests {
 
     #[test]
     fn test_set_admin_via_trait_dispatch() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = test_action_channel();
         let mut module = FlavorModule::new(tx);
         // Call via trait object — same path as App::broadcast_admin
         let component: &mut dyn Component = &mut module;

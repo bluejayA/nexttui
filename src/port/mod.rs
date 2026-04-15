@@ -1,9 +1,14 @@
 pub mod auth;
 pub mod cinder;
+pub mod context_session;
 pub mod error;
 pub mod glance;
+pub mod http_endpoint_cache;
 pub mod keystone;
+pub mod keystone_rescope;
 pub mod mock;
+pub mod mock_context;
 pub mod neutron;
 pub mod nova;
+pub mod scoped_auth;
 pub mod types;

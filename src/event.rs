@@ -1,3 +1,4 @@
+use crate::context::ContextTarget;
 use crate::models::{
     cinder::{Volume, VolumeSnapshot},
     glance::Image,
@@ -103,6 +104,13 @@ pub enum AppEvent {
 
     // System
     CloudSwitched(String),
+
+    // Runtime context switch (BL-P2-031)
+    /// Active cloud/project context changed. Resource modules listen for
+    /// this and clear cached data so the user never sees stale rows.
+    /// Epoch lives on the surrounding `VersionedEvent` envelope, not the
+    /// payload — see `crate::context::VersionedEvent`.
+    ContextChanged { target: ContextTarget },
 }
 
 #[cfg(test)]

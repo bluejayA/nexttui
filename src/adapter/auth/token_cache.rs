@@ -8,6 +8,36 @@ use std::path::{Path, PathBuf};
 
 use crate::port::types::{Token, TokenScope};
 
+/// Struct wrapper over the cache directory, exposing scope-keyed
+/// store/lookup. Used by the runtime context switch flow so callers don't
+/// have to thread `&Path` everywhere.
+#[derive(Debug, Clone)]
+pub struct TokenCacheStore {
+    cache_dir: PathBuf,
+}
+
+impl TokenCacheStore {
+    pub fn new(cache_dir: impl Into<PathBuf>) -> Self {
+        Self { cache_dir: cache_dir.into() }
+    }
+
+    pub fn cache_dir(&self) -> &Path {
+        &self.cache_dir
+    }
+
+    /// Persist `token` under `scope`. Overwrites any existing entry.
+    pub fn store_scoped(&self, scope: &TokenScope, token: &Token) -> std::io::Result<()> {
+        save_token(token, &self.cache_dir, scope)
+    }
+
+    /// Returns the cached token for `scope`, or `None` if the file is missing
+    /// or the stored token has expired (expired files are auto-removed).
+    pub fn lookup_scoped(&self, scope: &TokenScope) -> Option<Token> {
+        let path = self.cache_dir.join(scope.cache_key());
+        load_token_file(&path)
+    }
+}
+
 /// Compute a deterministic cache key from cloud config fields.
 /// Uses a simple FNV-1a 64-bit hash (stable across Rust versions, no external deps).
 pub fn compute_cloud_key(auth_url: &str, username: &str) -> String {
@@ -379,5 +409,52 @@ mod tests {
             project_scope: None,
         };
         assert_eq!(TokenScope::from_credential(&unsoped_cred), TokenScope::Unscoped);
+    }
+
+    #[test]
+    fn store_scoped_then_lookup_scoped_returns_same_token() {
+        let tmp = TempDir::new().unwrap();
+        let store = TokenCacheStore::new(tmp.path());
+        let scope = sample_scope();
+        let token = sample_token(60);
+
+        store.store_scoped(&scope, &token).unwrap();
+        let loaded = store.lookup_scoped(&scope).expect("token present");
+        assert_eq!(loaded.id, token.id);
+    }
+
+    #[test]
+    fn lookup_scoped_returns_none_for_missing_scope() {
+        let tmp = TempDir::new().unwrap();
+        let store = TokenCacheStore::new(tmp.path());
+        let scope = TokenScope::Project {
+            name: "demo".into(),
+            domain: "default".into(),
+        };
+        assert!(store.lookup_scoped(&scope).is_none());
+    }
+
+    #[test]
+    fn lookup_scoped_drops_expired_entry() {
+        let tmp = TempDir::new().unwrap();
+        let store = TokenCacheStore::new(tmp.path());
+        let scope = sample_scope();
+        // Expired token (expires 5 minutes ago).
+        let token = sample_token(-5);
+        store.store_scoped(&scope, &token).unwrap();
+        assert!(store.lookup_scoped(&scope).is_none());
+    }
+
+    #[test]
+    fn store_scoped_overwrites_previous_entry() {
+        let tmp = TempDir::new().unwrap();
+        let store = TokenCacheStore::new(tmp.path());
+        let scope = sample_scope();
+        let old = sample_token(30);
+        store.store_scoped(&scope, &old).unwrap();
+        let mut new = sample_token(60);
+        new.id = "replacement".into();
+        store.store_scoped(&scope, &new).unwrap();
+        assert_eq!(store.lookup_scoped(&scope).unwrap().id, "replacement");
     }
 }

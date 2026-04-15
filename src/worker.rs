@@ -2,18 +2,49 @@
 //! and sends AppEvents back to the event loop for UI updates.
 
 use std::collections::HashSet;
+use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use chrono::{DateTime, Utc};
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
 use crate::action::Action;
 use crate::adapter::registry::AdapterRegistry;
+use crate::context::{Epoch, VersionedEvent};
 use crate::event::AppEvent;
 use crate::infra::rbac::{ActionKind, RbacGuard};
 use crate::port::types::*;
+
+/// Spawn an async future and forward its `AppEvent` result to `event_tx`
+/// wrapped in a [`VersionedEvent`] stamped with `epoch`. If `cancel` fires
+/// before the future completes the event is dropped — this is how the
+/// switcher silences stale work from previous context generations.
+///
+/// BL-P2-031 Unit 2.
+pub fn spawn_versioned<F>(
+    cancel: CancellationToken,
+    epoch: Epoch,
+    event_tx: mpsc::UnboundedSender<VersionedEvent<AppEvent>>,
+    fut: F,
+) -> JoinHandle<()>
+where
+    F: Future<Output = AppEvent> + Send + 'static,
+{
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = cancel.cancelled() => {
+                // Stale generation — silently drop.
+            }
+            ev = fut => {
+                let _ = event_tx.send(VersionedEvent::new(ev, epoch));
+            }
+        }
+    })
+}
 
 /// Run the background worker loop.
 /// Receives Actions from `action_rx`, calls the appropriate API via `registry`,
@@ -23,20 +54,25 @@ pub async fn run_worker(
     registry: Arc<AdapterRegistry>,
     rbac: Arc<RbacGuard>,
     all_tenants: Arc<AtomicBool>,
-    mut action_rx: mpsc::UnboundedReceiver<Action>,
-    event_tx: mpsc::UnboundedSender<AppEvent>,
+    mut action_rx: mpsc::UnboundedReceiver<VersionedEvent<Action>>,
+    event_tx: mpsc::UnboundedSender<VersionedEvent<AppEvent>>,
 ) {
     let polling_servers: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
     let in_flight_fetches: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
 
-    while let Some(action) = action_rx.recv().await {
+    while let Some(envelope) = action_rx.recv().await {
+        let (action, action_epoch) = envelope.into_parts();
+
         // RBAC guard: check CUD permissions before API call
         if let Some(kind) = action_to_kind(&action)
             && !rbac.can_perform(kind)
         {
-            let _ = event_tx.send(AppEvent::PermissionDenied {
-                operation: action_name(&action).to_string(),
-            });
+            let _ = event_tx.send(VersionedEvent::new(
+                AppEvent::PermissionDenied {
+                    operation: action_name(&action).to_string(),
+                },
+                action_epoch,
+            ));
             continue;
         }
 
@@ -63,7 +99,7 @@ pub async fn run_worker(
                 let event = handle_action(&registry, &all_tenants, action).await;
                 let success = event.as_ref().is_some_and(|ev| !matches!(ev, AppEvent::ApiError { .. }));
                 if let Some(ev) = event {
-                    let _ = event_tx.send(ev);
+                    let _ = event_tx.send(VersionedEvent::new(ev, action_epoch));
                 }
                 // Release fetch dedup guard
                 if let Some(key) = dedup_key {
@@ -73,13 +109,13 @@ pub async fn run_worker(
                     if let Some(ref server_id) = poll_migration_id
                         && polling_servers.lock().unwrap_or_else(|e| e.into_inner()).insert(server_id.clone())
                     {
-                        poll_migration_progress(&registry, &event_tx, server_id).await;
+                        poll_migration_progress(&registry, &event_tx, action_epoch, server_id).await;
                         polling_servers.lock().unwrap_or_else(|e| e.into_inner()).remove(server_id);
                     }
                     if let Some(ref server_id) = poll_status_id
                         && polling_servers.lock().unwrap_or_else(|e| e.into_inner()).insert(server_id.clone())
                     {
-                        poll_server_status(&registry, &event_tx, server_id).await;
+                        poll_server_status(&registry, &event_tx, action_epoch, server_id).await;
                         polling_servers.lock().unwrap_or_else(|e| e.into_inner()).remove(server_id);
                     }
                 }
@@ -726,7 +762,16 @@ async fn handle_action(registry: &AdapterRegistry, all_tenants: &AtomicBool, act
         }
 
         Action::SwitchCloud(_cloud_name) => {
-            // Phase 2: switch auth provider and re-create adapters
+            // Legacy stub from Phase 1. Superseded by Action::SwitchContext
+            // (BL-P2-031). Kept until callers migrate.
+            None
+        }
+
+        Action::SwitchContext(_) | Action::SwitchBack => {
+            // Intercepted by `App::dispatch_action` (Unit 4) — a real
+            // switch never reaches the worker. This arm stays as a
+            // defensive no-op so a misrouted action is a drop, not a
+            // panic.
             None
         }
     }
@@ -781,7 +826,8 @@ use crate::models::common::is_terminal_server_status;
 /// Poll server status every 2 seconds until it reaches a terminal state.
 async fn poll_server_status(
     registry: &AdapterRegistry,
-    event_tx: &mpsc::UnboundedSender<AppEvent>,
+    event_tx: &mpsc::UnboundedSender<VersionedEvent<AppEvent>>,
+    epoch: Epoch,
     server_id: &str,
 ) {
     const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
@@ -792,9 +838,10 @@ async fn poll_server_status(
         match registry.nova.get_server(server_id).await {
             Ok(server) => {
                 let done = is_terminal_server_status(&server.status);
-                let _ = event_tx.send(AppEvent::ServerStatusPolled {
-                    server: server.clone(),
-                });
+                let _ = event_tx.send(VersionedEvent::new(
+                    AppEvent::ServerStatusPolled { server: server.clone() },
+                    epoch,
+                ));
                 if done {
                     return;
                 }
@@ -807,7 +854,8 @@ async fn poll_server_status(
 /// Poll migration progress every 2 seconds until completed or error.
 async fn poll_migration_progress(
     registry: &AdapterRegistry,
-    event_tx: &mpsc::UnboundedSender<AppEvent>,
+    event_tx: &mpsc::UnboundedSender<VersionedEvent<AppEvent>>,
+    epoch: Epoch,
     server_id: &str,
 ) {
     const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
@@ -822,10 +870,13 @@ async fn poll_migration_progress(
                         migration.status.as_str(),
                         "completed" | "confirmed" | "error" | "cancelled"
                     );
-                    let _ = event_tx.send(AppEvent::MigrationProgressLoaded {
-                        server_id: server_id.to_string(),
-                        migration,
-                    });
+                    let _ = event_tx.send(VersionedEvent::new(
+                        AppEvent::MigrationProgressLoaded {
+                            server_id: server_id.to_string(),
+                            migration,
+                        },
+                        epoch,
+                    ));
                     if done {
                         break;
                     }
@@ -841,9 +892,10 @@ async fn poll_migration_progress(
         }
     }
     // Always notify app to refresh server list when polling ends
-    let _ = event_tx.send(AppEvent::MigrationPollingStopped {
-        server_id: server_id.to_string(),
-    });
+    let _ = event_tx.send(VersionedEvent::new(
+        AppEvent::MigrationPollingStopped { server_id: server_id.to_string() },
+        epoch,
+    ));
 }
 
 fn api_error(operation: &str, error: crate::port::error::ApiError) -> AppEvent {
@@ -1074,5 +1126,42 @@ mod tests {
             }
             _ => panic!("Expected ApiError"),
         }
+    }
+
+    // -- spawn_versioned (BL-P2-031 Unit 2) --
+
+    #[tokio::test]
+    async fn spawn_versioned_emits_event_with_epoch_when_not_cancelled() {
+        let cancel = CancellationToken::new();
+        let (tx, mut rx) = mpsc::unbounded_channel::<VersionedEvent<AppEvent>>();
+        let handle = spawn_versioned(cancel, 7, tx, async {
+            AppEvent::CloudSwitched("devstack".into())
+        });
+        handle.await.unwrap();
+        let received = rx.try_recv().expect("event delivered");
+        assert_eq!(received.epoch(), 7);
+        match received.into_inner() {
+            AppEvent::CloudSwitched(name) => assert_eq!(name, "devstack"),
+            _ => panic!("unexpected event"),
+        }
+    }
+
+    #[tokio::test]
+    async fn spawn_versioned_drops_event_when_cancelled_before_completion() {
+        use tokio::time::{Duration, sleep};
+
+        let cancel = CancellationToken::new();
+        let (tx, mut rx) = mpsc::unbounded_channel::<VersionedEvent<AppEvent>>();
+        let cancel_clone = cancel.clone();
+        let handle = spawn_versioned(cancel_clone, 1, tx, async {
+            sleep(Duration::from_secs(5)).await;
+            AppEvent::CloudSwitched("late".into())
+        });
+
+        // Give the spawn a moment to enter select.
+        tokio::task::yield_now().await;
+        cancel.cancel();
+        handle.await.unwrap();
+        assert!(rx.try_recv().is_err(), "no event should be delivered");
     }
 }

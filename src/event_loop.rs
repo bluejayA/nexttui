@@ -8,6 +8,7 @@ use ratatui::backend::CrosstermBackend;
 use tokio::sync::mpsc;
 
 use crate::app::App;
+use crate::context::VersionedEvent;
 use crate::error::Result;
 use crate::event::AppEvent;
 
@@ -15,7 +16,7 @@ use crate::event::AppEvent;
 pub async fn run_event_loop(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     app: &mut App,
-    mut event_rx: mpsc::UnboundedReceiver<AppEvent>,
+    mut event_rx: mpsc::UnboundedReceiver<VersionedEvent<AppEvent>>,
 ) -> Result<()> {
     let mut key_events = EventStream::new();
     let mut tick = tokio::time::interval(Duration::from_millis(200));
@@ -44,11 +45,12 @@ pub async fn run_event_loop(
                 app.on_tick();
             }
 
-            // Branch 3: background events
+            // Branch 3: background events — gated by epoch to drop stale
+            // deliveries after a context switch (BL-P2-031 Unit 2).
             event = event_rx.recv() => {
                 match event {
-                    Some(ev) => {
-                        app.handle_event(ev);
+                    Some(envelope) => {
+                        app.handle_versioned_event(envelope);
                     }
                     None => {
                         // All event senders dropped — exit gracefully
