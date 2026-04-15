@@ -314,11 +314,15 @@ pub trait ContextSessionPort: Send + Sync {
 #[async_trait]
 pub trait ScopedAuthPort: Send + Sync {
     fn current_scope(&self) -> TokenScope;
-    fn current_token(&self) -> Token;
+    fn current_token(&self) -> Option<Token>;
     async fn set_active(&self, scope: TokenScope, token: Token) -> Result<(), SwitchError>;
 }
 ```
-**구현**: `KeystoneAuthAdapter`가 기존 `AuthProvider` 외에 이 trait도 구현. 내부 `Arc<RwLock<HashMap<TokenScope, Token>>>` + `active_scope` 활용.
+**`current_token` 반환이 `Option`인 이유 (BL-P2-031 Unit 3b T2 review C2)**: pre-auth 상태에서 placeholder 토큰을 반환하면 `ScopedAuthSession::begin`이 이를 `previous_token`으로 캡처 → rollback 시 `set_active(prev_scope, empty_token)`로 토큰 캐시에 빈 엔트리 주입 → 후속 refresh에서 INITIAL credential 재인증 트리거 (C1 경로). `Option<Token>`은 호출자가 `None`을 명시적으로 다루도록 강제 — `ScopedAuthSession::begin`은 `None` 시 `SwitchError::Unsupported("no active token")`로 즉시 거부.
+
+**구현**: `KeystoneAuthAdapter`가 기존 `AuthProvider` 외에 이 trait도 구현. 내부 `Arc<std::sync::RwLock<HashMap<TokenScope, Token>>>` + `Arc<std::sync::Mutex<TokenScope>>` 활용. **refresh 책임 분리 (C1 review)**: `KeystoneAuthAdapter`의 `refresh_token`/background refresh loop는 `self.credential` 기반이라 INITIAL scope 토큰만 발급 가능. set_active로 active scope가 drift된 상태에서 refresh를 시도하면 `is_refresh_safe(active, initial)` 가드가 차단 (`AuthFailed("scope drift")`). rescoped 토큰의 자동 refresh는 `KeystoneRescopePort` 기반의 별도 컴포넌트 책임 — 현재는 외부 트리거에 의존 (BL-P2-052 후속).
+
+마찬가지로 `AuthProvider::authenticate(_credential)`도 외부 credential 파라미터를 무시하고 `self.credential` 사용 + `initial_scope`로 키 (S1 review): 외부 forged credential이나 drift된 active scope로 인한 admin 토큰의 demo 키 저장을 차단.
 
 ### KeystoneRescopeAdapter (Adapter)
 **Interface**:

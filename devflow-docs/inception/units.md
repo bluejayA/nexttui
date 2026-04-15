@@ -96,13 +96,23 @@ Unit 6와 Unit 7은 Unit 5 완료 후 **병렬 가능**.
 - `src/port/mock.rs` 변경 — `MockContextSession` 확장 (with_*_failure, with_partial_commit_failure, with_slow_rescope, transition_steps, rollback_called)
 
 **Tests**:
-- KeystoneRescopeAdapter: rescope 성공 → 새 토큰, expires_at 정본
-- KeystoneRescopeAdapter: rescope 거부 (403) → `RescopeRejected`
+- KeystoneRescopeAdapter: rescope 성공 → 새 토큰, expires_at 정본 (loopback HTTP)
+- KeystoneRescopeAdapter: rescope 거부 (403/401) → `RescopeRejected`
+- KeystoneRescopeAdapter: 404/400/429/5xx → 의미별 분리 매핑 (NotFound/BadRequest/RateLimited/ServiceUnavailable)
+- KeystoneRescopeAdapter: response scope ≠ target.project_id → `Api(Parse)` (review T1 B4)
+- KeystoneRescopeAdapter: X-Subject-Token 부재 / JSON 파싱 실패 → `Api(Parse)` (review T1 B3)
+- KeystoneRescopeAdapter: 에러 body sanitize (X-Auth-Token/Set-Cookie 마스킹 + 256자 트렁케이트)
 - TokenCacheStore: store_scoped/lookup_scoped, 만료 토큰 → None
 - EndpointCatalogInvalidator: 모든 등록 client invalidate 호출 검증
 - ScopedAuthSession: begin/rescope/refresh/commit happy path
 - ScopedAuthSession: begin OK + rescope fail → handle은 외부 mutate 없음
 - ScopedAuthSession: commit 내부 자동 rollback (partial fail) — atomic 계약 검증
+- ScopedAuthSession: begin이 `current_token() == None`이면 `SwitchError::Unsupported`로 거부 (review T2 C2)
+- KeystoneAuthAdapter ScopedAuthPort: current_scope/current_token snapshot, set_active atomic swap, 이전 scope 토큰 보존 (rollback invariant)
+- KeystoneAuthAdapter ScopedAuthPort: current_token() pre-auth → `None` (placeholder 금지, review T2 C2)
+- KeystoneAuthAdapter refresh: active scope ≠ initial scope (set_active drift) → `refresh_token`이 `AuthFailed("scope drift")` 반환, demo 엔트리 무손실 (review T2 C1)
+- KeystoneAuthAdapter refresh loop: drift 시 do_authenticate skip (warn log + continue) (review T2 C1)
+- KeystoneAuthAdapter authenticate: 외부 credential 무시 + initial_scope로 키 — drift된 active scope에 admin 토큰 누출 차단 (review T2 S1)
 - MockContextSession: transition_steps 순서 ["begin","rescope","refresh","commit"|"rollback"]
 
 **Implementation order**: 3 (Unit 2와 병렬 가능)

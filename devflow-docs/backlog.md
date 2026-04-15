@@ -2,6 +2,62 @@
 
 ## Pending
 
+### BL-P2-052: Rescoped 토큰 자동 refresh (RescopeRefresher)
+**Priority**: High
+**Category**: Auth / Functional Regression
+**Description**: BL-P2-031 Unit 3b T2 review S2. C1 가드 도입으로 KeystoneAuthAdapter는 initial scope 토큰만 자동 refresh. set_active(demo) 후 demo 토큰이 expire되면 `get_token`이 영구 실패 (`refresh_token` 가드가 AuthFailed 반환). 사용자 영향: ~55분 후 demo 세션이 모든 API 호출 실패.
+필요 작업: ScopedAuthSession 또는 신규 RescopeRefresher가 active scope 토큰의 near-expiry를 감지 → KeystoneRescopePort로 새 토큰 발급 → set_active로 갱신. 또는 최소한 get_token 에러 메시지를 "session expired, please switch context again"으로 명확화.
+**Ref**: Security Reviewer S2 (P0 fix 리뷰)
+
+### BL-P2-053: SwitchError NotAuthenticated variant + ApiError ScopeDrift variant
+**Priority**: Medium
+**Category**: Error model / Caller classification
+**Description**: BL-P2-031 Unit 3b T2 review I1+I2. 현재 ScopedAuthSession::begin이 pre-auth 상태를 `SwitchError::Unsupported`로 매핑 (의미: 기능 미지원). 또한 KeystoneAuthAdapter의 C1 scope drift 가드가 `ApiError::AuthFailed` 사용 (의미: credential 거부 → 사용자가 reauth 시도하지만 같은 에러 반복).
+필요 작업: `SwitchError::NotAuthenticated`(또는 `Precondition`), `ApiError::ScopeDrift`(또는 `InvalidState`) variant 추가 → caller가 분기 가능. SwitchError는 #[non_exhaustive] 없음 (외부 매처 영향 검토 필요), ApiError는 #[non_exhaustive] (안전).
+**Ref**: Quality Reviewer I1+I2 (P0 fix 리뷰)
+
+### BL-P2-054: KeystoneAuthAdapter Drop::abort + refresh task lifecycle
+**Priority**: Medium
+**Category**: Resource leak
+**Description**: BL-P2-031 Unit 3b T2 Codex review. start_refresh_loop이 spawn한 tokio task가 self.credential/scope_ref/token_map의 strong Arc를 보유. adapter drop 시 JoinHandle abort 호출 없으므로 백그라운드 task가 계속 인증 시도. 프로세스 수명 내내 누적 가능.
+필요 작업: KeystoneAuthAdapter::Drop 구현 → refresh_handle abort. 또는 CancellationToken 도입.
+**Ref**: Codex P0 review
+
+### BL-P2-055: Refresh loop 백오프 + 로그 rate-limit
+**Priority**: Low
+**Category**: Observability
+**Description**: BL-P2-031 Unit 3b T2 review S3. C1 가드 도입 후 active scope drift 시 refresh loop이 sleep_duration 10s로 떨어지고 매 tick warn 로그 발행. demo 세션 expiry 후 분당 6회 누적.
+필요 작업: scope drift 감지 시 최소 60s sleep 강제 또는 break 후 set_active 재발생까지 대기. 로그도 최초 1회 또는 N tick마다 1회.
+**Ref**: Security Reviewer S3 (P0 fix 리뷰)
+
+### BL-P2-056: TokenScope 정규화 일관화
+**Priority**: Medium
+**Category**: Auth / Correctness
+**Description**: BL-P2-031 Unit 3b T2 Codex review. `TokenScope::from_credential`은 name/domain을 `to_lowercase()` 적용, `From<&ContextTarget> for TokenScope`는 원문 보존. 동일 프로젝트가 케이스 차이로 다른 키로 분리되어 토큰 캐시 miss 발생 가능.
+필요 작업: 정규화 정책을 단일 위치에 통합 (TokenScope::Project 생성 시 항상 lowercase). resolver/parser/cache 경로 모두 검증.
+**Ref**: Codex P0 review
+
+### BL-P2-057: ScopedAuthPort/AuthProvider 동시성 race 테스트 (loom)
+**Priority**: Low
+**Category**: Test coverage
+**Description**: BL-P2-031 Unit 3b T2 review M6. set_active ↔ refresh_token / authenticate 동시 호출 시 invariant (token_map ↔ active_scope 정합) 검증 부재. 현재 락 순서로 race-free하지만 회귀 방지를 위한 명시적 테스트 필요.
+필요 작업: loom 또는 직접 thread spawn 기반 동시성 테스트.
+**Ref**: Quality Reviewer M6 (P0 fix 리뷰)
+
+### BL-P2-058: AuthCredential Zeroize 도입
+**Priority**: Medium
+**Category**: Security / Credential hygiene
+**Description**: BL-P2-031 Unit 3b T2 Security I3. AuthCredential의 password가 refresh loop으로 클론되어 프로세스 수명 내내 heap 체류. Drop 시 zeroize 없음 → 메모리 덤프/core dump에 평문 password 노출 window.
+필요 작업: zeroize crate 추가 → AuthCredential에 ZeroizeOnDrop. application_credential 우선 사용 권장 정책.
+**Ref**: Security Reviewer I3
+
+### BL-P2-059: Poison fail-closed 정책 전환 (auth 경로 한정)
+**Priority**: Low
+**Category**: Security / Defense-in-depth
+**Description**: BL-P2-031 Unit 3b T2 Security I2. KeystoneAuthAdapter의 모든 락에서 `unwrap_or_else(|e| e.into_inner())` 사용 → poison 무시. 토큰 같은 security-critical 데이터에 대해 fail-secure 원칙과 충돌. 실제 panic 가능성은 낮으나 OWASP 권고와 대비.
+필요 작업: auth 경로 한정으로 poison 시 인증 무효화 + 강제 재인증 트리거. 또는 각 사이트에 "왜 안전한가" 주석 추가.
+**Ref**: Security Reviewer I2
+
 ### BL-P2-050: LogPanel 텍스트 정제 (제어문자 필터링)
 **Priority**: Low
 **Category**: Security / UX

@@ -180,3 +180,6 @@
 - **Unit 4 Council review (Codex + Gemini)**: 5건 반영 (C1+H1+H2+H3+H4) — commit bab45d7, +3 tests. C1 = switch-in-flight 시 port-bound action 거부로 cross-context mis-execution 방지. H1 = switch_back peek-only. H2 = history에 previous_in_flight push. H3 = switch 반환 타입 Result<_, (Epoch, SwitchError)>. H4 = cancel_below 방어선 문서화
 - **PR1 switch-core 완성**: Unit 1+2+3a+4 완료, 1116 → 1204 tests (+88), 회귀 0
 - **Session resumed (2026-04-14)**: worktree HEAD=03b20a1, main의 devflow-state/session-summary가 stale이라 worktree 상태로 동기화. 다음 액션: Unit 3b(실제 Keystone HTTP 어댑터) 진입 또는 PR1 선행 push 중 선택 대기
+- 2026-04-15T00:23:02Z — file-edit — devflow-docs/backlog.md
+- 2026-04-15T00:23:27Z — file-edit — devflow-docs/inception/application-design.md
+- 2026-04-15T00:23:50Z — file-edit — devflow-docs/inception/units.md
