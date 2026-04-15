@@ -1,0 +1,8 @@
+[toolchain]
+# Pin the stable channel so local, CI, and contributor environments all
+# resolve to the same rustc/clippy version. The exact version floats with
+# whatever the latest stable is at install time — we just want everyone on
+# the same channel.
+channel = "stable"
+components = ["clippy", "rustfmt"]
+profile = "minimal"
