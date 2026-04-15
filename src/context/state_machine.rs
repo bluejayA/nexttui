@@ -51,6 +51,15 @@ pub enum SwitchState {
 
 /// Observable projection for tests, UI, and tracing. Matches the internal
 /// variants but is `Clone + PartialEq` friendly.
+///
+/// The `Idle { current: Option<ContextSnapshot> }` arm is ~352 bytes because
+/// `ContextSnapshot` carries a full `Token` (expires_at, catalog, roles).
+/// Boxing the snapshot would trade the stack size for a heap allocation on
+/// every state read — tracked under BL-P2-061 for bench-based resolution.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "tracked by BL-P2-061 — pending bench-based boxing decision"
+)]
 #[derive(Debug, Clone)]
 pub enum SwitchStateView {
     Idle {

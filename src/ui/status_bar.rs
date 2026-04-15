@@ -164,10 +164,7 @@ mod tests {
             });
             let buf = term.backend().buffer().clone();
             let content: String = (0..buf.area.width)
-                .filter_map(|x| {
-                    let cell = &buf[(x, 0)];
-                    Some(cell.symbol().to_string())
-                })
+                .map(|x| buf[(x, 0)].symbol().to_string())
                 .collect();
             assert!(content.contains('⚠'), "badge should appear in rendered output: {content}");
             assert!(content.contains('3'), "badge count should appear: {content}");
