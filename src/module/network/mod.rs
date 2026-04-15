@@ -205,11 +205,10 @@ impl Component for NetworkModule {
                 self.resource_list.set_rows(rows);
             }
             AppEvent::SubnetsLoaded { network_id, subnets } => {
-                if let ViewState::Detail(ref current_id) = self.view_state {
-                    if current_id == network_id {
+                if let ViewState::Detail(ref current_id) = self.view_state
+                    && current_id == network_id {
                         self.subnets = subnets.clone();
                     }
-                }
             }
             AppEvent::NetworkCreated(_) => {
                 self.close_form();

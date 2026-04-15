@@ -74,6 +74,12 @@ pub struct ConfirmHandler {
     pub pending: Option<PendingAction>,
 }
 
+impl Default for ConfirmHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConfirmHandler {
     pub fn new() -> Self {
         Self {

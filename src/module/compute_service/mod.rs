@@ -19,6 +19,12 @@ pub struct ComputeServiceModule {
     resource_list: ResourceList,
 }
 
+impl Default for ComputeServiceModule {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ComputeServiceModule {
     pub fn new() -> Self {
         Self {

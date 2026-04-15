@@ -19,6 +19,12 @@ pub struct AggregateModule {
     resource_list: ResourceList,
 }
 
+impl Default for AggregateModule {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AggregateModule {
     pub fn new() -> Self {
         Self {

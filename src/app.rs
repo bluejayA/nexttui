@@ -239,13 +239,12 @@ impl App {
         // Modal component (ConfirmDialog, SelectPopup) — delegate all keys directly
         if self.input_mode == InputMode::Normal {
             let is_modal = self.components.get(&self.router.current())
-                .map_or(false, |c| c.is_modal());
+                .is_some_and(|c| c.is_modal());
             if is_modal {
-                if let Some(component) = self.components.get_mut(&self.router.current()) {
-                    if let Some(action) = component.handle_key(key) {
+                if let Some(component) = self.components.get_mut(&self.router.current())
+                    && let Some(action) = component.handle_key(key) {
                         self.dispatch_action(action);
                     }
-                }
                 return true;
             }
         }
@@ -262,11 +261,11 @@ impl App {
                 KeyCode::Tab => {
                     // FullWidth module: Tab restores sidebar and returns to previous route
                     let full_width = self.components.get(&self.router.current())
-                        .map_or(false, |c| c.layout_hint() == LayoutHint::FullWidth);
+                        .is_some_and(|c| c.layout_hint() == LayoutHint::FullWidth);
                     if full_width {
                         // Block exit while module is busy (e.g. evacuating)
                         let busy = self.components.get(&self.router.current())
-                            .map_or(false, |c| c.is_busy());
+                            .is_some_and(|c| c.is_busy());
                         if busy { return true; }
                         self.sidebar_visible = true;
                         self.layout.set_sidebar_visible(true);
@@ -288,7 +287,7 @@ impl App {
                 KeyCode::Char(c @ '1'..='9') | KeyCode::Char(c @ '0') | KeyCode::Char(c @ 'h') => {
                     // Block route switching while current module is busy (e.g. evacuating)
                     let busy = self.components.get(&self.router.current())
-                        .map_or(false, |comp| comp.is_busy());
+                        .is_some_and(|comp| comp.is_busy());
                     if busy { return true; }
 
                     if c == 'h' {
@@ -328,11 +327,10 @@ impl App {
 
         // Form mode: delegate all keys to the active component (FormWidget handles everything)
         if self.input_mode == InputMode::Form {
-            if let Some(component) = self.components.get_mut(&self.router.current()) {
-                if let Some(action) = component.handle_key(key) {
+            if let Some(component) = self.components.get_mut(&self.router.current())
+                && let Some(action) = component.handle_key(key) {
                     self.dispatch_action(action);
                 }
-            }
             return true;
         }
 
@@ -371,7 +369,7 @@ impl App {
                 self.focus = FocusPane::Content;
                 // LayoutHint::FullWidth modules hide the sidebar
                 let full_width = self.components.get(&self.router.current())
-                    .map_or(false, |c| c.layout_hint() == LayoutHint::FullWidth);
+                    .is_some_and(|c| c.layout_hint() == LayoutHint::FullWidth);
                 if full_width && self.sidebar_visible {
                     self.sidebar_visible = false;
                 } else if !full_width && !self.sidebar_visible {
@@ -384,7 +382,7 @@ impl App {
                 self.router.back();
                 // Restore sidebar if leaving a FullWidth module
                 let full_width = self.components.get(&self.router.current())
-                    .map_or(false, |c| c.layout_hint() == LayoutHint::FullWidth);
+                    .is_some_and(|c| c.layout_hint() == LayoutHint::FullWidth);
                 if !full_width && !self.sidebar_visible {
                     self.sidebar_visible = true;
                     self.layout.set_sidebar_visible(true);

@@ -48,7 +48,7 @@ pub fn image_to_row(image: &Image, show_tenant: bool) -> Row {
     let format = image.disk_format.as_deref().unwrap_or("-");
     let size_str = image
         .size
-        .map(|s| format_bytes(s))
+        .map(format_bytes)
         .unwrap_or("-".to_string());
     let mut cells = vec![
         image.name.clone(),

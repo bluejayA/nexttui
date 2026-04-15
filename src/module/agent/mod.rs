@@ -19,6 +19,12 @@ pub struct AgentModule {
     resource_list: ResourceList,
 }
 
+impl Default for AgentModule {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AgentModule {
     pub fn new() -> Self {
         Self {

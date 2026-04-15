@@ -726,16 +726,16 @@ impl ServerModule {
             }
             // Resource navigation shortcuts
             KeyCode::Char('v') => {
-                return Some(Action::Navigate(crate::models::common::Route::Volumes));
+                Some(Action::Navigate(crate::models::common::Route::Volumes))
             }
             KeyCode::Char('n') => {
-                return Some(Action::Navigate(crate::models::common::Route::Networks));
+                Some(Action::Navigate(crate::models::common::Route::Networks))
             }
             KeyCode::Char('s') => {
-                return Some(Action::Navigate(crate::models::common::Route::SecurityGroups));
+                Some(Action::Navigate(crate::models::common::Route::SecurityGroups))
             }
             KeyCode::Char('i') => {
-                return Some(Action::Navigate(crate::models::common::Route::Images));
+                Some(Action::Navigate(crate::models::common::Route::Images))
             }
             // Associate floating IP
             KeyCode::Char('f') => {

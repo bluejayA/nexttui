@@ -62,12 +62,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         // --cloud CLI arg overrides OS_CLOUD and config.toml default_cloud
-        if let Some(ref name) = cloud_arg {
-            if let Err(e) = config.switch_cloud(name) {
+        if let Some(ref name) = cloud_arg
+            && let Err(e) = config.switch_cloud(name) {
                 eprintln!("Error: {e}");
                 std::process::exit(1);
             }
-        }
 
         for w in config.warnings() {
             eprintln!("Warning: {w}");

@@ -392,11 +392,7 @@ async fn handle_action(registry: &AdapterRegistry, all_tenants: &AtomicBool, act
         Action::FetchMigrationProgress { server_id } => {
             match registry.nova.list_server_migrations(&server_id).await {
                 Ok(migrations) => {
-                    if let Some(migration) = migrations.into_iter().last() {
-                        Some(AppEvent::MigrationProgressLoaded { server_id, migration })
-                    } else {
-                        None
-                    }
+                    migrations.into_iter().last().map(|migration| AppEvent::MigrationProgressLoaded { server_id, migration })
                 }
                 Err(e) => Some(api_error("FetchMigrationProgress", e)),
             }

@@ -17,6 +17,12 @@ use crate::event::AppEvent;
 
 pub struct MigrationModule;
 
+impl Default for MigrationModule {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MigrationModule {
     pub fn new() -> Self { Self }
 }

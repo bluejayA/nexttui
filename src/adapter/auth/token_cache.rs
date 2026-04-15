@@ -173,14 +173,13 @@ fn parse_scope_from_filename(filename: &str) -> Option<TokenScope> {
         return Some(TokenScope::Unscoped);
     }
     // Format: "project@{name}@{domain}" (@ separator avoids _ ambiguity)
-    if let Some(rest) = filename.strip_prefix("project@") {
-        if let Some((name, domain)) = rest.split_once('@') {
+    if let Some(rest) = filename.strip_prefix("project@")
+        && let Some((name, domain)) = rest.split_once('@') {
             return Some(TokenScope::Project {
                 name: name.to_string(),
                 domain: domain.to_string(),
             });
         }
-    }
     None
 }
 

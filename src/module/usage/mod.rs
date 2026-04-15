@@ -242,7 +242,7 @@ impl UsageModule {
             Span::styled(format!("  Total: {total}{unit_str}"), Style::default().fg(Color::DarkGray)),
         ]);
 
-        let bar_width = mini_inner.width.saturating_sub(2) as u16;
+        let bar_width = mini_inner.width.saturating_sub(2);
         let gauge = GaugeBar::new("", used, total)
             .with_bar_width(bar_width);
         let bar_line = gauge.render_line();
@@ -509,7 +509,7 @@ impl Component for UsageModule {
 
         match key.code {
             KeyCode::Left => {
-                return Some(Action::FocusSidebar);
+                Some(Action::FocusSidebar)
             }
             KeyCode::Char('[') => {
                 // '[' for previous period (avoids 'h' conflict with Host Ops)
@@ -600,7 +600,7 @@ impl Component for UsageModule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::{ActionReceiver, test_action_channel};
+    use crate::context::test_action_channel;
     use chrono::Datelike;
     use crate::port::types::ServerUsageEntry;
     use crossterm::event::KeyEvent;
@@ -838,7 +838,7 @@ mod tests {
         });
         assert!(!m.loading);
         assert!(m.error_message().is_some());
-        assert!(m.error_message().map_or(false, |e| e.contains("timeout")));
+        assert!(m.error_message().is_some_and(|e| e.contains("timeout")));
     }
 
     // === handle_key tests ===

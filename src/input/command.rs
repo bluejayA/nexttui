@@ -443,7 +443,7 @@ mod tests {
         // Verify every abbreviation maps to a valid route
         let abbr = build_abbreviations();
         let routes = build_route_map();
-        for (_abbr_key, full_name) in &abbr {
+        for full_name in abbr.values() {
             assert!(
                 routes.contains_key(full_name),
                 "abbreviation maps to '{full_name}' but no route defined"

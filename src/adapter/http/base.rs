@@ -147,11 +147,10 @@ impl BaseHttpClient {
             // Try common OpenStack error wrapper keys
             for key in &["NeutronError", "badRequest", "itemNotFound", "conflictingRequest",
                          "forbidden", "error", "computeFault"] {
-                if let Some(inner) = json.get(key) {
-                    if let Some(msg) = inner.get("message").and_then(|m| m.as_str()) {
+                if let Some(inner) = json.get(key)
+                    && let Some(msg) = inner.get("message").and_then(|m| m.as_str()) {
                         return msg.to_string();
                     }
-                }
             }
             // Fallback: try any top-level object with a "message" field
             if let Some(obj) = json.as_object() {

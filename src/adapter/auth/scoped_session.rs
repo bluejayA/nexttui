@@ -195,11 +195,11 @@ mod tests {
             _current_token: &Token,
             _target: &ContextTarget,
         ) -> Result<Token, SwitchError> {
-            let slot = std::mem::replace(
+            
+            std::mem::replace(
                 &mut *self.response.lock().unwrap(),
                 Err(SwitchError::Unsupported("consumed".into())),
-            );
-            slot
+            )
         }
     }
 

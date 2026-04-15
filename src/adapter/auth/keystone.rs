@@ -434,11 +434,10 @@ impl AuthProvider for KeystoneAuthAdapter {
         let scope = self.active_scope_snapshot();
         {
             let map = self.token_map.read().unwrap_or_else(|e| e.into_inner());
-            if let Some(t) = map.get(&scope) {
-                if t.expires_at > Utc::now() + chrono::Duration::minutes(1) {
+            if let Some(t) = map.get(&scope)
+                && t.expires_at > Utc::now() + chrono::Duration::minutes(1) {
                     return Ok(t.id.clone());
                 }
-            }
         }
 
         // Slow path: serialize refresh attempts
@@ -449,11 +448,10 @@ impl AuthProvider for KeystoneAuthAdapter {
         let scope = self.active_scope_snapshot();
         {
             let map = self.token_map.read().unwrap_or_else(|e| e.into_inner());
-            if let Some(t) = map.get(&scope) {
-                if t.expires_at > Utc::now() + chrono::Duration::minutes(1) {
+            if let Some(t) = map.get(&scope)
+                && t.expires_at > Utc::now() + chrono::Duration::minutes(1) {
                     return Ok(t.id.clone());
                 }
-            }
         }
 
         let token = self.refresh_token().await?;
@@ -504,7 +502,7 @@ impl AuthProvider for KeystoneAuthAdapter {
             .find(|c| c.service_type == service_type)
             .and_then(|c| {
                 c.endpoints.iter().find(|e| {
-                    e.interface == interface && region.map_or(true, |r| e.region == r)
+                    e.interface == interface && region.is_none_or(|r| e.region == r)
                 })
             })
             .map(|e| e.url.clone())

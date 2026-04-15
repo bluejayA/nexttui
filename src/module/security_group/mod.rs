@@ -181,8 +181,8 @@ impl SecurityGroupModule {
                 None
             }
             KeyCode::Char('d') => {
-                if let Some(sg) = self.current_sg() {
-                    if let Some(rule) = sg
+                if let Some(sg) = self.current_sg()
+                    && let Some(rule) = sg
                         .security_group_rules
                         .get(self.rule_selected)
                     {
@@ -197,7 +197,6 @@ impl SecurityGroupModule {
                             PendingAction::DeleteSecurityGroupRule { rule_id },
                         );
                     }
-                }
                 None
             }
             _ => None,

@@ -298,7 +298,7 @@ impl Component for HostModule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::{ActionReceiver, test_action_channel};
+    
     use crate::models::nova::{FlavorRef, Hypervisor};
 
     fn make_hypervisor(id: &str, hostname: &str) -> Hypervisor {
@@ -403,6 +403,6 @@ mod tests {
         });
 
         assert!(!m.is_busy()); // task completed
-        assert!(m.log_panel.len() >= 1);
+        assert!(!m.log_panel.is_empty());
     }
 }
