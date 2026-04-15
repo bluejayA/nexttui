@@ -1,10 +1,16 @@
 # DevFlow State
 
 ## Current Phase
-CONSTRUCTION
+complete
 
 ## Current Stage
-code-generation (Unit 3b T1+T2 완료 + 리뷰 반영 — T3 main.rs wire 진입 대기)
+code-generation (PR1 스코프 완료 — T3 main.rs wire는 별도 PR로 분리)
+
+## Finishing Choice
+B (PR pending)
+
+## PR URL
+https://github.com/bluejayA/nexttui/pull/68
 
 ## Completed Units
 - [x] Unit 1 (Foundation Types) — commit befc71a, +23 tests
