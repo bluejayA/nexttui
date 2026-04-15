@@ -120,6 +120,114 @@
 필요 작업: `app.rs::tests`에 통합 테스트 추가 — (1) action 큐에 스테이지, (2) try_begin → epoch bump, (3) worker가 큐에서 꺼내 응답, (4) dispatcher가 stale event drop 확인.
 **Ref**: Cargo Review PR #68 missing test
 
+### BL-P2-064: `cargo audit` CI 통합 (공급망 보안)
+**Priority**: High
+**Category**: Security / CI
+**Description**: BL-P2-063 (PR #70) cargo-review의 maintainability reviewer 제안. `Cargo.lock`이 존재하므로 즉시 적용 가능한 공급망 보안 기본선.
+필요 작업:
+1. `rustsec/audit-check@v2` GitHub Action을 `.github/workflows/ci.yml`에 추가
+2. 기존 4-gate(fmt / test / clippy / bin) 뒤에 5번째 audit step으로 삽입
+3. audit DB 캐시 설정 (매 run마다 DB 최신 유지 + 런타임 최적화)
+4. 고위 CVE 발견 시 CI fail, 낮은 심각도는 warn (정책 결정 필요)
+
+**Acceptance**: PR마다 RustSec advisory database 대비 dep tree 감사. 고위험 CVE는 머지 차단.
+**예상 작업량**: 30분 (workflow YAML 추가 + 정책 1~2줄).
+**Ref**: BL-P2-063 PR #70 cargo-review (agent C — maintainability reviewer 제안)
+
+### BL-P2-065: Rust toolchain 정확한 버전 핀
+**Priority**: Medium
+**Category**: Reproducibility / CI
+**Description**: 현재 `rust-toolchain.toml`이 `channel = "stable"` — floating pin. 매 stable 릴리스마다 clippy lint 셋/behavior 변경 가능 → "어제 green, 오늘 red" 가능성.
+필요 작업:
+1. `channel = "1.94.0"` 같은 정확한 버전 핀
+2. Dependabot 또는 수동 주기(월 1회) bump 정책 문서화
+3. MSRV (Minimum Supported Rust Version)를 `Cargo.toml`의 `rust-version` 필드에도 명시
+4. Rust edition 2024는 1.85.0+ 필요 — 핀 버전이 호환되는지 검증
+
+**Acceptance**: CI는 정확한 버전으로 실행. bump는 의도적 PR로만 발생.
+**의존**: BL-P2-063 완료 (rust-toolchain.toml 자체가 PR #70에서 도입됨)
+**Ref**: BL-P2-063 PR #70 cargo-review
+
+### BL-P2-066: `.git-blame-ignore-revs` 도입 + AI 협업 blame hygiene 운영
+**Priority**: Medium
+**Category**: DX / AI collaboration infrastructure
+**Description**: BL-P2-063 PR #70에 포함된 T1 clippy-fix + T2.5 fmt-all 두 commit이 squash merge로 main에 `9128305`로 통합됨. 이 merge commit SHA를 `.git-blame-ignore-revs`에 등록하면 blame UI (GitHub + 로컬)가 mechanical 변경을 투명하게 스킵 → 진짜 저자 복원.
+
+AI 개발 맥락에서 이는 "preference" 수준이 아니라 **claude-code 세션의 context-building 효율에 직결되는 인프라**. 자세한 배경은 `docs/git-blame-hygiene-in-ai-devflow.md` 참조.
+
+필요 작업 (단계별):
+1. **즉시**: `.git-blame-ignore-revs` 파일 생성, PR #70 merge commit (`9128305`) 등록 + 주석
+2. **중기**: devflow 플러그인 hook 확장
+   - `PostToolUse` 또는 `Stop` hook: mechanical commit (chore(fmt)/chore(clippy)/chore(deps)/chore(codemod) prefix) 자동 감지
+   - Squash merge 방식 고려 → feature SHA 대신 merge commit SHA를 등록하는 follow-up PR 자동 생성
+3. **정책**: CONTRIBUTING.md에 Mechanical commit 판정 기준 명시 (`docs/git-blame-hygiene-in-ai-devflow.md` §7.1 표 참조)
+4. **Commit message**: `Blame-Ignore: true` footer 표준화 (자동화용 마킹)
+
+**Acceptance**:
+- `.git-blame-ignore-revs` 파일 존재 + merge commit 최소 1개 등록
+- GitHub blame UI에서 해당 commit 스킵 동작 확인
+- 정책 문서화 완료
+
+**예상 작업량**:
+- Phase 1 (파일 추가): 15분
+- Phase 2 (hook 자동화): 1세션 (2~3시간)
+- Phase 3 (정책 문서화): 30분
+
+**Ref**: PR #70 cargo-review (agent C), `docs/git-blame-hygiene-in-ai-devflow.md`
+
+### BL-P2-067: Clippy 정책 확장 파일럿
+**Priority**: Low
+**Category**: Code quality policy
+**Description**: 현재 `Cargo.toml [lints.clippy]` 3개만 deny (`unwrap_used`, `expect_used`, `enum_glob_use`). BL-P2-063 cargo-review가 추가 후보 제안.
+검토 대상 lint:
+- `clippy::unwrap_in_result` — Result에서 unwrap은 흔한 오류 패턴
+- `clippy::panic` — 명시적 panic 금지 (필요 시 `#[allow]`)
+- `clippy::todo` / `clippy::unimplemented` — 미완성 코드 감지
+- `clippy::dbg_macro` — 디버깅 코드 잔류 방지
+
+필요 작업:
+1. 각 lint 후보에 대해 현재 코드베이스 영향도 벤치 (`cargo clippy -- -W clippy::<lint>` 횟수)
+2. 영향도 낮은 것부터 점진 deny
+3. BL-P2-063과 동일 패턴 (autofix + manual + allow) 적용
+
+**Acceptance**: 각 lint 0건 도달 + deny 추가 + CI 통과 유지.
+**의존**: BL-P2-063 완료 (베이스 깨끗한 상태)
+**Ref**: BL-P2-063 PR #70 cargo-review
+
+### BL-P2-068: GitHub Actions SHA pinning (공급망 강화)
+**Priority**: Low
+**Category**: Security / Supply chain
+**Description**: 현재 `.github/workflows/ci.yml`의 actions는 태그 기반 (`@v4`, `@v2`, `@stable`). 태그는 repo 소유자가 이동 가능 → 공급망 공격 벡터.
+대안: commit SHA로 핀 (e.g., `actions/checkout@abc123def...`).
+
+필요 작업:
+1. 현재 actions 4개 (`actions/checkout@v4`, `dtolnay/rust-toolchain@stable`, `Swatinem/rust-cache@v2`) 각각 최신 안정 SHA 조회
+2. SHA로 교체, 주석에 원 태그 명시 (`# @v4`)
+3. Dependabot 설정 (`.github/dependabot.yml`)으로 매주 자동 bump PR 생성
+4. Dependabot bump PR의 리뷰 프로세스 문서화
+
+**Acceptance**: 모든 action이 SHA로 핀. Dependabot이 bump PR 자동 생성.
+**Ref**: BL-P2-063 PR #70 cargo-review (agent B — quality reviewer 제안)
+
+### BL-P2-069: 벤치마크 프레임워크 도입 (BL-P2-060/061 선결)
+**Priority**: Medium
+**Category**: Performance measurement / Test infrastructure
+**Description**: BL-P2-060 (action_channel Result boxing) / BL-P2-061 (SwitchStateView enum boxing)은 "벤치 기반 판단 필요"로 defer됨. 선결 조건인 벤치 프레임워크가 아직 없음.
+필요 작업:
+1. `criterion` crate를 dev-dependency로 추가
+2. `benches/` 디렉토리 구조 설계 (예: `benches/action_channel.rs`, `benches/state_machine.rs`)
+3. 초기 벤치 케이스 작성:
+   - ActionSender::send p50/p95/p99
+   - SwitchStateMachine.state() clone cost
+   - Context switch 전체 flow (mock adapter)
+4. CI 또는 로컬 전용 실행 정책 결정 (벤치는 시간 많이 걸리므로 CI에 포함 여부 트레이드오프)
+5. Baseline 수치 확보 → 이후 BL-P2-060/061에서 boxing 후 비교
+
+**Acceptance**: `cargo bench` 실행 가능 + 3개 이상 벤치 케이스 + baseline 결과 문서화.
+**의존**: BL-P2-063 완료
+**차단해제**: BL-P2-060, BL-P2-061
+**Ref**: BL-P2-063 PR #70 cargo-review (agent C)
+
 ### BL-P2-050: LogPanel 텍스트 정제 (제어문자 필터링)
 **Priority**: Low
 **Category**: Security / UX
