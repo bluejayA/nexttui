@@ -4,6 +4,9 @@ on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    # Daily 01:00 UTC — catches advisories that drop between PRs.
+    - cron: '0 1 * * *'
 
 concurrency:
   # One live run per ref. A fresh push to the same PR / branch cancels
@@ -45,3 +48,12 @@ jobs:
         # The lib-only tests miss `src/main.rs`; compile the bin
         # explicitly so a stale main.rs can't merge.
         run: cargo build --bin nexttui --locked
+
+  audit:
+    name: Dependency audit (cargo audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
