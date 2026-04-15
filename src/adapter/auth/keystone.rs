@@ -376,9 +376,16 @@ impl KeystoneAuthAdapter {
 
 #[async_trait]
 impl AuthProvider for KeystoneAuthAdapter {
-    async fn authenticate(&self, credential: &AuthCredential) -> ApiResult<Token> {
-        let token = Self::do_authenticate(&self.client, credential).await?;
-        let scope = self.active_scope_snapshot();
+    async fn authenticate(&self, _credential: &AuthCredential) -> ApiResult<Token> {
+        // BL-P2-031 S1 guard: ignore the parameter and always use
+        // self.credential. Storing the result under initial_scope (not
+        // active_scope_snapshot) ensures the keystone-issued token lands
+        // under a key that matches its actual claims — mirroring the C1
+        // refresh_token guard. Trait signature keeps the parameter for
+        // backwards compatibility but the docstring already declared
+        // self.credential as authoritative.
+        let token = Self::do_authenticate(&self.client, &self.credential).await?;
+        let scope = self.initial_scope();
         {
             let mut map = self.token_map.write().unwrap_or_else(|e| e.into_inner());
             map.insert(scope.clone(), token.clone());
@@ -951,6 +958,143 @@ mod tests {
             .read()
             .unwrap_or_else(|e| e.into_inner());
         assert_eq!(map.get(&demo_scope).unwrap().id, "tok-demo");
+    }
+
+    // ---------- S1 fix: authenticate() guard ----------
+    //
+    // Local one-shot HTTP responder so we can drive the real `authenticate`
+    // wire path without a Keystone server. Same pattern as rescope.rs tests.
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    struct AuthCannedResponse {
+        status_line: &'static str,
+        extra_headers: String,
+        body: String,
+    }
+
+    async fn spawn_auth_responder(
+        resp: AuthCannedResponse,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base_url = format!("http://{addr}");
+        let handle = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 8192];
+            let _ = stream.read(&mut buf).await.unwrap();
+            let wire = format!(
+                "HTTP/1.1 {status}\r\n\
+                 Content-Type: application/json\r\n\
+                 Content-Length: {len}\r\n\
+                 {extra}\
+                 \r\n\
+                 {body}",
+                status = resp.status_line,
+                len = resp.body.len(),
+                extra = resp.extra_headers,
+                body = resp.body,
+            );
+            stream.write_all(wire.as_bytes()).await.unwrap();
+            let _ = stream.shutdown().await;
+        });
+        (base_url, handle)
+    }
+
+    fn credential_at(auth_url: String) -> AuthCredential {
+        AuthCredential {
+            auth_url,
+            method: AuthMethod::Password {
+                username: "admin".into(),
+                password: "secret".into(),
+                domain_name: "Default".into(),
+            },
+            project_scope: Some(ProjectScopeParam {
+                name: "admin-project".into(),
+                domain_name: "Default".into(),
+            }),
+        }
+    }
+
+    #[tokio::test]
+    async fn authenticate_keys_under_initial_scope_even_after_set_active_drift() {
+        // Review S1: after set_active(demo) drifts the active scope,
+        // `authenticate()` must NOT write the (initial-scope-credential)
+        // token under the demo key — that's the same privilege-escalation
+        // pattern C1 closed for refresh_token. The token belongs under the
+        // scope its claims actually match (the credential's scope).
+        let resp = AuthCannedResponse {
+            status_line: "200 OK",
+            extra_headers: "X-Subject-Token: admin-tok-NEW\r\n".into(),
+            body: sample_keystone_response_json().to_string(),
+        };
+        let (base_url, _handle) = spawn_auth_responder(resp).await;
+        let credential = credential_at(format!("{base_url}/v3"));
+        let adapter = KeystoneAuthAdapter::new(credential.clone()).unwrap();
+        let initial = adapter.initial_scope();
+
+        let demo = TokenScope::Project {
+            name: "demo".into(),
+            domain: "default".into(),
+        };
+        adapter
+            .set_active(demo.clone(), sample_token("tok-demo-prior", "demo"))
+            .await
+            .unwrap();
+
+        let _ = AuthProvider::authenticate(&adapter, &credential).await.unwrap();
+
+        let map = adapter
+            .token_map
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
+        // Demo entry must remain the staged token — authenticate must not
+        // overwrite it with a credential-scoped token.
+        let demo_entry = map.get(&demo).expect("demo entry must persist");
+        assert_eq!(
+            demo_entry.id, "tok-demo-prior",
+            "authenticate() leaked an admin-scoped token into the demo key — S1 vector still open"
+        );
+        // Initial entry receives the freshly authenticated admin token.
+        let initial_entry = map.get(&initial).expect("initial entry must be populated");
+        assert_eq!(initial_entry.id, "admin-tok-NEW");
+    }
+
+    #[tokio::test]
+    async fn authenticate_ignores_external_credential_argument() {
+        // Review S1: even if a caller passes a forged credential, authenticate
+        // must use self.credential. Otherwise an attacker with control of the
+        // call site (or a buggy caller) can reauthenticate with arbitrary
+        // privileges.
+        let resp = AuthCannedResponse {
+            status_line: "200 OK",
+            extra_headers: "X-Subject-Token: tok-from-self-credential\r\n".into(),
+            body: sample_keystone_response_json().to_string(),
+        };
+        let (base_url, _handle) = spawn_auth_responder(resp).await;
+        let our_credential = credential_at(format!("{base_url}/v3"));
+        let adapter = KeystoneAuthAdapter::new(our_credential).unwrap();
+
+        // Forged credential points at a non-existent host so any attempt to
+        // honour it would surface as a Network error rather than success.
+        let forged = AuthCredential {
+            auth_url: "http://127.0.0.1:1/forged".into(),
+            method: AuthMethod::Password {
+                username: "attacker".into(),
+                password: "x".into(),
+                domain_name: "Default".into(),
+            },
+            project_scope: Some(ProjectScopeParam {
+                name: "root".into(),
+                domain_name: "Default".into(),
+            }),
+        };
+
+        let token = AuthProvider::authenticate(&adapter, &forged)
+            .await
+            .expect("authenticate must use self.credential, not the forged argument");
+        assert_eq!(token.id, "tok-from-self-credential");
     }
 
     #[tokio::test]
