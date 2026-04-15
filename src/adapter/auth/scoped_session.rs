@@ -61,8 +61,16 @@ impl ContextSessionPort for ScopedAuthSession {
         epoch: Epoch,
     ) -> Result<SessionHandle, SwitchError> {
         // Capture the pre-transition snapshot so rollback can restore it.
+        // A missing previous token means rollback would have nothing valid to
+        // restore — refuse the switch up front rather than committing to a
+        // transition we can't safely unwind (review C2).
         let previous_scope = self.scoped_auth.current_scope();
-        let previous_token = self.scoped_auth.current_token();
+        let previous_token = self.scoped_auth.current_token().ok_or_else(|| {
+            SwitchError::Unsupported(
+                "no active token to capture for rollback — authenticate before switching"
+                    .into(),
+            )
+        })?;
         Ok(SessionHandle::new(epoch, target.clone(), previous_token, previous_scope))
     }
 
@@ -263,6 +271,47 @@ mod tests {
         );
         assert_eq!(cache.invalidate_count(), 0);
         assert!(auth.set_active_calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn begin_refuses_when_no_active_token_exists() {
+        // C2 fix: begin must not fabricate an empty Token for rollback when
+        // current_token() returns None — that would let an invalid token
+        // flow into a future rollback's set_active. Refuse the switch up
+        // front instead.
+        struct EmptyAuth;
+        #[async_trait]
+        impl ScopedAuthPort for EmptyAuth {
+            fn current_scope(&self) -> TokenScope {
+                TokenScope::Unscoped
+            }
+            fn current_token(&self) -> Option<Token> {
+                None
+            }
+            async fn set_active(
+                &self,
+                _scope: TokenScope,
+                _token: Token,
+            ) -> Result<(), SwitchError> {
+                Ok(())
+            }
+        }
+
+        let tmp = TempDir::new().unwrap();
+        let invalidator = Arc::new(EndpointCatalogInvalidator::empty());
+        let store = TokenCacheStore::new(tmp.path());
+        let session = ScopedAuthSession::new(
+            Arc::new(EmptyAuth),
+            Arc::new(StubRescoper::ok(make_token("new", "demo"))),
+            invalidator,
+            store,
+        );
+
+        match session.begin(&make_target("demo"), 1).await {
+            Err(SwitchError::Unsupported(_)) => {}
+            Err(other) => panic!("expected Unsupported, got {other:?}"),
+            Ok(_) => panic!("expected begin to refuse — current_token was None"),
+        }
     }
 
     #[tokio::test]

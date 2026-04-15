@@ -73,8 +73,8 @@ impl ScopedAuthPort for MockScopedAuthPort {
         self.scope.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
-    fn current_token(&self) -> Token {
-        self.token.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    fn current_token(&self) -> Option<Token> {
+        Some(self.token.lock().unwrap_or_else(|e| e.into_inner()).clone())
     }
 
     async fn set_active(&self, scope: TokenScope, token: Token) -> Result<(), SwitchError> {

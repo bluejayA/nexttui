@@ -189,6 +189,26 @@ impl KeystoneAuthAdapter {
             .clone()
     }
 
+    /// The scope tied to `self.credential` — the only scope our refresh path
+    /// can legitimately re-issue tokens for, since `do_authenticate` bakes
+    /// the credential's project_scope into the request body.
+    fn initial_scope(&self) -> TokenScope {
+        TokenScope::from_credential(&self.credential)
+    }
+}
+
+/// Refresh paths must refuse to write into a scope key whose token cannot
+/// be obtained from `self.credential` alone — otherwise an INITIAL-scope
+/// token gets stored under a non-initial scope key, granting elevated
+/// privileges to callers that read by the active key. Returns true when the
+/// refresh would put the right token under the right key.
+pub(crate) fn is_refresh_safe(active: &TokenScope, initial: &TokenScope) -> bool {
+    active == initial
+}
+
+impl KeystoneAuthAdapter {
+    // (continued)
+
     /// Start the background token refresh loop. Idempotent — only spawns once.
     #[tracing::instrument(skip(self))]
     async fn start_refresh_loop(&self) {
@@ -204,6 +224,9 @@ impl KeystoneAuthAdapter {
         // Share the scope handle so `set_active` changes are observed on the
         // next refresh tick rather than after a restart.
         let scope_ref = self.active_scope.clone();
+        // Captured at spawn so the C1 guard can detect scope drift without
+        // re-reading credential on every tick.
+        let initial_scope = self.initial_scope();
 
         let refresh_span = tracing::info_span!("token_refresh_loop");
         let handle = tokio::spawn(
@@ -227,6 +250,20 @@ impl KeystoneAuthAdapter {
                     };
 
                     tokio::time::sleep(sleep_duration).await;
+
+                    // BL-P2-031 C1 guard: same as refresh_token. Skip ticks
+                    // while the active scope differs from the credential's
+                    // scope; otherwise we would mint an INITIAL token and
+                    // overwrite the demo entry with elevated privileges.
+                    let active_now = scope_ref.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                    if !is_refresh_safe(&active_now, &initial_scope) {
+                        tracing::warn!(
+                            ?active_now,
+                            ?initial_scope,
+                            "refresh loop tick skipped — scope drifted; rescope-based refresh required",
+                        );
+                        continue;
+                    }
 
                     match Self::do_authenticate(&client, &credential).await {
                         Ok(new_token) => {
@@ -355,8 +392,19 @@ impl AuthProvider for KeystoneAuthAdapter {
 
     #[tracing::instrument(skip(self))]
     async fn refresh_token(&self) -> ApiResult<Token> {
-        let token = Self::do_authenticate(&self.client, &self.credential).await?;
+        // BL-P2-031 C1 guard: `do_authenticate` always mints a token in
+        // self.credential's scope. Writing that into the active scope key
+        // when the active scope has drifted (via set_active) would store an
+        // INITIAL-scope token under e.g. a "demo" key — privilege escalation.
+        // Refreshing rescoped tokens is the rescope adapter's job, not ours.
         let scope = self.active_scope_snapshot();
+        let initial = self.initial_scope();
+        if !is_refresh_safe(&scope, &initial) {
+            return Err(ApiError::AuthFailed(format!(
+                "refresh_token refused: active scope {scope:?} differs from initial scope {initial:?}; rescope-based refresh required",
+            )));
+        }
+        let token = Self::do_authenticate(&self.client, &self.credential).await?;
         {
             let mut map = self.token_map.write().unwrap_or_else(|e| e.into_inner());
             map.insert(scope.clone(), token.clone());
@@ -489,41 +537,21 @@ impl AuthProvider for KeystoneAuthAdapter {
 /// BL-P2-031 Unit 3b — lets the runtime context switcher read and swap the
 /// active scope/token atomically without going through the async auth surface.
 ///
-/// `current_token` returns a best-effort snapshot: if no token is cached for
-/// the active scope yet, it returns an empty [`Token`] rather than blocking,
-/// since the trait contract forbids async. In practice the switcher only
-/// reaches this after initial authentication, so the empty fallback is a
-/// defensive no-op for pre-auth misuse — logged at `warn`.
+/// `current_token` returns `None` when no token has been cached yet for the
+/// active scope. Callers (notably [`crate::adapter::auth::scoped_session::ScopedAuthSession::begin`])
+/// must translate `None` into a switch error — fabricating an empty
+/// placeholder would let pre-auth misuse cascade into a corrupt rollback
+/// chain (review C2).
 #[async_trait]
 impl ScopedAuthPort for KeystoneAuthAdapter {
     fn current_scope(&self) -> TokenScope {
         self.active_scope_snapshot()
     }
 
-    fn current_token(&self) -> Token {
+    fn current_token(&self) -> Option<Token> {
         let scope = self.active_scope_snapshot();
         let map = self.token_map.read().unwrap_or_else(|e| e.into_inner());
-        match map.get(&scope) {
-            Some(t) => t.clone(),
-            None => {
-                tracing::warn!(
-                    ?scope,
-                    "current_token() called before a token was cached; returning empty placeholder",
-                );
-                Token {
-                    id: String::new(),
-                    expires_at: DateTime::<Utc>::default(),
-                    project: ProjectScope {
-                        id: String::new(),
-                        name: String::new(),
-                        domain_id: String::new(),
-                        domain_name: String::new(),
-                    },
-                    roles: Vec::new(),
-                    catalog: Vec::new(),
-                }
-            }
-        }
+        map.get(&scope).cloned()
     }
 
     async fn set_active(&self, scope: TokenScope, token: Token) -> Result<(), SwitchError> {
@@ -832,9 +860,19 @@ mod tests {
     #[tokio::test]
     async fn scoped_auth_current_token_returns_token_for_active_scope() {
         let (adapter, _) = seeded_adapter_with_token(sample_token("tok-initial", "admin"));
-        let tok = ScopedAuthPort::current_token(&adapter);
+        let tok = ScopedAuthPort::current_token(&adapter).expect("token should be cached");
         assert_eq!(tok.id, "tok-initial");
         assert_eq!(tok.project.name, "admin");
+    }
+
+    #[tokio::test]
+    async fn scoped_auth_current_token_returns_none_before_authentication() {
+        let adapter = KeystoneAuthAdapter::new(sample_credential_password()).unwrap();
+        // No token has been inserted into token_map for the active scope.
+        assert!(
+            ScopedAuthPort::current_token(&adapter).is_none(),
+            "current_token must not fabricate a placeholder pre-auth (review C2)",
+        );
     }
 
     #[tokio::test]
@@ -852,8 +890,67 @@ mod tests {
             .expect("set_active should succeed");
 
         assert_eq!(ScopedAuthPort::current_scope(&adapter), new_scope);
-        let after = ScopedAuthPort::current_token(&adapter);
+        let after = ScopedAuthPort::current_token(&adapter).expect("set_active should cache token");
         assert_eq!(after.id, "tok-demo");
+    }
+
+    // ---------- C1 fix: refresh-scope guard ----------
+
+    #[test]
+    fn is_refresh_safe_when_active_matches_initial() {
+        let s = TokenScope::Project {
+            name: "admin".into(),
+            domain: "default".into(),
+        };
+        assert!(is_refresh_safe(&s, &s));
+    }
+
+    #[test]
+    fn is_refresh_safe_false_when_active_differs_from_initial() {
+        let initial = TokenScope::Project {
+            name: "admin".into(),
+            domain: "default".into(),
+        };
+        let active = TokenScope::Project {
+            name: "demo".into(),
+            domain: "default".into(),
+        };
+        assert!(!is_refresh_safe(&active, &initial));
+    }
+
+    #[tokio::test]
+    async fn refresh_token_refuses_when_active_scope_drifted_from_initial() {
+        // After set_active to a non-initial scope, refresh_token must NOT
+        // reauthenticate with the original credential (which would mint an
+        // INITIAL-scope token and stash it under the demo key — privilege
+        // escalation per BL-P2-031 review C1).
+        let adapter = KeystoneAuthAdapter::new(sample_credential_password()).unwrap();
+        let demo_scope = TokenScope::Project {
+            name: "demo".into(),
+            domain: "default".into(),
+        };
+        adapter
+            .set_active(demo_scope.clone(), sample_token("tok-demo", "demo"))
+            .await
+            .unwrap();
+
+        let err = adapter.refresh_token().await.unwrap_err();
+        match err {
+            ApiError::AuthFailed(msg) => {
+                assert!(
+                    msg.to_lowercase().contains("scope"),
+                    "error should mention scope drift; got: {msg}"
+                );
+            }
+            other => panic!("expected AuthFailed about scope drift, got {other:?}"),
+        }
+
+        // Demo entry must remain the manually-staged token, untouched.
+        let map = adapter
+            .token_map
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
+        assert_eq!(map.get(&demo_scope).unwrap().id, "tok-demo");
     }
 
     #[tokio::test]
