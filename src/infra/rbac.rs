@@ -295,10 +295,7 @@ mod tests {
 
     #[test]
     fn test_effective_role_empty_roles() {
-        assert_eq!(
-            EffectiveRole::from_roles(&[]),
-            EffectiveRole::Reader
-        );
+        assert_eq!(EffectiveRole::from_roles(&[]), EffectiveRole::Reader);
     }
 
     // --- RbacGuard tests (backward compatible) ---
@@ -413,7 +410,12 @@ mod tests {
     fn test_filter_routes() {
         let guard = RbacGuard::new();
         guard.update_roles(vec![role("member")], None);
-        let routes = vec![Route::Servers, Route::Migrations, Route::Networks, Route::Projects];
+        let routes = vec![
+            Route::Servers,
+            Route::Migrations,
+            Route::Networks,
+            Route::Projects,
+        ];
         let filtered = guard.filter_routes(&routes);
         assert_eq!(filtered, vec![Route::Servers, Route::Networks]);
     }
@@ -422,7 +424,11 @@ mod tests {
     fn test_filter_actions_member() {
         let guard = RbacGuard::new();
         guard.update_roles(vec![role("member")], None);
-        let actions = vec![ActionKind::Read, ActionKind::Delete, ActionKind::ForceDelete];
+        let actions = vec![
+            ActionKind::Read,
+            ActionKind::Delete,
+            ActionKind::ForceDelete,
+        ];
         let filtered = guard.filter_actions(&actions);
         assert_eq!(filtered, vec![ActionKind::Read, ActionKind::Delete]);
     }

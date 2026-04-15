@@ -32,8 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (non_blocking, _log_guard) = tracing_appender::non_blocking(file_appender);
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("nexttui=info")),
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("nexttui=info")),
         )
         .with_writer(non_blocking)
         .with_ansi(false)
@@ -41,7 +40,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let args: Vec<String> = std::env::args().collect();
     let demo_mode = args.iter().any(|a| a == "--demo");
-    let cloud_arg = args.windows(2)
+    let cloud_arg = args
+        .windows(2)
         .find(|w| w[0] == "--cloud")
         .map(|w| w[1].clone());
 
@@ -63,10 +63,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // --cloud CLI arg overrides OS_CLOUD and config.toml default_cloud
         if let Some(ref name) = cloud_arg
-            && let Err(e) = config.switch_cloud(name) {
-                eprintln!("Error: {e}");
-                std::process::exit(1);
-            }
+            && let Err(e) = config.switch_cloud(name)
+        {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
+        }
 
         for w in config.warnings() {
             eprintln!("Warning: {w}");
@@ -91,14 +92,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .clone()
                     .unwrap_or_else(|| "Default".to_string()),
             },
-            project_scope: cloud.auth.project_name.as_ref().map(|pn| ProjectScopeParam {
-                name: pn.clone(),
-                domain_name: cloud
-                    .auth
-                    .project_domain_name
-                    .clone()
-                    .unwrap_or_else(|| "Default".to_string()),
-            }),
+            project_scope: cloud
+                .auth
+                .project_name
+                .as_ref()
+                .map(|pn| ProjectScopeParam {
+                    name: pn.clone(),
+                    domain_name: cloud
+                        .auth
+                        .project_domain_name
+                        .clone()
+                        .unwrap_or_else(|| "Default".to_string()),
+                }),
         };
 
         let auth_provider = Arc::new(KeystoneAuthAdapter::new(credential)?);
@@ -115,10 +120,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let mut module_registry = nexttui::registry::ModuleRegistry::new();
         nexttui::registry::register_all_modules(&mut module_registry, &action_tx);
-        let (app, initial_actions) = App::from_registry(config, action_tx.clone(), module_registry, rbac.clone());
+        let (app, initial_actions) =
+            App::from_registry(config, action_tx.clone(), module_registry, rbac.clone());
 
         // Spawn background worker
-        tokio::spawn(run_worker(registry, rbac, app.all_tenants.clone(), action_rx, event_tx));
+        tokio::spawn(run_worker(
+            registry,
+            rbac,
+            app.all_tenants.clone(),
+            action_rx,
+            event_tx,
+        ));
 
         // Trigger initial data load
         for action in initial_actions {

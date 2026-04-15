@@ -5,7 +5,10 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use super::{Link, append_pagination_parts, build_pagination_query, encode_param, extract_next_marker, paginated_list};
+use super::{
+    Link, append_pagination_parts, build_pagination_query, encode_param, extract_next_marker,
+    paginated_list,
+};
 use crate::adapter::http::base::BaseHttpClient;
 use crate::models::nova::{Aggregate, ComputeService, Flavor, Hypervisor, Server, ServerMigration};
 use crate::port::auth::AuthProvider;
@@ -214,10 +217,16 @@ impl NovaPort for NovaHttpAdapter {
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<Server>> {
         let query = build_server_query(filter, pagination);
-        paginated_list(&self.base, "/servers/detail", &query, |resp: NovaServersResponse| {
-            let next = resp.servers_links.as_deref().and_then(extract_next_marker);
-            (resp.servers, next)
-        }).await
+        paginated_list(
+            &self.base,
+            "/servers/detail",
+            &query,
+            |resp: NovaServersResponse| {
+                let next = resp.servers_links.as_deref().and_then(extract_next_marker);
+                (resp.servers, next)
+            },
+        )
+        .await
     }
 
     async fn get_server(&self, server_id: &str) -> ApiResult<Server> {
@@ -252,7 +261,10 @@ impl NovaPort for NovaHttpAdapter {
         let req = self.base.post("/servers").await?.json(&body);
         let resp: NovaServerCreateResponse = self.base.send_json(req).await?;
         // Create response has minimal fields; fetch full server detail
-        let detail_req = self.base.get(&format!("/servers/{}", resp.server.id)).await?;
+        let detail_req = self
+            .base
+            .get(&format!("/servers/{}", resp.server.id))
+            .await?;
         let detail: NovaServerWrapper = self.base.send_json(detail_req).await?;
         Ok(detail.server)
     }
@@ -294,11 +306,7 @@ impl NovaPort for NovaHttpAdapter {
         self.base.send_no_content(req).await
     }
 
-    async fn force_set_server_state(
-        &self,
-        server_id: &str,
-        state: ServerState,
-    ) -> ApiResult<()> {
+    async fn force_set_server_state(&self, server_id: &str, state: ServerState) -> ApiResult<()> {
         let body = serde_json::json!({
             "os-resetState": { "state": state.as_str() }
         });
@@ -310,11 +318,7 @@ impl NovaPort for NovaHttpAdapter {
         self.base.send_no_content(req).await
     }
 
-    async fn create_server_snapshot(
-        &self,
-        server_id: &str,
-        image_name: &str,
-    ) -> ApiResult<String> {
+    async fn create_server_snapshot(&self, server_id: &str, image_name: &str) -> ApiResult<String> {
         let body = serde_json::json!({
             "createImage": { "name": image_name }
         });
@@ -421,11 +425,7 @@ impl NovaPort for NovaHttpAdapter {
     // Currently no microversion header is sent. We always include
     // onSharedStorage (defaults to false) for pre-2.14 compatibility.
     // Nova 2.14+ silently ignores unknown fields in the evacuate body.
-    async fn evacuate_server(
-        &self,
-        server_id: &str,
-        params: &EvacuateParams,
-    ) -> ApiResult<()> {
+    async fn evacuate_server(&self, server_id: &str, params: &EvacuateParams) -> ApiResult<()> {
         let mut evac = serde_json::json!({
             "onSharedStorage": params.on_shared_storage.unwrap_or(false),
         });
@@ -454,10 +454,18 @@ impl NovaPort for NovaHttpAdapter {
         Ok(resp.migrations)
     }
 
-    async fn get_server_migration(&self, server_id: &str, migration_id: i64) -> ApiResult<ServerMigration> {
+    async fn get_server_migration(
+        &self,
+        server_id: &str,
+        migration_id: i64,
+    ) -> ApiResult<ServerMigration> {
         let req = self
             .base
-            .get(&format!("/servers/{}/migrations/{}", encode_param(server_id), migration_id))
+            .get(&format!(
+                "/servers/{}/migrations/{}",
+                encode_param(server_id),
+                migration_id
+            ))
             .await?
             .header("OpenStack-API-Version", "compute 2.80");
         let resp: NovaMigrationWrapper = self.base.send_json(req).await?;
@@ -471,10 +479,16 @@ impl NovaPort for NovaHttpAdapter {
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<Flavor>> {
         let query = build_pagination_query(pagination);
-        paginated_list(&self.base, "/flavors/detail", &query, |resp: NovaFlavorsResponse| {
-            let next = resp.flavors_links.as_deref().and_then(extract_next_marker);
-            (resp.flavors, next)
-        }).await
+        paginated_list(
+            &self.base,
+            "/flavors/detail",
+            &query,
+            |resp: NovaFlavorsResponse| {
+                let next = resp.flavors_links.as_deref().and_then(extract_next_marker);
+                (resp.flavors, next)
+            },
+        )
+        .await
     }
 
     async fn get_flavor(&self, flavor_id: &str) -> ApiResult<Flavor> {
@@ -529,19 +543,11 @@ impl NovaPort for NovaHttpAdapter {
         Err(ApiError::BadRequest("not yet implemented".into()))
     }
 
-    async fn aggregate_add_host(
-        &self,
-        _aggregate_id: i64,
-        _host: &str,
-    ) -> ApiResult<Aggregate> {
+    async fn aggregate_add_host(&self, _aggregate_id: i64, _host: &str) -> ApiResult<Aggregate> {
         Err(ApiError::BadRequest("not yet implemented".into()))
     }
 
-    async fn aggregate_remove_host(
-        &self,
-        _aggregate_id: i64,
-        _host: &str,
-    ) -> ApiResult<Aggregate> {
+    async fn aggregate_remove_host(&self, _aggregate_id: i64, _host: &str) -> ApiResult<Aggregate> {
         Err(ApiError::BadRequest("not yet implemented".into()))
     }
 
@@ -633,7 +639,10 @@ impl NovaPort for NovaHttpAdapter {
     }
 
     async fn get_hypervisor(&self, hypervisor_id: &str) -> ApiResult<Hypervisor> {
-        let req = self.base.get(&format!("/os-hypervisors/{}", encode_param(hypervisor_id))).await?;
+        let req = self
+            .base
+            .get(&format!("/os-hypervisors/{}", encode_param(hypervisor_id)))
+            .await?;
         let resp: NovaHypervisorWrapper = self.base.send_json(req).await?;
         Ok(resp.hypervisor)
     }
@@ -860,10 +869,7 @@ mod tests {
         let resp: NovaInstanceActionsResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.instance_actions.len(), 2);
         assert_eq!(resp.instance_actions[0].action, "create");
-        assert_eq!(
-            resp.instance_actions[0].result.as_deref(),
-            Some("Success")
-        );
+        assert_eq!(resp.instance_actions[0].result.as_deref(), Some("Success"));
         assert_eq!(resp.instance_actions[1].action, "reboot");
         assert!(resp.instance_actions[1].finish_time.is_none());
     }
@@ -900,9 +906,7 @@ mod tests {
 
     #[test]
     fn test_live_migrate_body_auto_host() {
-        let params = LiveMigrateParams {
-            host: None,
-        };
+        let params = LiveMigrateParams { host: None };
         let body = serde_json::json!({
             "os-migrateLive": {
                 "host": params.host,

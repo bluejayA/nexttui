@@ -47,18 +47,42 @@ impl Cache {
 
     pub fn with_max_entries(config: &CacheTtlConfig, max_entries: usize) -> Self {
         let mut ttl_config = HashMap::new();
-        ttl_config.insert(ResourceType::Servers, Duration::from_secs(config.servers_secs));
-        ttl_config.insert(ResourceType::Networks, Duration::from_secs(config.networks_secs));
-        ttl_config.insert(ResourceType::Flavors, Duration::from_secs(config.flavors_secs));
-        ttl_config.insert(ResourceType::Images, Duration::from_secs(config.images_secs));
+        ttl_config.insert(
+            ResourceType::Servers,
+            Duration::from_secs(config.servers_secs),
+        );
+        ttl_config.insert(
+            ResourceType::Networks,
+            Duration::from_secs(config.networks_secs),
+        );
+        ttl_config.insert(
+            ResourceType::Flavors,
+            Duration::from_secs(config.flavors_secs),
+        );
+        ttl_config.insert(
+            ResourceType::Images,
+            Duration::from_secs(config.images_secs),
+        );
         ttl_config.insert(
             ResourceType::SecurityGroups,
             Duration::from_secs(config.security_groups_secs),
         );
-        ttl_config.insert(ResourceType::Volumes, Duration::from_secs(config.volumes_secs));
-        ttl_config.insert(ResourceType::Snapshots, Duration::from_secs(config.volumes_secs));
-        ttl_config.insert(ResourceType::Projects, Duration::from_secs(config.projects_secs));
-        ttl_config.insert(ResourceType::Users, Duration::from_secs(config.projects_secs));
+        ttl_config.insert(
+            ResourceType::Volumes,
+            Duration::from_secs(config.volumes_secs),
+        );
+        ttl_config.insert(
+            ResourceType::Snapshots,
+            Duration::from_secs(config.volumes_secs),
+        );
+        ttl_config.insert(
+            ResourceType::Projects,
+            Duration::from_secs(config.projects_secs),
+        );
+        ttl_config.insert(
+            ResourceType::Users,
+            Duration::from_secs(config.projects_secs),
+        );
         ttl_config.insert(
             ResourceType::FloatingIps,
             Duration::from_secs(config.networks_secs),
@@ -75,7 +99,10 @@ impl Cache {
             ResourceType::Hypervisors,
             Duration::from_secs(config.servers_secs),
         );
-        ttl_config.insert(ResourceType::Agents, Duration::from_secs(config.networks_secs));
+        ttl_config.insert(
+            ResourceType::Agents,
+            Duration::from_secs(config.networks_secs),
+        );
         Self {
             entries: RwLock::new(HashMap::new()),
             ttl_config,
@@ -189,7 +216,10 @@ mod tests {
     fn test_put_and_get() {
         let cache = default_cache();
         let k = key(ResourceType::Servers, "prod");
-        cache.put(k.clone(), vec!["server1".to_string(), "server2".to_string()]);
+        cache.put(
+            k.clone(),
+            vec!["server1".to_string(), "server2".to_string()],
+        );
         let result: Option<Vec<String>> = cache.get(&k);
         assert_eq!(result.unwrap().len(), 2);
     }
@@ -253,7 +283,10 @@ mod tests {
     fn test_invalidate_all() {
         let cache = default_cache();
         cache.put(key(ResourceType::Servers, "prod"), vec!["s1".to_string()]);
-        cache.put(key(ResourceType::Networks, "staging"), vec!["n1".to_string()]);
+        cache.put(
+            key(ResourceType::Networks, "staging"),
+            vec!["n1".to_string()],
+        );
         cache.invalidate_all();
         assert_eq!(cache.stats().total_entries, 0);
     }

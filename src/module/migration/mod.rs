@@ -5,11 +5,11 @@ pub mod view_model;
 // Placeholder for now with server list view.
 
 use crossterm::event::{KeyCode, KeyEvent};
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 
 use crate::action::Action;
 use crate::component::Component;
@@ -24,7 +24,9 @@ impl Default for MigrationModule {
 }
 
 impl MigrationModule {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 impl Component for MigrationModule {

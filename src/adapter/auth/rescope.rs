@@ -51,7 +51,12 @@ impl KeystoneRescopePort for KeystoneRescopeAdapter {
                 .and_then(|s| s.trim().parse::<u64>().ok())
                 .unwrap_or(0);
             let body_text = resp.text().await.unwrap_or_default();
-            return Err(map_rescope_http_error(status, body_text, target, retry_after_secs));
+            return Err(map_rescope_http_error(
+                status,
+                body_text,
+                target,
+                retry_after_secs,
+            ));
         }
 
         let new_token_id = resp
@@ -238,7 +243,10 @@ mod tests {
             "expected truncated output, got {} chars",
             out.chars().count()
         );
-        assert!(out.contains("truncated"), "truncation marker missing: {out}");
+        assert!(
+            out.contains("truncated"),
+            "truncation marker missing: {out}"
+        );
     }
 
     #[test]
@@ -254,8 +262,14 @@ mod tests {
     fn sanitize_body_redacts_x_auth_token_value() {
         let input = "error: X-Auth-Token: gAAAAABsecretMATERIAL details here";
         let out = sanitize_rescope_body(input);
-        assert!(!out.contains("gAAAAABsecretMATERIAL"), "token material leaked: {out}");
-        assert!(out.contains("[REDACTED]"), "expected redaction marker in {out}");
+        assert!(
+            !out.contains("gAAAAABsecretMATERIAL"),
+            "token material leaked: {out}"
+        );
+        assert!(
+            out.contains("[REDACTED]"),
+            "expected redaction marker in {out}"
+        );
     }
 
     #[test]
@@ -282,7 +296,10 @@ mod tests {
             0,
         );
         let msg = err.to_string();
-        assert!(!msg.contains("LEAKED_VALUE"), "token leaked through NotFound: {msg}");
+        assert!(
+            !msg.contains("LEAKED_VALUE"),
+            "token leaked through NotFound: {msg}"
+        );
     }
 
     #[test]
@@ -527,8 +544,7 @@ mod tests {
         };
         let (base_url, _handle) = spawn_one_shot_server(resp).await;
 
-        let adapter =
-            KeystoneRescopeAdapter::new(reqwest::Client::new(), format!("{base_url}/v3"));
+        let adapter = KeystoneRescopeAdapter::new(reqwest::Client::new(), format!("{base_url}/v3"));
         let new_token = adapter
             .rescope(&sample_current_token(), &target)
             .await
@@ -559,8 +575,7 @@ mod tests {
         };
         let (base_url, _handle) = spawn_one_shot_server(resp).await;
 
-        let adapter =
-            KeystoneRescopeAdapter::new(reqwest::Client::new(), format!("{base_url}/v3"));
+        let adapter = KeystoneRescopeAdapter::new(reqwest::Client::new(), format!("{base_url}/v3"));
         let err = adapter
             .rescope(&sample_current_token(), &target)
             .await
@@ -581,14 +596,16 @@ mod tests {
         };
         let (base_url, _handle) = spawn_one_shot_server(resp).await;
 
-        let adapter =
-            KeystoneRescopeAdapter::new(reqwest::Client::new(), format!("{base_url}/v3"));
+        let adapter = KeystoneRescopeAdapter::new(reqwest::Client::new(), format!("{base_url}/v3"));
         let err = adapter
             .rescope(&sample_current_token(), &sample_target())
             .await
             .unwrap_err();
 
-        assert!(matches!(err, SwitchError::RescopeRejected(_)), "got {err:?}");
+        assert!(
+            matches!(err, SwitchError::RescopeRejected(_)),
+            "got {err:?}"
+        );
     }
 
     #[tokio::test]
@@ -602,8 +619,7 @@ mod tests {
         };
         let (base_url, _handle) = spawn_one_shot_server(resp).await;
 
-        let adapter =
-            KeystoneRescopeAdapter::new(reqwest::Client::new(), format!("{base_url}/v3"));
+        let adapter = KeystoneRescopeAdapter::new(reqwest::Client::new(), format!("{base_url}/v3"));
         let err = adapter
             .rescope(&sample_current_token(), &target)
             .await

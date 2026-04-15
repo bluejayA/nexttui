@@ -161,7 +161,9 @@ impl ConfirmDialog {
 
         frame.render_widget(Clear, modal_area);
 
-        let detail_style = Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM);
+        let detail_style = Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::DIM);
 
         let lines = match &self.mode {
             ConfirmMode::YesNo { message } => {
@@ -190,12 +192,10 @@ impl ConfirmDialog {
                 buffer,
                 ..
             } => {
-                let mut l = vec![
-                    Line::from(Span::styled(
-                        message.as_str(),
-                        Theme::warning().add_modifier(Modifier::BOLD),
-                    )),
-                ];
+                let mut l = vec![Line::from(Span::styled(
+                    message.as_str(),
+                    Theme::warning().add_modifier(Modifier::BOLD),
+                ))];
                 for detail in &self.detail_lines {
                     l.push(Line::from(Span::styled(detail.as_str(), detail_style)));
                 }
@@ -203,10 +203,7 @@ impl ConfirmDialog {
                 l.push(Line::from(""));
                 l.push(Line::from(vec![
                     Span::raw("> "),
-                    Span::styled(
-                        buffer.as_str(),
-                        Style::default().fg(Color::White),
-                    ),
+                    Span::styled(buffer.as_str(), Style::default().fg(Color::White)),
                     Span::styled("_", Theme::waiting()),
                 ]));
                 l
@@ -331,10 +328,7 @@ mod tests {
 
     #[test]
     fn test_yes_no_with_details_confirm_works() {
-        let mut dialog = ConfirmDialog::yes_no_with_details(
-            "Detach?",
-            vec!["info".into()],
-        );
+        let mut dialog = ConfirmDialog::yes_no_with_details("Detach?", vec!["info".into()]);
         let result = dialog.handle_key(key(KeyCode::Char('y')));
         assert!(matches!(result, ConfirmResult::Confirmed));
         assert!(!dialog.is_active());
@@ -342,11 +336,8 @@ mod tests {
 
     #[test]
     fn test_type_to_confirm_with_details_confirm_works() {
-        let mut dialog = ConfirmDialog::type_to_confirm_with_details(
-            "Confirm",
-            "abc",
-            vec!["detail".into()],
-        );
+        let mut dialog =
+            ConfirmDialog::type_to_confirm_with_details("Confirm", "abc", vec!["detail".into()]);
         for c in "abc".chars() {
             dialog.handle_key(key(KeyCode::Char(c)));
         }

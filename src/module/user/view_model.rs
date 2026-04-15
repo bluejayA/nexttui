@@ -31,10 +31,19 @@ pub fn user_to_row(user: &User) -> Row {
     let enabled_icon = if user.enabled { "✓" } else { "✗" };
     let email = user.email.as_deref().unwrap_or("-");
     let domain = user.domain_id.as_deref().unwrap_or("-");
-    let style = if user.enabled { RowStyleHint::Normal } else { RowStyleHint::Disabled };
+    let style = if user.enabled {
+        RowStyleHint::Normal
+    } else {
+        RowStyleHint::Disabled
+    };
     Row {
         id: user.id.clone(),
-        cells: vec![user.name.clone(), email.to_string(), enabled_icon.to_string(), domain.to_string()],
+        cells: vec![
+            user.name.clone(),
+            email.to_string(),
+            enabled_icon.to_string(),
+            domain.to_string(),
+        ],
         style_hint: Some(style),
     }
 }
@@ -64,18 +73,25 @@ mod tests {
         }
     }
 
-    #[test] fn test_user_columns_count() { assert_eq!(user_columns().len(), 4); }
-    #[test] fn test_user_to_row() {
+    #[test]
+    fn test_user_columns_count() {
+        assert_eq!(user_columns().len(), 4);
+    }
+    #[test]
+    fn test_user_to_row() {
         let row = user_to_row(&make_user());
         assert_eq!(row.cells[0], "admin");
         assert_eq!(row.cells[1], "admin@example.com");
         assert_eq!(row.cells[2], "✓");
     }
-    #[test] fn test_user_to_row_disabled() {
-        let mut u = make_user(); u.enabled = false;
+    #[test]
+    fn test_user_to_row_disabled() {
+        let mut u = make_user();
+        u.enabled = false;
         assert_eq!(user_to_row(&u).style_hint, Some(RowStyleHint::Disabled));
     }
-    #[test] fn test_user_create_defs() {
+    #[test]
+    fn test_user_create_defs() {
         use crate::ui::form::Validation;
         let defs = user_create_defs();
         assert_eq!(defs.len(), 5);

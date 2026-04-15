@@ -1,10 +1,10 @@
 use std::collections::VecDeque;
 
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
-use ratatui::Frame;
 
 const MAX_ENTRIES: usize = 200;
 
@@ -48,7 +48,9 @@ pub struct LogPanel {
 }
 
 impl Default for LogPanel {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl LogPanel {

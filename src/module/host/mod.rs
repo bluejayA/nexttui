@@ -4,8 +4,8 @@ pub mod instance_list;
 pub mod log_panel;
 
 use crossterm::event::{KeyCode, KeyEvent};
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::Frame;
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
 use crate::action::Action;
 use crate::component::{Component, LayoutHint};
@@ -86,7 +86,8 @@ impl HostModule {
         }
         let count = ids.len();
         for id in &ids {
-            self.instance_list.set_evac_status(id, EvacInlineStatus::InFlight);
+            self.instance_list
+                .set_evac_status(id, EvacInlineStatus::InFlight);
         }
         let mut task = EvacTask::new(ids, EvacuateParams::default(), 3);
         task.start();
@@ -115,10 +116,12 @@ impl HostModule {
             let ts = chrono::Local::now().format("%H:%M:%S").to_string();
             match &result {
                 Ok(()) => {
-                    self.log_panel.push(ts, LogLevel::Success, format!("Evacuated {server_id}"));
+                    self.log_panel
+                        .push(ts, LogLevel::Success, format!("Evacuated {server_id}"));
                 }
                 Err(msg) => {
-                    self.log_panel.push(ts, LogLevel::Error, format!("Failed {server_id}: {msg}"));
+                    self.log_panel
+                        .push(ts, LogLevel::Error, format!("Failed {server_id}: {msg}"));
                 }
             }
 
@@ -179,48 +182,49 @@ impl Component for HostModule {
                     );
                 }
                 match key.code {
-                KeyCode::Up | KeyCode::Char('k') => self.instance_list.move_up(),
-                KeyCode::Down | KeyCode::Char('j') => self.instance_list.move_down(),
-                KeyCode::Char(' ') => self.instance_list.toggle_check(),
-                KeyCode::Char('a') => self.instance_list.select_all(),
-                KeyCode::Char('d') => self.instance_list.deselect_all(),
-                KeyCode::Char('f') => self.instance_list.cycle_filter(),
-                KeyCode::Char('e') => {
-                    if self.evac_task.is_none() {
-                        if self.evac_confirm_pending {
-                            self.evac_confirm_pending = false;
-                            self.start_evacuate();
-                        } else {
-                            let count = self.instance_list.checked_count();
-                            if count > 0 {
-                                self.evac_confirm_pending = true;
-                                self.log_panel.push(
+                    KeyCode::Up | KeyCode::Char('k') => self.instance_list.move_up(),
+                    KeyCode::Down | KeyCode::Char('j') => self.instance_list.move_down(),
+                    KeyCode::Char(' ') => self.instance_list.toggle_check(),
+                    KeyCode::Char('a') => self.instance_list.select_all(),
+                    KeyCode::Char('d') => self.instance_list.deselect_all(),
+                    KeyCode::Char('f') => self.instance_list.cycle_filter(),
+                    KeyCode::Char('e') => {
+                        if self.evac_task.is_none() {
+                            if self.evac_confirm_pending {
+                                self.evac_confirm_pending = false;
+                                self.start_evacuate();
+                            } else {
+                                let count = self.instance_list.checked_count();
+                                if count > 0 {
+                                    self.evac_confirm_pending = true;
+                                    self.log_panel.push(
                                     chrono::Local::now().format("%H:%M:%S").to_string(),
                                     LogLevel::Warning,
                                     format!("Evacuate {count} instances? Press 'e' again to confirm, any other key to cancel"),
                                 );
-                            } else {
-                                self.log_panel.push(
-                                    chrono::Local::now().format("%H:%M:%S").to_string(),
-                                    LogLevel::Warning,
-                                    "No instances selected for evacuation".into(),
-                                );
+                                } else {
+                                    self.log_panel.push(
+                                        chrono::Local::now().format("%H:%M:%S").to_string(),
+                                        LogLevel::Warning,
+                                        "No instances selected for evacuation".into(),
+                                    );
+                                }
                             }
                         }
                     }
-                }
-                KeyCode::Char('c') => {
-                    if let Some(ref mut task) = self.evac_task {
-                        task.request_cancel();
-                        self.log_panel.push(
-                            chrono::Local::now().format("%H:%M:%S").to_string(),
-                            LogLevel::Warning,
-                            "Evacuate cancelled by user".into(),
-                        );
+                    KeyCode::Char('c') => {
+                        if let Some(ref mut task) = self.evac_task {
+                            task.request_cancel();
+                            self.log_panel.push(
+                                chrono::Local::now().format("%H:%M:%S").to_string(),
+                                LogLevel::Warning,
+                                "Evacuate cancelled by user".into(),
+                            );
+                        }
                     }
+                    _ => {}
                 }
-                _ => {}
-            }},
+            }
         }
         None
     }
@@ -255,10 +259,7 @@ impl Component for HostModule {
         let log_height = 4; // 3 lines + border
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(5),
-                Constraint::Length(log_height),
-            ])
+            .constraints([Constraint::Min(5), Constraint::Length(log_height)])
             .split(area);
 
         let panels = Layout::default()
@@ -266,8 +267,10 @@ impl Component for HostModule {
             .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
             .split(chunks[0]);
 
-        self.host_list.render(frame, panels[0], self.focus == HostFocus::HostList);
-        self.instance_list.render(frame, panels[1], self.focus == HostFocus::InstanceList);
+        self.host_list
+            .render(frame, panels[0], self.focus == HostFocus::HostList);
+        self.instance_list
+            .render(frame, panels[1], self.focus == HostFocus::InstanceList);
         self.log_panel.render(frame, chunks[1]);
     }
 
@@ -286,7 +289,9 @@ impl Component for HostModule {
     fn help_hint(&self) -> &str {
         match self.focus {
             HostFocus::HostList => "↑↓:select  →:instances  Tab:sidebar",
-            HostFocus::InstanceList => "↑↓:select  ←:hosts  Space:check  a:all  d:clear  f:filter  e:evacuate  c:cancel",
+            HostFocus::InstanceList => {
+                "↑↓:select  ←:hosts  Space:check  a:all  d:clear  f:filter  e:evacuate  c:cancel"
+            }
         }
     }
 
@@ -298,7 +303,7 @@ impl Component for HostModule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     use crate::models::nova::{FlavorRef, Hypervisor};
 
     fn make_hypervisor(id: &str, hostname: &str) -> Hypervisor {
@@ -306,9 +311,12 @@ mod tests {
             id: id.into(),
             hypervisor_hostname: hostname.into(),
             hypervisor_type: "QEMU".into(),
-            vcpus: 16, vcpus_used: 8,
-            memory_mb: 32768, memory_mb_used: 16384,
-            local_gb: 500, local_gb_used: 200,
+            vcpus: 16,
+            vcpus_used: 8,
+            memory_mb: 32768,
+            memory_mb_used: 16384,
+            local_gb: 500,
+            local_gb_used: 200,
             running_vms: 2,
             status: "enabled".into(),
             state: "up".into(),
@@ -317,13 +325,27 @@ mod tests {
 
     fn make_server(id: &str, name: &str, host: &str) -> Server {
         Server {
-            id: id.into(), name: name.into(), status: "ACTIVE".into(),
-            tenant_id: Some("t1".into()), host: Some(host.into()), host_id: None,
+            id: id.into(),
+            name: name.into(),
+            status: "ACTIVE".into(),
+            tenant_id: Some("t1".into()),
+            host: Some(host.into()),
+            host_id: None,
             availability_zone: None,
-            flavor: FlavorRef { id: "f1".into(), original_name: None, vcpus: None, ram: None, disk: None },
-            image: None, addresses: std::collections::HashMap::new(),
-            created: "2026-01-01T00:00:00Z".into(), updated: None, key_name: None,
-            volumes_attached: vec![], security_groups: vec![],
+            flavor: FlavorRef {
+                id: "f1".into(),
+                original_name: None,
+                vcpus: None,
+                ram: None,
+                disk: None,
+            },
+            image: None,
+            addresses: std::collections::HashMap::new(),
+            created: "2026-01-01T00:00:00Z".into(),
+            updated: None,
+            key_name: None,
+            volumes_attached: vec![],
+            security_groups: vec![],
         }
     }
 
@@ -387,7 +409,10 @@ mod tests {
     #[test]
     fn test_host_module_evac_result_logs() {
         let mut m = HostModule::default();
-        m.handle_event(&AppEvent::HypervisorsLoaded(vec![make_hypervisor("1", "compute-01")]));
+        m.handle_event(&AppEvent::HypervisorsLoaded(vec![make_hypervisor(
+            "1",
+            "compute-01",
+        )]));
         m.all_servers = vec![make_server("s1", "web-01", "compute-01")];
         m.sync_instance_list();
 

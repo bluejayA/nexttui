@@ -59,7 +59,11 @@ impl BaseHttpClient {
         }
         let url = self
             .auth
-            .get_endpoint(&self.service_type, self.interface.clone(), self.region.as_deref())
+            .get_endpoint(
+                &self.service_type,
+                self.interface.clone(),
+                self.region.as_deref(),
+            )
             .await?;
         let mut cached = self.endpoint.write().await;
         *cached = Some(url.clone());
@@ -123,10 +127,7 @@ impl BaseHttpClient {
     }
 
     /// Send + deserialize JSON body.
-    pub async fn send_json<T: DeserializeOwned>(
-        &self,
-        request: RequestBuilder,
-    ) -> ApiResult<T> {
+    pub async fn send_json<T: DeserializeOwned>(&self, request: RequestBuilder) -> ApiResult<T> {
         let resp = self.send(request).await?;
         resp.json::<T>()
             .await
@@ -145,12 +146,20 @@ impl BaseHttpClient {
     fn extract_error_message(body: &str) -> String {
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(body) {
             // Try common OpenStack error wrapper keys
-            for key in &["NeutronError", "badRequest", "itemNotFound", "conflictingRequest",
-                         "forbidden", "error", "computeFault"] {
+            for key in &[
+                "NeutronError",
+                "badRequest",
+                "itemNotFound",
+                "conflictingRequest",
+                "forbidden",
+                "error",
+                "computeFault",
+            ] {
                 if let Some(inner) = json.get(key)
-                    && let Some(msg) = inner.get("message").and_then(|m| m.as_str()) {
-                        return msg.to_string();
-                    }
+                    && let Some(msg) = inner.get("message").and_then(|m| m.as_str())
+                {
+                    return msg.to_string();
+                }
             }
             // Fallback: try any top-level object with a "message" field
             if let Some(obj) = json.as_object() {

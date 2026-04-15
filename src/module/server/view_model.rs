@@ -103,17 +103,10 @@ pub fn server_to_row_full(server: &Server, show_tenant: bool, show_host: bool) -
         .original_name
         .as_deref()
         .unwrap_or(&server.flavor.id);
-    let image_name = server
-        .image
-        .as_ref()
-        .map(|i| i.id.as_str())
-        .unwrap_or("-");
+    let image_name = server.image.as_ref().map(|i| i.id.as_str()).unwrap_or("-");
     let ips = format_ips(&server.addresses);
 
-    let mut cells = vec![
-        icon.to_string(),
-        server.name.clone(),
-    ];
+    let mut cells = vec![icon.to_string(), server.name.clone()];
     if show_tenant {
         cells.push(server.tenant_id.as_deref().unwrap_or("-").to_string());
     }
@@ -240,10 +233,27 @@ pub fn server_detail_data(ctx: &ServerViewContext) -> DetailData {
         )
     } else {
         (
-            server.flavor.original_name.as_deref().unwrap_or(&server.flavor.id).to_string(),
-            server.flavor.vcpus.map(|v| v.to_string()).unwrap_or("-".into()),
-            server.flavor.ram.map(|r| format!("{} MB", r)).unwrap_or("-".into()),
-            server.flavor.disk.map(|d| format!("{} GB", d)).unwrap_or("-".into()),
+            server
+                .flavor
+                .original_name
+                .as_deref()
+                .unwrap_or(&server.flavor.id)
+                .to_string(),
+            server
+                .flavor
+                .vcpus
+                .map(|v| v.to_string())
+                .unwrap_or("-".into()),
+            server
+                .flavor
+                .ram
+                .map(|r| format!("{} MB", r))
+                .unwrap_or("-".into()),
+            server
+                .flavor
+                .disk
+                .map(|d| format!("{} GB", d))
+                .unwrap_or("-".into()),
         )
     };
     let hw_fields = vec![
@@ -301,7 +311,9 @@ pub fn server_detail_data(ctx: &ServerViewContext) -> DetailData {
     {
         let mut fip_fields = Vec::new();
         // Collect floating IPs from addresses
-        let floating_addrs: Vec<&str> = server.addresses.values()
+        let floating_addrs: Vec<&str> = server
+            .addresses
+            .values()
             .flat_map(|addrs| addrs.iter())
             .filter(|a| a.ip_type.as_deref() == Some("floating"))
             .map(|a| a.addr.as_str())
@@ -309,11 +321,17 @@ pub fn server_detail_data(ctx: &ServerViewContext) -> DetailData {
 
         // Match against cached FIPs for full info
         for addr in &floating_addrs {
-            if let Some(fip) = cached_floating_ips.iter().find(|f| f.floating_ip_address == *addr) {
+            if let Some(fip) = cached_floating_ips
+                .iter()
+                .find(|f| f.floating_ip_address == *addr)
+            {
                 fip_fields.push(DetailField::KeyValue {
                     key: "FIP".into(),
-                    value: format!("{} → {}", fip.floating_ip_address,
-                        fip.fixed_ip_address.as_deref().unwrap_or("-")),
+                    value: format!(
+                        "{} → {}",
+                        fip.floating_ip_address,
+                        fip.fixed_ip_address.as_deref().unwrap_or("-")
+                    ),
                     style: Some(RowStyleHint::Active),
                 });
                 fip_fields.push(DetailField::KeyValue {
@@ -345,7 +363,11 @@ pub fn server_detail_data(ctx: &ServerViewContext) -> DetailData {
 
     // Security Groups
     if !server.security_groups.is_empty() {
-        let sg_names: Vec<String> = server.security_groups.iter().map(|sg| sg.name.clone()).collect();
+        let sg_names: Vec<String> = server
+            .security_groups
+            .iter()
+            .map(|sg| sg.name.clone())
+            .collect();
         sections.push(DetailSection {
             name: "Security Groups".into(),
             fields: sg_names
@@ -361,7 +383,12 @@ pub fn server_detail_data(ctx: &ServerViewContext) -> DetailData {
 
     // Attached Volumes
     if !server.volumes_attached.is_empty() {
-        let vol_columns = vec!["Name".into(), "Size".into(), "Status".into(), "Device".into()];
+        let vol_columns = vec![
+            "Name".into(),
+            "Size".into(),
+            "Status".into(),
+            "Device".into(),
+        ];
         let mut vol_rows = Vec::new();
         for att_vol in &server.volumes_attached {
             // Try to resolve volume details from cached_volumes
@@ -372,12 +399,11 @@ pub fn server_detail_data(ctx: &ServerViewContext) -> DetailData {
             let size = cached
                 .map(|v| format!("{} GB", v.size))
                 .unwrap_or("-".into());
-            let status = cached
-                .map(|v| v.status.clone())
-                .unwrap_or("-".into());
+            let status = cached.map(|v| v.status.clone()).unwrap_or("-".into());
             let device = cached
                 .and_then(|v| {
-                    v.attachments.iter()
+                    v.attachments
+                        .iter()
                         .find(|a| a.server_id == server.id)
                         .map(|a| a.device.clone())
                 })
@@ -413,23 +439,38 @@ pub fn server_detail_data(ctx: &ServerViewContext) -> DetailData {
                 style: None,
             },
         ];
-        if let (Some(total), Some(processed)) =
-            (mig.memory_total_bytes, mig.memory_processed_bytes)
+        if let (Some(total), Some(processed)) = (mig.memory_total_bytes, mig.memory_processed_bytes)
         {
-            let pct = if total > 0 { processed * 100 / total } else { 0 };
+            let pct = if total > 0 {
+                processed * 100 / total
+            } else {
+                0
+            };
             mig_fields.push(DetailField::KeyValue {
                 key: "Memory".into(),
-                value: format!("{}% ({}/{})", pct, format_bytes(processed), format_bytes(total)),
+                value: format!(
+                    "{}% ({}/{})",
+                    pct,
+                    format_bytes(processed),
+                    format_bytes(total)
+                ),
                 style: None,
             });
         }
-        if let (Some(total), Some(processed)) =
-            (mig.disk_total_bytes, mig.disk_processed_bytes)
-        {
-            let pct = if total > 0 { processed * 100 / total } else { 0 };
+        if let (Some(total), Some(processed)) = (mig.disk_total_bytes, mig.disk_processed_bytes) {
+            let pct = if total > 0 {
+                processed * 100 / total
+            } else {
+                0
+            };
             mig_fields.push(DetailField::KeyValue {
                 key: "Disk".into(),
-                value: format!("{}% ({}/{})", pct, format_bytes(processed), format_bytes(total)),
+                value: format!(
+                    "{}% ({}/{})",
+                    pct,
+                    format_bytes(processed),
+                    format_bytes(total)
+                ),
                 style: None,
             });
         }
@@ -479,9 +520,8 @@ pub fn status_display(status: &str) -> (&'static str, RowStyleHint) {
     match status.to_uppercase().as_str() {
         "ACTIVE" => ("●", RowStyleHint::Active),
         "ERROR" | "DELETED" => ("✗", RowStyleHint::Error),
-        "BUILD" | "RESIZE" | "REBOOT" | "REBUILD" | "MIGRATING" | "VERIFY_RESIZE" | "REVERT_RESIZE" => {
-            ("◐", RowStyleHint::Warning)
-        }
+        "BUILD" | "RESIZE" | "REBOOT" | "REBUILD" | "MIGRATING" | "VERIFY_RESIZE"
+        | "REVERT_RESIZE" => ("◐", RowStyleHint::Warning),
         "SHUTOFF" | "SUSPENDED" | "PAUSED" | "SHELVED" | "SHELVED_OFFLOADED" => {
             ("○", RowStyleHint::Disabled)
         }
@@ -719,7 +759,10 @@ mod tests {
             cached_volumes: &[],
             cached_floating_ips: &[],
         });
-        let mig_section = data.sections.iter().find(|s| s.name == "Migration Progress");
+        let mig_section = data
+            .sections
+            .iter()
+            .find(|s| s.name == "Migration Progress");
         assert!(mig_section.is_some());
         let fields = &mig_section.unwrap().fields;
         // Status, Source, Dest, Memory, Disk = 5 fields
@@ -730,7 +773,10 @@ mod tests {
     fn test_detail_no_migration_progress_without_data() {
         let server = make_server("ACTIVE");
         let data = server_detail_data(&ServerViewContext::default_for(&server));
-        let mig_section = data.sections.iter().find(|s| s.name == "Migration Progress");
+        let mig_section = data
+            .sections
+            .iter()
+            .find(|s| s.name == "Migration Progress");
         assert!(mig_section.is_none());
     }
 
@@ -776,7 +822,11 @@ mod tests {
             cached_volumes: &[],
             cached_floating_ips: &[],
         });
-        let mig_section = data.sections.iter().find(|s| s.name == "Migration Progress").unwrap();
+        let mig_section = data
+            .sections
+            .iter()
+            .find(|s| s.name == "Migration Progress")
+            .unwrap();
         // Status, Source, Dest, Memory = 4 fields (no Disk)
         assert_eq!(mig_section.fields.len(), 4);
     }
@@ -822,8 +872,12 @@ mod tests {
         use crate::models::nova::ServerSecurityGroup;
         let mut server = make_server("ACTIVE");
         server.security_groups = vec![
-            ServerSecurityGroup { name: "default".into() },
-            ServerSecurityGroup { name: "web-sg".into() },
+            ServerSecurityGroup {
+                name: "default".into(),
+            },
+            ServerSecurityGroup {
+                name: "web-sg".into(),
+            },
         ];
         let data = server_detail_data_simple(&server);
         let sg_section = data.sections.iter().find(|s| s.name == "Security Groups");
@@ -848,6 +902,9 @@ mod tests {
         let server = make_server("ACTIVE");
         let data = server_detail_data_simple(&server);
         let sg_section = data.sections.iter().find(|s| s.name == "Security Groups");
-        assert!(sg_section.is_none(), "Security Groups section should not exist when empty");
+        assert!(
+            sg_section.is_none(),
+            "Security Groups section should not exist when empty"
+        );
     }
 }

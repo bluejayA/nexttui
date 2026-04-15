@@ -4,13 +4,11 @@ use crate::ui::form::FieldDef;
 use crate::ui::resource_list::{ColumnDef, ColumnWidth, Row, RowStyleHint};
 
 pub fn image_columns(show_tenant: bool) -> Vec<ColumnDef> {
-    let mut cols = vec![
-        ColumnDef {
-            name: "Name".into(),
-            width: ColumnWidth::Percent(25),
-            alignment: ratatui::layout::Alignment::Left,
-        },
-    ];
+    let mut cols = vec![ColumnDef {
+        name: "Name".into(),
+        width: ColumnWidth::Percent(25),
+        alignment: ratatui::layout::Alignment::Left,
+    }];
     if show_tenant {
         cols.push(ColumnDef {
             name: "Project".into(),
@@ -46,13 +44,8 @@ pub fn image_columns(show_tenant: bool) -> Vec<ColumnDef> {
 pub fn image_to_row(image: &Image, show_tenant: bool) -> Row {
     let (icon, style) = image_status_display(&image.status);
     let format = image.disk_format.as_deref().unwrap_or("-");
-    let size_str = image
-        .size
-        .map(format_bytes)
-        .unwrap_or("-".to_string());
-    let mut cells = vec![
-        image.name.clone(),
-    ];
+    let size_str = image.size.map(format_bytes).unwrap_or("-".to_string());
+    let mut cells = vec![image.name.clone()];
     if show_tenant {
         cells.push(image.owner.as_deref().unwrap_or("-").to_string());
     }
@@ -263,7 +256,10 @@ mod tests {
         assert_eq!(image_status_display("active"), ("●", RowStyleHint::Active));
         assert_eq!(image_status_display("error"), ("✗", RowStyleHint::Error));
         assert_eq!(image_status_display("saving"), ("◐", RowStyleHint::Warning));
-        assert_eq!(image_status_display("deactivated"), ("○", RowStyleHint::Disabled));
+        assert_eq!(
+            image_status_display("deactivated"),
+            ("○", RowStyleHint::Disabled)
+        );
         assert_eq!(image_status_display("UNKNOWN"), ("?", RowStyleHint::Normal));
     }
 

@@ -22,13 +22,11 @@ impl<'a> FipRowContext<'a> {
 }
 
 pub fn fip_columns(show_tenant: bool) -> Vec<ColumnDef> {
-    let mut cols = vec![
-        ColumnDef {
-            name: "IP Address".into(),
-            width: ColumnWidth::Percent(20),
-            alignment: ratatui::layout::Alignment::Left,
-        },
-    ];
+    let mut cols = vec![ColumnDef {
+        name: "IP Address".into(),
+        width: ColumnWidth::Percent(20),
+        alignment: ratatui::layout::Alignment::Left,
+    }];
     if show_tenant {
         cols.push(ColumnDef {
             name: "Project".into(),
@@ -89,9 +87,7 @@ pub fn fip_to_row(fip: &FloatingIp, ctx: &FipRowContext) -> Row {
         "-".to_string()
     };
 
-    let mut cells = vec![
-        fip.floating_ip_address.clone(),
-    ];
+    let mut cells = vec![fip.floating_ip_address.clone()];
     if show_tenant {
         cells.push(fip.tenant_id.as_deref().unwrap_or("-").to_string());
     }
@@ -110,9 +106,7 @@ pub fn fip_to_row(fip: &FloatingIp, ctx: &FipRowContext) -> Row {
 /// Create floating IP form fields using FieldDef API.
 /// The External Network dropdown options can be populated later via set_field_options.
 pub fn fip_create_defs() -> Vec<FieldDef> {
-    vec![
-        FieldDef::dropdown("External Network", vec![], true),
-    ]
+    vec![FieldDef::dropdown("External Network", vec![], true)]
 }
 
 pub fn fip_status_display(status: &str) -> (&'static str, RowStyleHint) {

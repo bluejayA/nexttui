@@ -23,7 +23,9 @@ struct RegistryEntry {
 
 impl CancellationRegistry {
     pub fn new() -> Self {
-        Self { entries: Mutex::new(Vec::new()) }
+        Self {
+            entries: Mutex::new(Vec::new()),
+        }
     }
 
     /// Register a fresh cancellation token under `epoch` and return it.
@@ -34,7 +36,10 @@ impl CancellationRegistry {
         // Drop already-cancelled entries opportunistically to bound memory.
         let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         entries.retain(|e| !e.token.is_cancelled());
-        entries.push(RegistryEntry { epoch, token: token.clone() });
+        entries.push(RegistryEntry {
+            epoch,
+            token: token.clone(),
+        });
         token
     }
 

@@ -1,12 +1,12 @@
 pub mod view_model;
 
 use crossterm::event::{KeyCode, KeyEvent};
-use ratatui::layout::Rect;
 use ratatui::Frame;
+use ratatui::layout::Rect;
 
 use crate::action::Action;
-use crate::context::ActionSender;
 use crate::component::Component;
+use crate::context::ActionSender;
 use crate::event::AppEvent;
 use crate::models::neutron::SecurityGroup;
 use crate::module::{ConfirmHandler, PendingAction, ViewState};
@@ -67,7 +67,8 @@ impl SecurityGroupModule {
     }
 
     fn selected_sg(&self) -> Option<&SecurityGroup> {
-        self.security_groups.get(self.resource_list.selected_index())
+        self.security_groups
+            .get(self.resource_list.selected_index())
     }
 
     fn current_sg(&self) -> Option<&SecurityGroup> {
@@ -79,7 +80,10 @@ impl SecurityGroupModule {
     }
 
     fn rows(&self) -> Vec<Row> {
-        self.security_groups.iter().map(|sg| sg_to_row(sg, self.all_tenants)).collect()
+        self.security_groups
+            .iter()
+            .map(|sg| sg_to_row(sg, self.all_tenants))
+            .collect()
     }
 
     fn resolve_action(pending: PendingAction) -> Option<Action> {
@@ -182,21 +186,19 @@ impl SecurityGroupModule {
             }
             KeyCode::Char('d') => {
                 if let Some(sg) = self.current_sg()
-                    && let Some(rule) = sg
-                        .security_group_rules
-                        .get(self.rule_selected)
-                    {
-                        let rule_id = rule.id.clone();
-                        let short_id = if rule_id.len() > 8 {
-                            &rule_id[..8]
-                        } else {
-                            &rule_id
-                        };
-                        self.confirm.open(
-                            ConfirmDialog::yes_no(format!("Delete rule {short_id}...?")),
-                            PendingAction::DeleteSecurityGroupRule { rule_id },
-                        );
-                    }
+                    && let Some(rule) = sg.security_group_rules.get(self.rule_selected)
+                {
+                    let rule_id = rule.id.clone();
+                    let short_id = if rule_id.len() > 8 {
+                        &rule_id[..8]
+                    } else {
+                        &rule_id
+                    };
+                    self.confirm.open(
+                        ConfirmDialog::yes_no(format!("Delete rule {short_id}...?")),
+                        PendingAction::DeleteSecurityGroupRule { rule_id },
+                    );
+                }
                 None
             }
             _ => None,
@@ -228,34 +230,34 @@ impl SecurityGroupModule {
                     } else {
                         RuleDirection::Ingress
                     };
-                    let protocol = values
-                        .get("Protocol")
-                        .and_then(|v| match v {
-                            crate::ui::form::FormValue::Selected(s) => {
-                                if s.is_empty() { None } else { Some(s.clone()) }
+                    let protocol = values.get("Protocol").and_then(|v| match v {
+                        crate::ui::form::FormValue::Selected(s) => {
+                            if s.is_empty() {
+                                None
+                            } else {
+                                Some(s.clone())
                             }
-                            _ => None,
-                        });
-                    let port_range_min = values
-                        .get("Port Min")
-                        .and_then(|v| match v {
-                            crate::ui::form::FormValue::Text(s) => s.parse::<u16>().ok(),
-                            _ => None,
-                        });
-                    let port_range_max = values
-                        .get("Port Max")
-                        .and_then(|v| match v {
-                            crate::ui::form::FormValue::Text(s) => s.parse::<u16>().ok(),
-                            _ => None,
-                        });
-                    let remote_ip_prefix = values
-                        .get("Source CIDR")
-                        .and_then(|v| match v {
-                            crate::ui::form::FormValue::Text(s) => {
-                                if s.is_empty() { None } else { Some(s.clone()) }
+                        }
+                        _ => None,
+                    });
+                    let port_range_min = values.get("Port Min").and_then(|v| match v {
+                        crate::ui::form::FormValue::Text(s) => s.parse::<u16>().ok(),
+                        _ => None,
+                    });
+                    let port_range_max = values.get("Port Max").and_then(|v| match v {
+                        crate::ui::form::FormValue::Text(s) => s.parse::<u16>().ok(),
+                        _ => None,
+                    });
+                    let remote_ip_prefix = values.get("Source CIDR").and_then(|v| match v {
+                        crate::ui::form::FormValue::Text(s) => {
+                            if s.is_empty() {
+                                None
+                            } else {
+                                Some(s.clone())
                             }
-                            _ => None,
-                        });
+                        }
+                        _ => None,
+                    });
 
                     // Return to detail view, not list
                     self.form = None;
@@ -265,16 +267,18 @@ impl SecurityGroupModule {
                         self.view_state = ViewState::List;
                     }
 
-                    let _ = self.action_tx.send(Action::CreateSecurityGroupRule(SecurityGroupRuleCreateParams {
-                        security_group_id: sg_id,
-                        direction,
-                        protocol,
-                        port_range_min,
-                        port_range_max,
-                        remote_ip_prefix,
-                        remote_group_id: None,
-                        ethertype: None,
-                    }));
+                    let _ = self.action_tx.send(Action::CreateSecurityGroupRule(
+                        SecurityGroupRuleCreateParams {
+                            security_group_id: sg_id,
+                            direction,
+                            protocol,
+                            port_range_min,
+                            port_range_max,
+                            remote_ip_prefix,
+                            remote_group_id: None,
+                            ethertype: None,
+                        },
+                    ));
                     Some(Action::ExitFormMode)
                 } else {
                     // SG create form
@@ -285,20 +289,21 @@ impl SecurityGroupModule {
                             _ => None,
                         })
                         .unwrap_or_default();
-                    let description = values
-                        .get("Description")
-                        .and_then(|v| match v {
-                            crate::ui::form::FormValue::Text(s) => {
-                                if s.is_empty() { None } else { Some(s.clone()) }
+                    let description = values.get("Description").and_then(|v| match v {
+                        crate::ui::form::FormValue::Text(s) => {
+                            if s.is_empty() {
+                                None
+                            } else {
+                                Some(s.clone())
                             }
-                            _ => None,
-                        });
+                        }
+                        _ => None,
+                    });
 
                     self.close_form();
-                    let _ = self.action_tx.send(Action::CreateSecurityGroup(SecurityGroupCreateParams {
-                        name,
-                        description,
-                    }));
+                    let _ = self.action_tx.send(Action::CreateSecurityGroup(
+                        SecurityGroupCreateParams { name, description },
+                    ));
                     Some(Action::ExitFormMode)
                 }
             }
@@ -322,8 +327,12 @@ impl SecurityGroupModule {
 }
 
 impl Component for SecurityGroupModule {
-    fn refresh_action(&self) -> Option<Action> { Some(Action::FetchSecurityGroups) }
-    fn is_modal(&self) -> bool { self.confirm.is_active() || self.form.is_some() }
+    fn refresh_action(&self) -> Option<Action> {
+        Some(Action::FetchSecurityGroups)
+    }
+    fn is_modal(&self) -> bool {
+        self.confirm.is_active() || self.form.is_some()
+    }
 
     fn set_all_tenants(&mut self, v: bool) {
         self.all_tenants = v;
@@ -396,7 +405,9 @@ impl Component for SecurityGroupModule {
         match &self.view_state {
             ViewState::List => None,
             ViewState::Detail(id) => {
-                let name = self.security_groups.iter()
+                let name = self
+                    .security_groups
+                    .iter()
                     .find(|r| r.id == *id)
                     .map(|r| r.name.as_str())
                     .unwrap_or("...");
@@ -650,14 +661,20 @@ mod tests {
     #[test]
     fn test_help_hint_list() {
         let (module, _rx) = setup();
-        assert_eq!(module.help_hint(), "Enter:Detail c:Create d:Delete r:Refresh");
+        assert_eq!(
+            module.help_hint(),
+            "Enter:Detail c:Create d:Delete r:Refresh"
+        );
     }
 
     #[test]
     fn test_help_hint_detail() {
         let (mut module, _rx) = setup();
         module.handle_key(key(KeyCode::Enter));
-        assert_eq!(module.help_hint(), "j/k:Rule a:AddRule d:DeleteRule Esc:Back");
+        assert_eq!(
+            module.help_hint(),
+            "j/k:Rule a:AddRule d:DeleteRule Esc:Back"
+        );
     }
 
     #[test]

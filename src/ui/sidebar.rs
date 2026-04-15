@@ -85,7 +85,9 @@ impl Sidebar {
 
     /// Get the route at a given index (for number-key navigation), respecting admin visibility.
     pub fn route_at(&self, index: usize, is_admin: bool) -> Option<Route> {
-        self.visible_items(is_admin).get(index).map(|item| item.route)
+        self.visible_items(is_admin)
+            .get(index)
+            .map(|item| item.route)
     }
 
     pub fn render(
@@ -109,7 +111,11 @@ impl Sidebar {
                 items.push(ListItem::new(Line::from("")));
                 let sep_width = area.width.saturating_sub(4) as usize; // inside border
                 let pad = sep_width.saturating_sub(7) / 2; // 7 = " Admin " len
-                let sep = format!("{} Admin {}", "─".repeat(pad), "─".repeat(sep_width.saturating_sub(pad + 7)));
+                let sep = format!(
+                    "{} Admin {}",
+                    "─".repeat(pad),
+                    "─".repeat(sep_width.saturating_sub(pad + 7))
+                );
                 let sep_style = if focused {
                     Theme::focus_border()
                 } else {

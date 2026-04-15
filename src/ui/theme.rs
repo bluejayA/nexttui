@@ -181,11 +181,21 @@ impl Icons {
         "↔"
     }
 
-    pub fn host_up() -> &'static str { "●" }
-    pub fn host_down() -> &'static str { "✗" }
-    pub fn host_disabled() -> &'static str { "⊘" }
-    pub fn checkbox_on() -> &'static str { "☑" }
-    pub fn checkbox_off() -> &'static str { "☐" }
+    pub fn host_up() -> &'static str {
+        "●"
+    }
+    pub fn host_down() -> &'static str {
+        "✗"
+    }
+    pub fn host_disabled() -> &'static str {
+        "⊘"
+    }
+    pub fn checkbox_on() -> &'static str {
+        "☑"
+    }
+    pub fn checkbox_off() -> &'static str {
+        "☐"
+    }
 
     pub fn status_icon(status: &str) -> &'static str {
         match status {

@@ -7,7 +7,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{Mutex, broadcast};
 use tokio::task::JoinHandle;
 use tracing::Instrument;
 
@@ -299,10 +299,7 @@ impl KeystoneAuthAdapter {
         client: &reqwest::Client,
         credential: &AuthCredential,
     ) -> ApiResult<Token> {
-        let auth_url = format!(
-            "{}/auth/tokens",
-            credential.auth_url.trim_end_matches('/')
-        );
+        let auth_url = format!("{}/auth/tokens", credential.auth_url.trim_end_matches('/'));
         let body = Self::build_auth_body(credential);
         let resp = client
             .post(&auth_url)
@@ -435,9 +432,10 @@ impl AuthProvider for KeystoneAuthAdapter {
         {
             let map = self.token_map.read().unwrap_or_else(|e| e.into_inner());
             if let Some(t) = map.get(&scope)
-                && t.expires_at > Utc::now() + chrono::Duration::minutes(1) {
-                    return Ok(t.id.clone());
-                }
+                && t.expires_at > Utc::now() + chrono::Duration::minutes(1)
+            {
+                return Ok(t.id.clone());
+            }
         }
 
         // Slow path: serialize refresh attempts
@@ -449,9 +447,10 @@ impl AuthProvider for KeystoneAuthAdapter {
         {
             let map = self.token_map.read().unwrap_or_else(|e| e.into_inner());
             if let Some(t) = map.get(&scope)
-                && t.expires_at > Utc::now() + chrono::Duration::minutes(1) {
-                    return Ok(t.id.clone());
-                }
+                && t.expires_at > Utc::now() + chrono::Duration::minutes(1)
+            {
+                return Ok(t.id.clone());
+            }
         }
 
         let token = self.refresh_token().await?;
@@ -501,9 +500,9 @@ impl AuthProvider for KeystoneAuthAdapter {
             .iter()
             .find(|c| c.service_type == service_type)
             .and_then(|c| {
-                c.endpoints.iter().find(|e| {
-                    e.interface == interface && region.is_none_or(|r| e.region == r)
-                })
+                c.endpoints
+                    .iter()
+                    .find(|e| e.interface == interface && region.is_none_or(|r| e.region == r))
             })
             .map(|e| e.url.clone())
             .ok_or(ApiError::ServiceUnavailable {
@@ -568,10 +567,7 @@ impl ScopedAuthPort for KeystoneAuthAdapter {
             map.insert(scope.clone(), token);
         }
         {
-            let mut active = self
-                .active_scope
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
+            let mut active = self.active_scope.lock().unwrap_or_else(|e| e.into_inner());
             *active = scope;
         }
         Ok(())
@@ -648,7 +644,10 @@ mod tests {
         let body = KeystoneAuthAdapter::build_auth_body(&cred);
 
         assert_eq!(body["auth"]["identity"]["methods"][0], "password");
-        assert_eq!(body["auth"]["identity"]["password"]["user"]["name"], "admin");
+        assert_eq!(
+            body["auth"]["identity"]["password"]["user"]["name"],
+            "admin"
+        );
         assert_eq!(
             body["auth"]["identity"]["password"]["user"]["domain"]["name"],
             "Default"
@@ -826,10 +825,7 @@ mod tests {
         let adapter = KeystoneAuthAdapter::new(sample_credential_password()).unwrap();
         let scope = adapter.active_scope_snapshot();
         {
-            let mut map = adapter
-                .token_map
-                .write()
-                .unwrap_or_else(|e| e.into_inner());
+            let mut map = adapter.token_map.write().unwrap_or_else(|e| e.into_inner());
             map.insert(scope.clone(), token);
         }
         (adapter, scope)
@@ -951,10 +947,7 @@ mod tests {
         }
 
         // Demo entry must remain the manually-staged token, untouched.
-        let map = adapter
-            .token_map
-            .read()
-            .unwrap_or_else(|e| e.into_inner());
+        let map = adapter.token_map.read().unwrap_or_else(|e| e.into_inner());
         assert_eq!(map.get(&demo_scope).unwrap().id, "tok-demo");
     }
 
@@ -1041,12 +1034,11 @@ mod tests {
             .await
             .unwrap();
 
-        let _ = AuthProvider::authenticate(&adapter, &credential).await.unwrap();
+        let _ = AuthProvider::authenticate(&adapter, &credential)
+            .await
+            .unwrap();
 
-        let map = adapter
-            .token_map
-            .read()
-            .unwrap_or_else(|e| e.into_inner());
+        let map = adapter.token_map.read().unwrap_or_else(|e| e.into_inner());
         // Demo entry must remain the staged token — authenticate must not
         // overwrite it with a credential-scoped token.
         let demo_entry = map.get(&demo).expect("demo entry must persist");
@@ -1109,10 +1101,7 @@ mod tests {
             .await
             .unwrap();
 
-        let map = adapter
-            .token_map
-            .read()
-            .unwrap_or_else(|e| e.into_inner());
+        let map = adapter.token_map.read().unwrap_or_else(|e| e.into_inner());
         let still_there = map.get(&old_scope).expect("prior token must be retained");
         assert_eq!(still_there.id, "tok-initial");
     }

@@ -1,8 +1,8 @@
 pub mod view_model;
 
 use crossterm::event::{KeyCode, KeyEvent};
-use ratatui::layout::Rect;
 use ratatui::Frame;
+use ratatui::layout::Rect;
 
 use crate::action::Action;
 use crate::component::Component;
@@ -33,15 +33,23 @@ impl AggregateModule {
             resource_list: ResourceList::new(aggregate_columns()),
         }
     }
-    pub fn aggregates(&self) -> &[Aggregate] { &self.aggregates }
-    fn rows(&self) -> Vec<Row> { self.aggregates.iter().map(aggregate_to_row).collect() }
+    pub fn aggregates(&self) -> &[Aggregate] {
+        &self.aggregates
+    }
+    fn rows(&self) -> Vec<Row> {
+        self.aggregates.iter().map(aggregate_to_row).collect()
+    }
 }
 
 impl Component for AggregateModule {
-    fn refresh_action(&self) -> Option<Action> { Some(Action::FetchAggregates) }
+    fn refresh_action(&self) -> Option<Action> {
+        Some(Action::FetchAggregates)
+    }
 
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
-        if self.resource_list.handle_nav_key(key) { return None; }
+        if self.resource_list.handle_nav_key(key) {
+            return None;
+        }
         match key.code {
             KeyCode::Char('r') => Some(Action::FetchAggregates),
             KeyCode::Left => Some(Action::FocusSidebar),
@@ -61,24 +69,41 @@ impl Component for AggregateModule {
         self.resource_list.render(frame, area);
     }
 
-    fn help_hint(&self) -> &str { "r:Refresh" }
+    fn help_hint(&self) -> &str {
+        "r:Refresh"
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn key(code: KeyCode) -> KeyEvent { KeyEvent::from(code) }
-
-    #[test] fn test_initial() { let m = AggregateModule::new(); assert!(m.aggregates().is_empty()); }
-    #[test] fn test_refresh() {
-        let mut m = AggregateModule::new();
-        assert!(matches!(m.handle_key(key(KeyCode::Char('r'))), Some(Action::FetchAggregates)));
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::from(code)
     }
-    #[test] fn test_event_loaded() {
+
+    #[test]
+    fn test_initial() {
+        let m = AggregateModule::new();
+        assert!(m.aggregates().is_empty());
+    }
+    #[test]
+    fn test_refresh() {
         let mut m = AggregateModule::new();
-        m.handle_event(&AppEvent::AggregatesLoaded(vec![
-            Aggregate { id: 1, name: "agg1".into(), availability_zone: Some("az1".into()), hosts: vec!["h1".into()], metadata: Default::default() },
-        ]));
+        assert!(matches!(
+            m.handle_key(key(KeyCode::Char('r'))),
+            Some(Action::FetchAggregates)
+        ));
+    }
+    #[test]
+    fn test_event_loaded() {
+        let mut m = AggregateModule::new();
+        m.handle_event(&AppEvent::AggregatesLoaded(vec![Aggregate {
+            id: 1,
+            name: "agg1".into(),
+            availability_zone: Some("az1".into()),
+            hosts: vec!["h1".into()],
+            metadata: Default::default(),
+        }]));
         assert_eq!(m.aggregates().len(), 1);
     }
 

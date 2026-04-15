@@ -36,9 +36,7 @@ use super::types::{ContextSnapshot, ContextTarget};
 pub enum SwitchState {
     /// No switch in progress. `current` is populated once the first commit
     /// has happened; before that it is `None`.
-    Idle {
-        current: Option<ContextSnapshot>,
-    },
+    Idle { current: Option<ContextSnapshot> },
     /// A switch is running. `previous` is the snapshot that was current when
     /// the switch started; it is used by `fail` to restore state without
     /// the caller having to remember what the previous snapshot was.
@@ -86,7 +84,9 @@ impl SwitchStateMachine {
 
     pub fn with_current(epoch: Arc<ContextEpoch>, current: ContextSnapshot) -> Self {
         Self {
-            state: Mutex::new(SwitchState::Idle { current: Some(current) }),
+            state: Mutex::new(SwitchState::Idle {
+                current: Some(current),
+            }),
             epoch,
         }
     }
@@ -117,7 +117,9 @@ impl SwitchStateMachine {
     /// `try_begin` with `commit` or `fail`, but we never panic on misuse).
     pub fn commit(&self, snapshot: ContextSnapshot) {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        *state = SwitchState::Idle { current: Some(snapshot) };
+        *state = SwitchState::Idle {
+            current: Some(snapshot),
+        };
     }
 
     /// Transition `Switching → Idle { current: previous }`. Preserves the
@@ -134,8 +136,14 @@ impl SwitchStateMachine {
     pub fn state(&self) -> SwitchStateView {
         let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         match &*state {
-            SwitchState::Idle { current } => SwitchStateView::Idle { current: current.clone() },
-            SwitchState::Switching { target, started_at_epoch, .. } => SwitchStateView::Switching {
+            SwitchState::Idle { current } => SwitchStateView::Idle {
+                current: current.clone(),
+            },
+            SwitchState::Switching {
+                target,
+                started_at_epoch,
+                ..
+            } => SwitchStateView::Switching {
                 target: target.clone(),
                 started_at_epoch: *started_at_epoch,
             },
@@ -212,7 +220,10 @@ mod tests {
     fn new_is_idle_without_current() {
         let sm = SwitchStateMachine::new(Arc::new(ContextEpoch::new()));
         assert!(sm.is_idle());
-        assert!(matches!(sm.state(), SwitchStateView::Idle { current: None }));
+        assert!(matches!(
+            sm.state(),
+            SwitchStateView::Idle { current: None }
+        ));
     }
 
     #[test]
@@ -271,7 +282,10 @@ mod tests {
         let sm = SwitchStateMachine::new(ep);
         sm.try_begin(target("demo")).unwrap();
         sm.fail(&SwitchError::CommitFailed("boom".into()));
-        assert!(matches!(sm.state(), SwitchStateView::Idle { current: None }));
+        assert!(matches!(
+            sm.state(),
+            SwitchStateView::Idle { current: None }
+        ));
     }
 
     #[test]
@@ -293,7 +307,9 @@ mod tests {
         let attempts = 16;
         for i in 0..attempts {
             let sm = sm.clone();
-            handles.push(thread::spawn(move || sm.try_begin(target(&format!("p{i}")))));
+            handles.push(thread::spawn(move || {
+                sm.try_begin(target(&format!("p{i}")))
+            }));
         }
         let mut ok = 0;
         let mut busy = 0;

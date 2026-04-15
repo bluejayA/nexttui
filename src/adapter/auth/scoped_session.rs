@@ -67,11 +67,15 @@ impl ContextSessionPort for ScopedAuthSession {
         let previous_scope = self.scoped_auth.current_scope();
         let previous_token = self.scoped_auth.current_token().ok_or_else(|| {
             SwitchError::Unsupported(
-                "no active token to capture for rollback — authenticate before switching"
-                    .into(),
+                "no active token to capture for rollback — authenticate before switching".into(),
             )
         })?;
-        Ok(SessionHandle::new(epoch, target.clone(), previous_token, previous_scope))
+        Ok(SessionHandle::new(
+            epoch,
+            target.clone(),
+            previous_token,
+            previous_scope,
+        ))
     }
 
     async fn rescope(&self, handle: &mut SessionHandle) -> Result<(), SwitchError> {
@@ -181,10 +185,14 @@ mod tests {
 
     impl StubRescoper {
         fn ok(token: Token) -> Self {
-            Self { response: Mutex::new(Ok(token)) }
+            Self {
+                response: Mutex::new(Ok(token)),
+            }
         }
         fn err(err: SwitchError) -> Self {
-            Self { response: Mutex::new(Err(err)) }
+            Self {
+                response: Mutex::new(Err(err)),
+            }
         }
     }
 
@@ -195,7 +203,6 @@ mod tests {
             _current_token: &Token,
             _target: &ContextTarget,
         ) -> Result<Token, SwitchError> {
-            
             std::mem::replace(
                 &mut *self.response.lock().unwrap(),
                 Err(SwitchError::Unsupported("consumed".into())),
@@ -206,25 +213,28 @@ mod tests {
     fn setup_session(
         rescoper: Arc<dyn KeystoneRescopePort>,
         failing_set_active: Option<SwitchError>,
-    ) -> (ScopedAuthSession, Arc<MockScopedAuthPort>, Arc<MockHttpEndpointCache>, TempDir) {
+    ) -> (
+        ScopedAuthSession,
+        Arc<MockScopedAuthPort>,
+        Arc<MockHttpEndpointCache>,
+        TempDir,
+    ) {
         let tmp = TempDir::new().unwrap();
         let initial_scope = TokenScope::Project {
             name: "admin".into(),
             domain: "default".into(),
         };
-        let auth = Arc::new(MockScopedAuthPort::new(initial_scope, make_token("old", "admin")));
+        let auth = Arc::new(MockScopedAuthPort::new(
+            initial_scope,
+            make_token("old", "admin"),
+        ));
         if let Some(err) = failing_set_active {
             auth.fail_next_set_active(err);
         }
         let cache = Arc::new(MockHttpEndpointCache::new());
         let invalidator = Arc::new(EndpointCatalogInvalidator::new(vec![cache.clone()]));
         let store = TokenCacheStore::new(tmp.path());
-        let session = ScopedAuthSession::new(
-            auth.clone(),
-            rescoper,
-            invalidator,
-            store,
-        );
+        let session = ScopedAuthSession::new(auth.clone(), rescoper, invalidator, store);
         (session, auth, cache, tmp)
     }
 
@@ -244,18 +254,26 @@ mod tests {
         assert_eq!(snapshot.token.id, "new");
         assert_eq!(
             snapshot.token_scope,
-            TokenScope::Project { name: "demo".into(), domain: "default".into() }
+            TokenScope::Project {
+                name: "demo".into(),
+                domain: "default".into()
+            }
         );
         assert_eq!(
             auth.current_scope(),
-            TokenScope::Project { name: "demo".into(), domain: "default".into() }
+            TokenScope::Project {
+                name: "demo".into(),
+                domain: "default".into()
+            }
         );
         assert_eq!(cache.invalidate_count(), 1);
     }
 
     #[tokio::test]
     async fn rescope_failure_leaves_active_scope_untouched() {
-        let rescoper = Arc::new(StubRescoper::err(SwitchError::RescopeRejected("403".into())));
+        let rescoper = Arc::new(StubRescoper::err(SwitchError::RescopeRejected(
+            "403".into(),
+        )));
         let (session, auth, cache, _tmp) = setup_session(rescoper, None);
         let target = make_target("demo");
 
@@ -267,7 +285,10 @@ mod tests {
         // Still on admin — set_active was never called, catalog not invalidated.
         assert_eq!(
             auth.current_scope(),
-            TokenScope::Project { name: "admin".into(), domain: "default".into() }
+            TokenScope::Project {
+                name: "admin".into(),
+                domain: "default".into()
+            }
         );
         assert_eq!(cache.invalidate_count(), 0);
         assert!(auth.set_active_calls().is_empty());
@@ -326,7 +347,10 @@ mod tests {
         assert!(matches!(err, SwitchError::CommitFailed(_)));
         assert_eq!(
             auth.current_scope(),
-            TokenScope::Project { name: "admin".into(), domain: "default".into() }
+            TokenScope::Project {
+                name: "admin".into(),
+                domain: "default".into()
+            }
         );
     }
 

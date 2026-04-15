@@ -8,7 +8,9 @@ use super::types::*;
 use crate::models::cinder::{Volume, VolumeSnapshot};
 use crate::models::glance::Image;
 use crate::models::keystone::{Project, Role, RoleAssignment, User};
-use crate::models::neutron::{FloatingIp, Network, NetworkAgent, Port, SecurityGroup, SecurityGroupRule};
+use crate::models::neutron::{
+    FloatingIp, Network, NetworkAgent, Port, SecurityGroup, SecurityGroupRule,
+};
 use crate::models::nova::{Aggregate, ComputeService, Flavor, Hypervisor, Server};
 
 // ============================================================
@@ -585,7 +587,9 @@ mod tests {
     #[tokio::test]
     async fn test_mock_neutron_list_networks() {
         let mock = MockNeutronAdapter;
-        let result = mock.list_networks(&NetworkListFilter::default(), &PaginationParams::default()).await;
+        let result = mock
+            .list_networks(&NetworkListFilter::default(), &PaginationParams::default())
+            .await;
         assert!(result.is_ok());
         assert!(result.unwrap().items.is_empty());
     }

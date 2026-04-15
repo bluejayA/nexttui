@@ -88,7 +88,8 @@ impl ActionSender {
         reason = "tracked by BL-P2-060 — pending bench-based boxing decision"
     )]
     pub fn send(&self, action: Action) -> Result<(), SendError<VersionedEvent<Action>>> {
-        self.tx.send(VersionedEvent::new(action, self.epoch.current()))
+        self.tx
+            .send(VersionedEvent::new(action, self.epoch.current()))
     }
 
     /// Exposes the underlying raw sender. Used by the few sites that need

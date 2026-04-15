@@ -1,12 +1,12 @@
 pub mod view_model;
 
 use crossterm::event::{KeyCode, KeyEvent};
-use ratatui::layout::Rect;
 use ratatui::Frame;
+use ratatui::layout::Rect;
 
 use crate::action::Action;
-use crate::context::ActionSender;
 use crate::component::Component;
+use crate::context::ActionSender;
 use crate::event::AppEvent;
 use crate::models::cinder::VolumeSnapshot;
 use crate::module::{ConfirmHandler, PendingAction, ViewState};
@@ -62,7 +62,10 @@ impl SnapshotModule {
     }
 
     fn rows(&self) -> Vec<Row> {
-        self.snapshots.iter().map(|s| snapshot_to_row(s, self.all_tenants)).collect()
+        self.snapshots
+            .iter()
+            .map(|s| snapshot_to_row(s, self.all_tenants))
+            .collect()
     }
 
     fn resolve_action(pending: PendingAction) -> Option<Action> {
@@ -118,8 +121,12 @@ impl SnapshotModule {
 }
 
 impl Component for SnapshotModule {
-    fn refresh_action(&self) -> Option<Action> { Some(Action::FetchSnapshots) }
-    fn is_modal(&self) -> bool { self.confirm.is_active() }
+    fn refresh_action(&self) -> Option<Action> {
+        Some(Action::FetchSnapshots)
+    }
+    fn is_modal(&self) -> bool {
+        self.confirm.is_active()
+    }
 
     fn set_all_tenants(&mut self, v: bool) {
         self.all_tenants = v;
@@ -183,7 +190,9 @@ impl Component for SnapshotModule {
         match &self.view_state {
             ViewState::List => None,
             ViewState::Detail(id) => {
-                let name = self.snapshots.iter()
+                let name = self
+                    .snapshots
+                    .iter()
                     .find(|r| r.id == *id)
                     .and_then(|r| r.name.as_deref())
                     .unwrap_or("...");
@@ -306,7 +315,9 @@ mod tests {
     #[test]
     fn test_handle_event_snapshot_deleted_triggers_refresh() {
         let (mut module, mut rx) = setup();
-        module.handle_event(&AppEvent::SnapshotDeleted { id: "snap-1".into() });
+        module.handle_event(&AppEvent::SnapshotDeleted {
+            id: "snap-1".into(),
+        });
         let action = rx.try_recv().unwrap();
         assert!(matches!(action, Action::FetchSnapshots));
     }

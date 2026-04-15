@@ -1,9 +1,9 @@
 use crossterm::event::{KeyCode, KeyEvent};
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
-use ratatui::Frame;
 
 use super::theme::{self, Theme};
 
@@ -213,7 +213,13 @@ impl SelectPopup {
         };
 
         let mut lines = Vec::new();
-        for (i, item) in self.items.iter().enumerate().skip(scroll_offset).take(visible_count) {
+        for (i, item) in self
+            .items
+            .iter()
+            .enumerate()
+            .skip(scroll_offset)
+            .take(visible_count)
+        {
             let is_selected = i == self.selected;
             let prefix = if is_selected { ">> " } else { "   " };
 
@@ -221,7 +227,10 @@ impl SelectPopup {
 
             // Prefix
             if is_selected {
-                spans.push(Span::styled(prefix, Theme::focus_border().add_modifier(Modifier::BOLD)));
+                spans.push(Span::styled(
+                    prefix,
+                    Theme::focus_border().add_modifier(Modifier::BOLD),
+                ));
             } else {
                 spans.push(Span::raw(prefix));
             }
@@ -262,7 +271,12 @@ impl SelectPopup {
                 hint_spans.extend(theme::key_hint(key, desc));
             }
         } else {
-            for (key, desc) in [("j/k", ":Move  "), ("/", ":Search  "), ("Enter", ":Select  "), ("Esc", ":Cancel")] {
+            for (key, desc) in [
+                ("j/k", ":Move  "),
+                ("/", ":Search  "),
+                ("Enter", ":Select  "),
+                ("Esc", ":Cancel"),
+            ] {
                 hint_spans.extend(theme::key_hint(key, desc));
             }
         }
@@ -293,10 +307,26 @@ mod tests {
 
     fn make_items() -> Vec<SelectItem> {
         vec![
-            SelectItem { id: "f1".into(), label: "m1.tiny (1vCPU / 512MB / 1GB)".into(), hint: ItemHint::Current },
-            SelectItem { id: "f2".into(), label: "m1.small (1vCPU / 2048MB / 20GB)".into(), hint: ItemHint::Normal },
-            SelectItem { id: "f3".into(), label: "m1.medium (2vCPU / 4096MB / 40GB)".into(), hint: ItemHint::Normal },
-            SelectItem { id: "f4".into(), label: "m1.nano (1vCPU / 128MB / 0GB)".into(), hint: ItemHint::Warning("disk shrink".into()) },
+            SelectItem {
+                id: "f1".into(),
+                label: "m1.tiny (1vCPU / 512MB / 1GB)".into(),
+                hint: ItemHint::Current,
+            },
+            SelectItem {
+                id: "f2".into(),
+                label: "m1.small (1vCPU / 2048MB / 20GB)".into(),
+                hint: ItemHint::Normal,
+            },
+            SelectItem {
+                id: "f3".into(),
+                label: "m1.medium (2vCPU / 4096MB / 40GB)".into(),
+                hint: ItemHint::Normal,
+            },
+            SelectItem {
+                id: "f4".into(),
+                label: "m1.nano (1vCPU / 128MB / 0GB)".into(),
+                hint: ItemHint::Warning("disk shrink".into()),
+            },
         ]
     }
 

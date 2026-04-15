@@ -15,13 +15,13 @@ use crate::infra::audit::{AuditEntry, AuditLogger, AuditResult};
 use crate::infra::rbac::{ActionKind, RbacGuard};
 use crate::models::common::Route;
 use crate::router::Router;
+use crate::ui::activity_log::{ActivityLog, ActivityLogPopup};
 use crate::ui::header::{Header, HeaderContext};
 use crate::ui::layout::LayoutManager;
+use crate::ui::refresh::RefreshScheduler;
 use crate::ui::sidebar::Sidebar;
 use crate::ui::status_bar::{StatusBar, StatusInfo};
 use crate::ui::theme::{self, Theme};
-use crate::ui::refresh::RefreshScheduler;
-use crate::ui::activity_log::{ActivityLog, ActivityLogPopup};
 use crate::ui::toast::{ToastMessage, ToastSeverity};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,9 +55,7 @@ pub struct App {
     /// Event sender the switcher uses to publish `ContextChanged` after a
     /// successful commit, and a stamped `ApiError` on failure. Kept
     /// optional for tests that don't exercise the async switch path.
-    event_tx: Option<
-        tokio::sync::mpsc::UnboundedSender<crate::context::VersionedEvent<AppEvent>>,
-    >,
+    event_tx: Option<tokio::sync::mpsc::UnboundedSender<crate::context::VersionedEvent<AppEvent>>>,
     config: Arc<Config>,
     layout: LayoutManager,
     sidebar: Sidebar,
@@ -238,13 +236,16 @@ impl App {
 
         // Modal component (ConfirmDialog, SelectPopup) — delegate all keys directly
         if self.input_mode == InputMode::Normal {
-            let is_modal = self.components.get(&self.router.current())
+            let is_modal = self
+                .components
+                .get(&self.router.current())
                 .is_some_and(|c| c.is_modal());
             if is_modal {
                 if let Some(component) = self.components.get_mut(&self.router.current())
-                    && let Some(action) = component.handle_key(key) {
-                        self.dispatch_action(action);
-                    }
+                    && let Some(action) = component.handle_key(key)
+                {
+                    self.dispatch_action(action);
+                }
                 return true;
             }
         }
@@ -260,17 +261,24 @@ impl App {
                 // KeyCode::Char('/') — disabled: App-level search mode is unimplemented
                 KeyCode::Tab => {
                     // FullWidth module: Tab restores sidebar and returns to previous route
-                    let full_width = self.components.get(&self.router.current())
+                    let full_width = self
+                        .components
+                        .get(&self.router.current())
                         .is_some_and(|c| c.layout_hint() == LayoutHint::FullWidth);
                     if full_width {
                         // Block exit while module is busy (e.g. evacuating)
-                        let busy = self.components.get(&self.router.current())
+                        let busy = self
+                            .components
+                            .get(&self.router.current())
                             .is_some_and(|c| c.is_busy());
-                        if busy { return true; }
+                        if busy {
+                            return true;
+                        }
                         self.sidebar_visible = true;
                         self.layout.set_sidebar_visible(true);
                         self.router.back();
-                        self.sidebar.sync_active(&self.router.current(), self.rbac.is_admin());
+                        self.sidebar
+                            .sync_active(&self.router.current(), self.rbac.is_admin());
                         self.focus = FocusPane::Sidebar;
                     } else if self.sidebar_visible {
                         self.focus = match self.focus {
@@ -286,9 +294,13 @@ impl App {
                 }
                 KeyCode::Char(c @ '1'..='9') | KeyCode::Char(c @ '0') | KeyCode::Char(c @ 'h') => {
                     // Block route switching while current module is busy (e.g. evacuating)
-                    let busy = self.components.get(&self.router.current())
+                    let busy = self
+                        .components
+                        .get(&self.router.current())
                         .is_some_and(|comp| comp.is_busy());
-                    if busy { return true; }
+                    if busy {
+                        return true;
+                    }
 
                     if c == 'h' {
                         // 'h' shortcut for Host Ops
@@ -296,7 +308,11 @@ impl App {
                             self.dispatch_action(Action::Navigate(Route::Hosts));
                         }
                     } else {
-                        let idx = if c == '0' { 9 } else { (c as usize) - ('1' as usize) };
+                        let idx = if c == '0' {
+                            9
+                        } else {
+                            (c as usize) - ('1' as usize)
+                        };
                         if let Some(route) = self.sidebar.route_at(idx, self.rbac.is_admin()) {
                             self.dispatch_action(Action::Navigate(route));
                         }
@@ -328,9 +344,10 @@ impl App {
         // Form mode: delegate all keys to the active component (FormWidget handles everything)
         if self.input_mode == InputMode::Form {
             if let Some(component) = self.components.get_mut(&self.router.current())
-                && let Some(action) = component.handle_key(key) {
-                    self.dispatch_action(action);
-                }
+                && let Some(action) = component.handle_key(key)
+            {
+                self.dispatch_action(action);
+            }
             return true;
         }
 
@@ -365,10 +382,13 @@ impl App {
         match action {
             Action::Navigate(route) => {
                 self.router.navigate(route);
-                self.sidebar.sync_active(&self.router.current(), self.rbac.is_admin());
+                self.sidebar
+                    .sync_active(&self.router.current(), self.rbac.is_admin());
                 self.focus = FocusPane::Content;
                 // LayoutHint::FullWidth modules hide the sidebar
-                let full_width = self.components.get(&self.router.current())
+                let full_width = self
+                    .components
+                    .get(&self.router.current())
                     .is_some_and(|c| c.layout_hint() == LayoutHint::FullWidth);
                 if full_width && self.sidebar_visible {
                     self.sidebar_visible = false;
@@ -381,13 +401,16 @@ impl App {
             Action::Back => {
                 self.router.back();
                 // Restore sidebar if leaving a FullWidth module
-                let full_width = self.components.get(&self.router.current())
+                let full_width = self
+                    .components
+                    .get(&self.router.current())
                     .is_some_and(|c| c.layout_hint() == LayoutHint::FullWidth);
                 if !full_width && !self.sidebar_visible {
                     self.sidebar_visible = true;
                     self.layout.set_sidebar_visible(true);
                 }
-                self.sidebar.sync_active(&self.router.current(), self.rbac.is_admin());
+                self.sidebar
+                    .sync_active(&self.router.current(), self.rbac.is_admin());
                 self.refresh_scheduler.reset();
             }
             Action::FocusSidebar => {
@@ -423,7 +446,8 @@ impl App {
                 }
             }
             Action::ShowToast { message } => {
-                self.background_tracker.add_toast(message, crate::background::ToastLevel::Info);
+                self.background_tracker
+                    .add_toast(message, crate::background::ToastLevel::Info);
             }
             Action::Quit => {
                 self.should_quit = true;
@@ -454,7 +478,8 @@ impl App {
                     return;
                 }
                 if let Some(msg) = Self::progress_toast_text(&other) {
-                    self.background_tracker.add_toast(msg, crate::background::ToastLevel::Info);
+                    self.background_tracker
+                        .add_toast(msg, crate::background::ToastLevel::Info);
                 }
                 let _ = self.action_tx.send(other);
             }
@@ -495,19 +520,18 @@ impl App {
         // Migration complete → refresh server list to reflect status change
         let refresh_servers = matches!(
             event,
-            AppEvent::MigrationPollingStopped { .. }
-            | AppEvent::ServerStatusPolled { .. }
+            AppEvent::MigrationPollingStopped { .. } | AppEvent::ServerStatusPolled { .. }
         ) || matches!(
             event,
             AppEvent::ServerLiveMigrated { .. }
-            | AppEvent::ServerColdMigrated { .. }
-            | AppEvent::MigrationConfirmed { .. }
-            | AppEvent::MigrationReverted { .. }
-            | AppEvent::ServerEvacuated { .. }
-            | AppEvent::ServerEvacuateResult { .. }
-            | AppEvent::ServerResized { .. }
-            | AppEvent::ResizeConfirmed { .. }
-            | AppEvent::ResizeReverted { .. }
+                | AppEvent::ServerColdMigrated { .. }
+                | AppEvent::MigrationConfirmed { .. }
+                | AppEvent::MigrationReverted { .. }
+                | AppEvent::ServerEvacuated { .. }
+                | AppEvent::ServerEvacuateResult { .. }
+                | AppEvent::ServerResized { .. }
+                | AppEvent::ResizeConfirmed { .. }
+                | AppEvent::ResizeReverted { .. }
         );
         // API backoff: slow down refresh on rate-limit/unavailable errors.
         // NOTE: matches ApiError::RateLimited / ServiceUnavailable Display strings.
@@ -625,59 +649,276 @@ impl App {
 
         let (action, resource_type, resource_id, resource_name, result) = match event {
             // Server CUD
-            AppEvent::ServerCreated(s) => ("CreateServer", "server", s.id.clone(), Some(s.name.clone()), AuditResult::Success),
-            AppEvent::ServerDeleted { id, name } => ("DeleteServer", "server", id.clone(), Some(name.clone()), AuditResult::Success),
-            AppEvent::ServerRebooted { id } => ("RebootServer", "server", id.clone(), None, AuditResult::Success),
-            AppEvent::ServerStarted { id } => ("StartServer", "server", id.clone(), None, AuditResult::Success),
-            AppEvent::ServerStopped { id } => ("StopServer", "server", id.clone(), None, AuditResult::Success),
-            AppEvent::ServerSnapshotCreated { server_id, .. } => ("CreateSnapshot", "server", server_id.clone(), None, AuditResult::Success),
-            AppEvent::ServerResized { id } => ("ResizeServer", "server", id.clone(), None, AuditResult::Success),
-            AppEvent::ServerLiveMigrated { id } => ("LiveMigrate", "server", id.clone(), None, AuditResult::Success),
-            AppEvent::ServerColdMigrated { id } => ("ColdMigrate", "server", id.clone(), None, AuditResult::Success),
-            AppEvent::ServerEvacuated { id } => ("Evacuate", "server", id.clone(), None, AuditResult::Success),
+            AppEvent::ServerCreated(s) => (
+                "CreateServer",
+                "server",
+                s.id.clone(),
+                Some(s.name.clone()),
+                AuditResult::Success,
+            ),
+            AppEvent::ServerDeleted { id, name } => (
+                "DeleteServer",
+                "server",
+                id.clone(),
+                Some(name.clone()),
+                AuditResult::Success,
+            ),
+            AppEvent::ServerRebooted { id } => (
+                "RebootServer",
+                "server",
+                id.clone(),
+                None,
+                AuditResult::Success,
+            ),
+            AppEvent::ServerStarted { id } => (
+                "StartServer",
+                "server",
+                id.clone(),
+                None,
+                AuditResult::Success,
+            ),
+            AppEvent::ServerStopped { id } => (
+                "StopServer",
+                "server",
+                id.clone(),
+                None,
+                AuditResult::Success,
+            ),
+            AppEvent::ServerSnapshotCreated { server_id, .. } => (
+                "CreateSnapshot",
+                "server",
+                server_id.clone(),
+                None,
+                AuditResult::Success,
+            ),
+            AppEvent::ServerResized { id } => (
+                "ResizeServer",
+                "server",
+                id.clone(),
+                None,
+                AuditResult::Success,
+            ),
+            AppEvent::ServerLiveMigrated { id } => (
+                "LiveMigrate",
+                "server",
+                id.clone(),
+                None,
+                AuditResult::Success,
+            ),
+            AppEvent::ServerColdMigrated { id } => (
+                "ColdMigrate",
+                "server",
+                id.clone(),
+                None,
+                AuditResult::Success,
+            ),
+            AppEvent::ServerEvacuated { id } => {
+                ("Evacuate", "server", id.clone(), None, AuditResult::Success)
+            }
 
             // Volume CUD
-            AppEvent::VolumeCreated(v) => ("CreateVolume", "volume", v.id.clone(), v.name.clone(), AuditResult::Success),
-            AppEvent::VolumeDeleted { id } => ("DeleteVolume", "volume", id.clone(), None, AuditResult::Success),
-            AppEvent::VolumeExtended { id } => ("ExtendVolume", "volume", id.clone(), None, AuditResult::Success),
-            AppEvent::VolumeAttached { volume_id, server_id: _ } => ("AttachVolume", "volume", volume_id.clone(), None, AuditResult::Success),
-            AppEvent::VolumeDetached { volume_id } => ("DetachVolume", "volume", volume_id.clone(), None, AuditResult::Success),
-            AppEvent::VolumeForceDetached { volume_id } => ("ForceDetach", "volume", volume_id.clone(), None, AuditResult::Success),
-            AppEvent::VolumeStateReset { volume_id } => ("ResetState", "volume", volume_id.clone(), None, AuditResult::Success),
+            AppEvent::VolumeCreated(v) => (
+                "CreateVolume",
+                "volume",
+                v.id.clone(),
+                v.name.clone(),
+                AuditResult::Success,
+            ),
+            AppEvent::VolumeDeleted { id } => (
+                "DeleteVolume",
+                "volume",
+                id.clone(),
+                None,
+                AuditResult::Success,
+            ),
+            AppEvent::VolumeExtended { id } => (
+                "ExtendVolume",
+                "volume",
+                id.clone(),
+                None,
+                AuditResult::Success,
+            ),
+            AppEvent::VolumeAttached {
+                volume_id,
+                server_id: _,
+            } => (
+                "AttachVolume",
+                "volume",
+                volume_id.clone(),
+                None,
+                AuditResult::Success,
+            ),
+            AppEvent::VolumeDetached { volume_id } => (
+                "DetachVolume",
+                "volume",
+                volume_id.clone(),
+                None,
+                AuditResult::Success,
+            ),
+            AppEvent::VolumeForceDetached { volume_id } => (
+                "ForceDetach",
+                "volume",
+                volume_id.clone(),
+                None,
+                AuditResult::Success,
+            ),
+            AppEvent::VolumeStateReset { volume_id } => (
+                "ResetState",
+                "volume",
+                volume_id.clone(),
+                None,
+                AuditResult::Success,
+            ),
 
             // Floating IP CUD
-            AppEvent::FloatingIpCreated(f) => ("CreateFloatingIp", "floatingip", f.id.clone(), Some(f.floating_ip_address.clone()), AuditResult::Success),
-            AppEvent::FloatingIpDeleted { id } => ("DeleteFloatingIp", "floatingip", id.clone(), None, AuditResult::Success),
-            AppEvent::FloatingIpAssociated(f) => ("AssociateFloatingIp", "floatingip", f.id.clone(), Some(f.floating_ip_address.clone()), AuditResult::Success),
-            AppEvent::FloatingIpDisassociated(f) => ("DisassociateFloatingIp", "floatingip", f.id.clone(), Some(f.floating_ip_address.clone()), AuditResult::Success),
+            AppEvent::FloatingIpCreated(f) => (
+                "CreateFloatingIp",
+                "floatingip",
+                f.id.clone(),
+                Some(f.floating_ip_address.clone()),
+                AuditResult::Success,
+            ),
+            AppEvent::FloatingIpDeleted { id } => (
+                "DeleteFloatingIp",
+                "floatingip",
+                id.clone(),
+                None,
+                AuditResult::Success,
+            ),
+            AppEvent::FloatingIpAssociated(f) => (
+                "AssociateFloatingIp",
+                "floatingip",
+                f.id.clone(),
+                Some(f.floating_ip_address.clone()),
+                AuditResult::Success,
+            ),
+            AppEvent::FloatingIpDisassociated(f) => (
+                "DisassociateFloatingIp",
+                "floatingip",
+                f.id.clone(),
+                Some(f.floating_ip_address.clone()),
+                AuditResult::Success,
+            ),
 
             // Image CUD
-            AppEvent::ImageCreated(i) => ("CreateImage", "image", i.id.clone(), Some(i.name.clone()), AuditResult::Success),
-            AppEvent::ImageDeleted { id } => ("DeleteImage", "image", id.clone(), None, AuditResult::Success),
+            AppEvent::ImageCreated(i) => (
+                "CreateImage",
+                "image",
+                i.id.clone(),
+                Some(i.name.clone()),
+                AuditResult::Success,
+            ),
+            AppEvent::ImageDeleted { id } => (
+                "DeleteImage",
+                "image",
+                id.clone(),
+                None,
+                AuditResult::Success,
+            ),
 
             // Network CUD
-            AppEvent::NetworkCreated(n) => ("CreateNetwork", "network", n.id.clone(), Some(n.name.clone()), AuditResult::Success),
+            AppEvent::NetworkCreated(n) => (
+                "CreateNetwork",
+                "network",
+                n.id.clone(),
+                Some(n.name.clone()),
+                AuditResult::Success,
+            ),
 
             // Security Group CUD
-            AppEvent::SecurityGroupCreated(sg) => ("CreateSecurityGroup", "securitygroup", sg.id.clone(), Some(sg.name.clone()), AuditResult::Success),
-            AppEvent::SecurityGroupDeleted { id } => ("DeleteSecurityGroup", "securitygroup", id.clone(), None, AuditResult::Success),
-            AppEvent::SecurityGroupRuleCreated(r) => ("CreateSGRule", "sgRule", r.id.clone(), None, AuditResult::Success),
-            AppEvent::SecurityGroupRuleDeleted { rule_id } => ("DeleteSGRule", "sgRule", rule_id.clone(), None, AuditResult::Success),
+            AppEvent::SecurityGroupCreated(sg) => (
+                "CreateSecurityGroup",
+                "securitygroup",
+                sg.id.clone(),
+                Some(sg.name.clone()),
+                AuditResult::Success,
+            ),
+            AppEvent::SecurityGroupDeleted { id } => (
+                "DeleteSecurityGroup",
+                "securitygroup",
+                id.clone(),
+                None,
+                AuditResult::Success,
+            ),
+            AppEvent::SecurityGroupRuleCreated(r) => (
+                "CreateSGRule",
+                "sgRule",
+                r.id.clone(),
+                None,
+                AuditResult::Success,
+            ),
+            AppEvent::SecurityGroupRuleDeleted { rule_id } => (
+                "DeleteSGRule",
+                "sgRule",
+                rule_id.clone(),
+                None,
+                AuditResult::Success,
+            ),
 
             // Snapshot CUD
-            AppEvent::SnapshotCreated(s) => ("CreateSnapshot", "snapshot", s.id.clone(), s.name.clone(), AuditResult::Success),
-            AppEvent::SnapshotDeleted { id } => ("DeleteSnapshot", "snapshot", id.clone(), None, AuditResult::Success),
+            AppEvent::SnapshotCreated(s) => (
+                "CreateSnapshot",
+                "snapshot",
+                s.id.clone(),
+                s.name.clone(),
+                AuditResult::Success,
+            ),
+            AppEvent::SnapshotDeleted { id } => (
+                "DeleteSnapshot",
+                "snapshot",
+                id.clone(),
+                None,
+                AuditResult::Success,
+            ),
 
             // Keystone CUD
-            AppEvent::ProjectCreated(p) => ("CreateProject", "project", p.id.clone(), Some(p.name.clone()), AuditResult::Success),
-            AppEvent::ProjectDeleted { id } => ("DeleteProject", "project", id.clone(), None, AuditResult::Success),
-            AppEvent::UserCreated(u) => ("CreateUser", "user", u.id.clone(), Some(u.name.clone()), AuditResult::Success),
-            AppEvent::UserDeleted { id } => ("DeleteUser", "user", id.clone(), None, AuditResult::Success),
+            AppEvent::ProjectCreated(p) => (
+                "CreateProject",
+                "project",
+                p.id.clone(),
+                Some(p.name.clone()),
+                AuditResult::Success,
+            ),
+            AppEvent::ProjectDeleted { id } => (
+                "DeleteProject",
+                "project",
+                id.clone(),
+                None,
+                AuditResult::Success,
+            ),
+            AppEvent::UserCreated(u) => (
+                "CreateUser",
+                "user",
+                u.id.clone(),
+                Some(u.name.clone()),
+                AuditResult::Success,
+            ),
+            AppEvent::UserDeleted { id } => {
+                ("DeleteUser", "user", id.clone(), None, AuditResult::Success)
+            }
 
             // Errors
-            AppEvent::ApiError { operation, message } => ("ApiError", "error", String::new(), Some(operation.clone()), AuditResult::Failed(message.clone())),
-            AppEvent::PermissionDenied { operation } => ("PermissionDenied", "permission", String::new(), Some(operation.clone()), AuditResult::Failed(format!("Permission denied: {operation}"))),
-            AppEvent::AuthFailed(msg) => ("AuthFailed", "auth", String::new(), None, AuditResult::Failed(msg.clone())),
+            AppEvent::ApiError { operation, message } => (
+                "ApiError",
+                "error",
+                String::new(),
+                Some(operation.clone()),
+                AuditResult::Failed(message.clone()),
+            ),
+            AppEvent::PermissionDenied { operation } => (
+                "PermissionDenied",
+                "permission",
+                String::new(),
+                Some(operation.clone()),
+                AuditResult::Failed(format!("Permission denied: {operation}")),
+            ),
+            AppEvent::AuthFailed(msg) => (
+                "AuthFailed",
+                "auth",
+                String::new(),
+                None,
+                AuditResult::Failed(msg.clone()),
+            ),
 
             // Compute service toggle
             AppEvent::ComputeServiceToggled { hostname, enabled } => {
@@ -732,66 +973,312 @@ impl App {
         // Single match: (toast_message, level, operation, resource_name)
         let (msg, level, operation, resource_name) = match event {
             // CUD success
-            AppEvent::ServerCreated(s) => (format!("Server '{}' created", Self::truncate_name(&s.name, MAX_NAME)), ToastLevel::Success, "Create".into(), s.name.clone()),
-            AppEvent::ServerDeleted { name, .. } => (format!("Server '{}' deleted", Self::truncate_name(name, MAX_NAME)), ToastLevel::Success, "Delete".into(), name.clone()),
-            AppEvent::ServerRebooted { id } => (format!("Server {id} rebooted"), ToastLevel::Success, "Reboot".into(), id.clone()),
-            AppEvent::ServerStarted { id } => (format!("Server {id} started"), ToastLevel::Success, "Start".into(), id.clone()),
-            AppEvent::ServerStopped { id } => (format!("Server {id} stopped"), ToastLevel::Success, "Stop".into(), id.clone()),
-            AppEvent::ServerSnapshotCreated { server_id, .. } => (format!("Snapshot created for {server_id}"), ToastLevel::Success, "Snapshot".into(), server_id.clone()),
-            AppEvent::FlavorCreated(f) => (format!("Flavor '{}' created", Self::truncate_name(&f.name, MAX_NAME)), ToastLevel::Success, "Create".into(), f.name.clone()),
-            AppEvent::FlavorDeleted { id } => (format!("Flavor {id} deleted"), ToastLevel::Success, "Delete".into(), id.clone()),
-            AppEvent::NetworkCreated(n) => (format!("Network '{}' created", Self::truncate_name(&n.name, MAX_NAME)), ToastLevel::Success, "Create".into(), n.name.clone()),
-            AppEvent::SecurityGroupCreated(sg) => (format!("Security group '{}' created", Self::truncate_name(&sg.name, MAX_NAME)), ToastLevel::Success, "Create".into(), sg.name.clone()),
-            AppEvent::SecurityGroupDeleted { id } => (format!("Security group {id} deleted"), ToastLevel::Success, "Delete".into(), id.clone()),
-            AppEvent::SecurityGroupRuleCreated(_) => ("Security group rule created".into(), ToastLevel::Success, "Create".into(), "SG Rule".into()),
-            AppEvent::SecurityGroupRuleDeleted { .. } => ("Security group rule deleted".into(), ToastLevel::Success, "Delete".into(), "SG Rule".into()),
-            AppEvent::VolumeCreated(v) => (format!("Volume '{}' created", Self::truncate_name(v.name.as_deref().unwrap_or(&v.id), MAX_NAME)), ToastLevel::Success, "Create".into(), v.name.as_deref().unwrap_or(&v.id).to_string()),
-            AppEvent::VolumeDeleted { id } => (format!("Volume {id} deleted"), ToastLevel::Success, "Delete".into(), id.clone()),
-            AppEvent::VolumeExtended { id } => (format!("Volume {id} extended"), ToastLevel::Success, "Extend".into(), id.clone()),
-            AppEvent::SnapshotCreated(s) => (format!("Snapshot '{}' created", Self::truncate_name(s.name.as_deref().unwrap_or(&s.id), MAX_NAME)), ToastLevel::Success, "Create".into(), s.name.as_deref().unwrap_or(&s.id).to_string()),
-            AppEvent::SnapshotDeleted { id } => (format!("Snapshot {id} deleted"), ToastLevel::Success, "Delete".into(), id.clone()),
-            AppEvent::ImageCreated(i) => (format!("Image '{}' created", Self::truncate_name(&i.name, MAX_NAME)), ToastLevel::Success, "Create".into(), i.name.clone()),
-            AppEvent::ImageDeleted { id } => (format!("Image {id} deleted"), ToastLevel::Success, "Delete".into(), id.clone()),
-            AppEvent::FloatingIpCreated(f) => (format!("Floating IP '{}' created", Self::truncate_name(&f.floating_ip_address, MAX_NAME)), ToastLevel::Success, "Create".into(), f.floating_ip_address.clone()),
-            AppEvent::FloatingIpDeleted { id } => (format!("Floating IP {id} deleted"), ToastLevel::Success, "Delete".into(), id.clone()),
-            AppEvent::ProjectCreated(p) => (format!("Project '{}' created", Self::truncate_name(&p.name, MAX_NAME)), ToastLevel::Success, "Create".into(), p.name.clone()),
-            AppEvent::ProjectDeleted { id } => (format!("Project {id} deleted"), ToastLevel::Success, "Delete".into(), id.clone()),
-            AppEvent::UserCreated(u) => (format!("User '{}' created", Self::truncate_name(&u.name, MAX_NAME)), ToastLevel::Success, "Create".into(), u.name.clone()),
-            AppEvent::UserDeleted { id } => (format!("User {id} deleted"), ToastLevel::Success, "Delete".into(), id.clone()),
+            AppEvent::ServerCreated(s) => (
+                format!(
+                    "Server '{}' created",
+                    Self::truncate_name(&s.name, MAX_NAME)
+                ),
+                ToastLevel::Success,
+                "Create".into(),
+                s.name.clone(),
+            ),
+            AppEvent::ServerDeleted { name, .. } => (
+                format!("Server '{}' deleted", Self::truncate_name(name, MAX_NAME)),
+                ToastLevel::Success,
+                "Delete".into(),
+                name.clone(),
+            ),
+            AppEvent::ServerRebooted { id } => (
+                format!("Server {id} rebooted"),
+                ToastLevel::Success,
+                "Reboot".into(),
+                id.clone(),
+            ),
+            AppEvent::ServerStarted { id } => (
+                format!("Server {id} started"),
+                ToastLevel::Success,
+                "Start".into(),
+                id.clone(),
+            ),
+            AppEvent::ServerStopped { id } => (
+                format!("Server {id} stopped"),
+                ToastLevel::Success,
+                "Stop".into(),
+                id.clone(),
+            ),
+            AppEvent::ServerSnapshotCreated { server_id, .. } => (
+                format!("Snapshot created for {server_id}"),
+                ToastLevel::Success,
+                "Snapshot".into(),
+                server_id.clone(),
+            ),
+            AppEvent::FlavorCreated(f) => (
+                format!(
+                    "Flavor '{}' created",
+                    Self::truncate_name(&f.name, MAX_NAME)
+                ),
+                ToastLevel::Success,
+                "Create".into(),
+                f.name.clone(),
+            ),
+            AppEvent::FlavorDeleted { id } => (
+                format!("Flavor {id} deleted"),
+                ToastLevel::Success,
+                "Delete".into(),
+                id.clone(),
+            ),
+            AppEvent::NetworkCreated(n) => (
+                format!(
+                    "Network '{}' created",
+                    Self::truncate_name(&n.name, MAX_NAME)
+                ),
+                ToastLevel::Success,
+                "Create".into(),
+                n.name.clone(),
+            ),
+            AppEvent::SecurityGroupCreated(sg) => (
+                format!(
+                    "Security group '{}' created",
+                    Self::truncate_name(&sg.name, MAX_NAME)
+                ),
+                ToastLevel::Success,
+                "Create".into(),
+                sg.name.clone(),
+            ),
+            AppEvent::SecurityGroupDeleted { id } => (
+                format!("Security group {id} deleted"),
+                ToastLevel::Success,
+                "Delete".into(),
+                id.clone(),
+            ),
+            AppEvent::SecurityGroupRuleCreated(_) => (
+                "Security group rule created".into(),
+                ToastLevel::Success,
+                "Create".into(),
+                "SG Rule".into(),
+            ),
+            AppEvent::SecurityGroupRuleDeleted { .. } => (
+                "Security group rule deleted".into(),
+                ToastLevel::Success,
+                "Delete".into(),
+                "SG Rule".into(),
+            ),
+            AppEvent::VolumeCreated(v) => (
+                format!(
+                    "Volume '{}' created",
+                    Self::truncate_name(v.name.as_deref().unwrap_or(&v.id), MAX_NAME)
+                ),
+                ToastLevel::Success,
+                "Create".into(),
+                v.name.as_deref().unwrap_or(&v.id).to_string(),
+            ),
+            AppEvent::VolumeDeleted { id } => (
+                format!("Volume {id} deleted"),
+                ToastLevel::Success,
+                "Delete".into(),
+                id.clone(),
+            ),
+            AppEvent::VolumeExtended { id } => (
+                format!("Volume {id} extended"),
+                ToastLevel::Success,
+                "Extend".into(),
+                id.clone(),
+            ),
+            AppEvent::SnapshotCreated(s) => (
+                format!(
+                    "Snapshot '{}' created",
+                    Self::truncate_name(s.name.as_deref().unwrap_or(&s.id), MAX_NAME)
+                ),
+                ToastLevel::Success,
+                "Create".into(),
+                s.name.as_deref().unwrap_or(&s.id).to_string(),
+            ),
+            AppEvent::SnapshotDeleted { id } => (
+                format!("Snapshot {id} deleted"),
+                ToastLevel::Success,
+                "Delete".into(),
+                id.clone(),
+            ),
+            AppEvent::ImageCreated(i) => (
+                format!("Image '{}' created", Self::truncate_name(&i.name, MAX_NAME)),
+                ToastLevel::Success,
+                "Create".into(),
+                i.name.clone(),
+            ),
+            AppEvent::ImageDeleted { id } => (
+                format!("Image {id} deleted"),
+                ToastLevel::Success,
+                "Delete".into(),
+                id.clone(),
+            ),
+            AppEvent::FloatingIpCreated(f) => (
+                format!(
+                    "Floating IP '{}' created",
+                    Self::truncate_name(&f.floating_ip_address, MAX_NAME)
+                ),
+                ToastLevel::Success,
+                "Create".into(),
+                f.floating_ip_address.clone(),
+            ),
+            AppEvent::FloatingIpDeleted { id } => (
+                format!("Floating IP {id} deleted"),
+                ToastLevel::Success,
+                "Delete".into(),
+                id.clone(),
+            ),
+            AppEvent::ProjectCreated(p) => (
+                format!(
+                    "Project '{}' created",
+                    Self::truncate_name(&p.name, MAX_NAME)
+                ),
+                ToastLevel::Success,
+                "Create".into(),
+                p.name.clone(),
+            ),
+            AppEvent::ProjectDeleted { id } => (
+                format!("Project {id} deleted"),
+                ToastLevel::Success,
+                "Delete".into(),
+                id.clone(),
+            ),
+            AppEvent::UserCreated(u) => (
+                format!("User '{}' created", Self::truncate_name(&u.name, MAX_NAME)),
+                ToastLevel::Success,
+                "Create".into(),
+                u.name.clone(),
+            ),
+            AppEvent::UserDeleted { id } => (
+                format!("User {id} deleted"),
+                ToastLevel::Success,
+                "Delete".into(),
+                id.clone(),
+            ),
             // Migration
-            AppEvent::ServerLiveMigrated { id } => (format!("Server {id} live migrated"), ToastLevel::Success, "LiveMigrate".into(), id.clone()),
-            AppEvent::ServerColdMigrated { id } => (format!("Server {id} cold migrated — confirm(Y) or revert(N)"), ToastLevel::Success, "ColdMigrate".into(), id.clone()),
-            AppEvent::MigrationConfirmed { id } => (format!("Migration confirmed for {id}"), ToastLevel::Success, "ConfirmMigration".into(), id.clone()),
-            AppEvent::MigrationReverted { id } => (format!("Migration reverted for {id}"), ToastLevel::Success, "RevertMigration".into(), id.clone()),
-            AppEvent::ServerEvacuated { id } => (format!("Server {id} evacuated"), ToastLevel::Success, "Evacuate".into(), id.clone()),
+            AppEvent::ServerLiveMigrated { id } => (
+                format!("Server {id} live migrated"),
+                ToastLevel::Success,
+                "LiveMigrate".into(),
+                id.clone(),
+            ),
+            AppEvent::ServerColdMigrated { id } => (
+                format!("Server {id} cold migrated — confirm(Y) or revert(N)"),
+                ToastLevel::Success,
+                "ColdMigrate".into(),
+                id.clone(),
+            ),
+            AppEvent::MigrationConfirmed { id } => (
+                format!("Migration confirmed for {id}"),
+                ToastLevel::Success,
+                "ConfirmMigration".into(),
+                id.clone(),
+            ),
+            AppEvent::MigrationReverted { id } => (
+                format!("Migration reverted for {id}"),
+                ToastLevel::Success,
+                "RevertMigration".into(),
+                id.clone(),
+            ),
+            AppEvent::ServerEvacuated { id } => (
+                format!("Server {id} evacuated"),
+                ToastLevel::Success,
+                "Evacuate".into(),
+                id.clone(),
+            ),
             // Resize
-            AppEvent::ServerResized { id } => (format!("Server {id} resized — confirm(Y) or revert(N)"), ToastLevel::Success, "Resize".into(), id.clone()),
-            AppEvent::ResizeConfirmed { id } => (format!("Resize confirmed for {id}"), ToastLevel::Success, "ConfirmResize".into(), id.clone()),
-            AppEvent::ResizeReverted { id } => (format!("Resize reverted for {id}"), ToastLevel::Success, "RevertResize".into(), id.clone()),
+            AppEvent::ServerResized { id } => (
+                format!("Server {id} resized — confirm(Y) or revert(N)"),
+                ToastLevel::Success,
+                "Resize".into(),
+                id.clone(),
+            ),
+            AppEvent::ResizeConfirmed { id } => (
+                format!("Resize confirmed for {id}"),
+                ToastLevel::Success,
+                "ConfirmResize".into(),
+                id.clone(),
+            ),
+            AppEvent::ResizeReverted { id } => (
+                format!("Resize reverted for {id}"),
+                ToastLevel::Success,
+                "RevertResize".into(),
+                id.clone(),
+            ),
             // Volume Attach/Detach
-            AppEvent::VolumeAttached { volume_id, .. } => (format!("Volume {volume_id} attached successfully"), ToastLevel::Success, "AttachVolume".into(), volume_id.clone()),
-            AppEvent::VolumeDetached { volume_id } => (format!("Volume {volume_id} detached successfully"), ToastLevel::Success, "DetachVolume".into(), volume_id.clone()),
-            AppEvent::VolumeForceDetached { volume_id } => (format!("Volume {volume_id} force-detached (verify data integrity)"), ToastLevel::Success, "ForceDetachVolume".into(), volume_id.clone()),
-            AppEvent::VolumeStateReset { volume_id } => (format!("Volume {volume_id} state reset to available"), ToastLevel::Success, "ResetVolumeState".into(), volume_id.clone()),
+            AppEvent::VolumeAttached { volume_id, .. } => (
+                format!("Volume {volume_id} attached successfully"),
+                ToastLevel::Success,
+                "AttachVolume".into(),
+                volume_id.clone(),
+            ),
+            AppEvent::VolumeDetached { volume_id } => (
+                format!("Volume {volume_id} detached successfully"),
+                ToastLevel::Success,
+                "DetachVolume".into(),
+                volume_id.clone(),
+            ),
+            AppEvent::VolumeForceDetached { volume_id } => (
+                format!("Volume {volume_id} force-detached (verify data integrity)"),
+                ToastLevel::Success,
+                "ForceDetachVolume".into(),
+                volume_id.clone(),
+            ),
+            AppEvent::VolumeStateReset { volume_id } => (
+                format!("Volume {volume_id} state reset to available"),
+                ToastLevel::Success,
+                "ResetVolumeState".into(),
+                volume_id.clone(),
+            ),
             // Floating IP Associate/Disassociate
-            AppEvent::FloatingIpAssociated(f) => (format!("Floating IP {} associated successfully", f.floating_ip_address), ToastLevel::Success, "AssociateFloatingIp".into(), f.floating_ip_address.clone()),
-            AppEvent::FloatingIpDisassociated(f) => (format!("FIP {} disassociated. Press 'a' to re-associate.", f.floating_ip_address), ToastLevel::Success, "DisassociateFloatingIp".into(), f.floating_ip_address.clone()),
+            AppEvent::FloatingIpAssociated(f) => (
+                format!(
+                    "Floating IP {} associated successfully",
+                    f.floating_ip_address
+                ),
+                ToastLevel::Success,
+                "AssociateFloatingIp".into(),
+                f.floating_ip_address.clone(),
+            ),
+            AppEvent::FloatingIpDisassociated(f) => (
+                format!(
+                    "FIP {} disassociated. Press 'a' to re-associate.",
+                    f.floating_ip_address
+                ),
+                ToastLevel::Success,
+                "DisassociateFloatingIp".into(),
+                f.floating_ip_address.clone(),
+            ),
             // Errors
-            AppEvent::ApiError { operation, message } => (format!("{operation} failed: {message}"), ToastLevel::Error, operation.clone(), String::new()),
-            AppEvent::AuthFailed(msg) => (format!("Auth failed: {msg}"), ToastLevel::Error, "Auth".into(), String::new()),
-            AppEvent::PermissionDenied { operation } => (format!("Permission denied: {operation}"), ToastLevel::Error, operation.clone(), String::new()),
+            AppEvent::ApiError { operation, message } => (
+                format!("{operation} failed: {message}"),
+                ToastLevel::Error,
+                operation.clone(),
+                String::new(),
+            ),
+            AppEvent::AuthFailed(msg) => (
+                format!("Auth failed: {msg}"),
+                ToastLevel::Error,
+                "Auth".into(),
+                String::new(),
+            ),
+            AppEvent::PermissionDenied { operation } => (
+                format!("Permission denied: {operation}"),
+                ToastLevel::Error,
+                operation.clone(),
+                String::new(),
+            ),
             // Data loaded / system events — no toast or activity log
             _ => return,
         };
         let success = !matches!(level, ToastLevel::Error);
-        self.activity_log.push(crate::ui::activity_log::ActivityEntry {
-            timestamp: std::time::Instant::now(),
-            operation,
-            resource_name,
-            success,
-            message: if success { String::new() } else { msg.clone() },
-            read: false,
-        });
+        self.activity_log
+            .push(crate::ui::activity_log::ActivityEntry {
+                timestamp: std::time::Instant::now(),
+                operation,
+                resource_name,
+                success,
+                message: if success { String::new() } else { msg.clone() },
+                read: false,
+            });
         self.background_tracker.add_toast(msg, level);
     }
 
@@ -811,7 +1298,9 @@ impl App {
             }
             let has_transitional = component.has_transitional_resources();
             self.refresh_scheduler.set_fast(has_transitional);
-            if self.refresh_scheduler.tick() && let Some(action) = component.refresh_action() {
+            if self.refresh_scheduler.tick()
+                && let Some(action) = component.refresh_action()
+            {
                 let _ = self.action_tx.send(action);
             }
         }
@@ -827,18 +1316,31 @@ impl App {
         let user_name = cloud_config.auth.username.clone().unwrap_or_default();
         let cloud_name = self.config.active_cloud_name().to_string();
         let region = cloud_config
-            .region_name.as_deref().unwrap_or("default").to_string();
-        self.header.render(frame, areas.header, &HeaderContext {
-            user_name,
-            cloud_name,
-            region,
-            all_tenants: self.all_tenants.load(Ordering::Relaxed),
-        });
+            .region_name
+            .as_deref()
+            .unwrap_or("default")
+            .to_string();
+        self.header.render(
+            frame,
+            areas.header,
+            &HeaderContext {
+                user_name,
+                cloud_name,
+                region,
+                all_tenants: self.all_tenants.load(Ordering::Relaxed),
+            },
+        );
 
         // Sidebar
         if let Some(sidebar_area) = areas.sidebar {
             let sidebar_focused = self.focus == FocusPane::Sidebar;
-            self.sidebar.render(frame, sidebar_area, self.rbac.is_admin(), &self.router.current(), sidebar_focused);
+            self.sidebar.render(
+                frame,
+                sidebar_area,
+                self.rbac.is_admin(),
+                &self.router.current(),
+                sidebar_focused,
+            );
         }
 
         // Content
@@ -854,7 +1356,8 @@ impl App {
                     Theme::unfocus_border()
                 };
                 let all_tenants = self.all_tenants.load(Ordering::Relaxed);
-                let display_label = component.content_title()
+                let display_label = component
+                    .content_title()
                     .unwrap_or_else(|| route_label.to_string());
                 let title = theme::panel_title_line(&display_label, content_focused, all_tenants);
                 let content_block = Block::default()
@@ -875,7 +1378,8 @@ impl App {
         }
 
         // Status bar — context_hints from component help_hint or defaults
-        let component_hint = self.components
+        let component_hint = self
+            .components
             .get(&self.router.current())
             .map(|c| c.help_hint())
             .unwrap_or("");
@@ -889,7 +1393,8 @@ impl App {
             component_hint
                 .split(' ')
                 .filter_map(|part| {
-                    part.split_once(':').map(|(k, v)| (k.to_string(), v.to_string()))
+                    part.split_once(':')
+                        .map(|(k, v)| (k.to_string(), v.to_string()))
                 })
                 .collect()
         };
@@ -968,7 +1473,9 @@ impl App {
             match switcher.switch(request).await {
                 Ok((epoch, snapshot)) => {
                     let _ = event_tx.send(crate::context::VersionedEvent::new(
-                        AppEvent::ContextChanged { target: snapshot.target },
+                        AppEvent::ContextChanged {
+                            target: snapshot.target,
+                        },
                         epoch,
                     ));
                 }
@@ -1005,7 +1512,9 @@ impl App {
             match switcher.switch_back().await {
                 Ok((epoch, snapshot)) => {
                     let _ = event_tx.send(crate::context::VersionedEvent::new(
-                        AppEvent::ContextChanged { target: snapshot.target },
+                        AppEvent::ContextChanged {
+                            target: snapshot.target,
+                        },
                         epoch,
                     ));
                 }
@@ -1156,28 +1665,37 @@ mod tests {
     #[test]
     fn test_dispatch_cud_action_adds_progress_toast() {
         let mut app = make_app();
-        app.dispatch_action(Action::CreateServer(crate::port::types::ServerCreateParams {
-            name: "web-01".into(),
-            image_id: "img-1".into(),
-            flavor_id: "flv-1".into(),
-            networks: vec![],
-            security_groups: None,
-            key_name: None,
-            availability_zone: None,
-        }));
+        app.dispatch_action(Action::CreateServer(
+            crate::port::types::ServerCreateParams {
+                name: "web-01".into(),
+                image_id: "img-1".into(),
+                flavor_id: "flv-1".into(),
+                networks: vec![],
+                security_groups: None,
+                key_name: None,
+                availability_zone: None,
+            },
+        ));
         let toasts = app.background_tracker().active_toasts();
         assert!(toasts.iter().any(|t| t.message.contains("Creating server")));
-        assert!(toasts.iter().any(|t| t.level == crate::background::ToastLevel::Info));
+        assert!(
+            toasts
+                .iter()
+                .any(|t| t.level == crate::background::ToastLevel::Info)
+        );
     }
 
     #[test]
     fn test_handle_event_server_created_adds_toast() {
         let mut app = make_app();
         assert!(app.background_tracker().active_toasts().is_empty());
-        let server: crate::models::nova::Server = serde_json::from_str(r#"{
+        let server: crate::models::nova::Server = serde_json::from_str(
+            r#"{
             "id": "s1", "name": "web-01", "status": "ACTIVE",
             "addresses": {}, "flavor": {"id": "f1"}, "created": "2026-01-01"
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
         app.handle_event(AppEvent::ServerCreated(server));
         let toasts = app.background_tracker().active_toasts();
         assert_eq!(toasts.len(), 1);
@@ -1219,8 +1737,18 @@ mod tests {
         let mut app = App::new(config, tx);
         // App with default RbacGuard (not admin)
         app.sidebar = Sidebar::new(vec![
-            SidebarItem { label: "Servers".into(), route: Route::Servers, shortcut: "1".into(), admin_only: false },
-            SidebarItem { label: "Projects".into(), route: Route::Projects, shortcut: "2".into(), admin_only: true },
+            SidebarItem {
+                label: "Servers".into(),
+                route: Route::Servers,
+                shortcut: "1".into(),
+                admin_only: false,
+            },
+            SidebarItem {
+                label: "Projects".into(),
+                route: Route::Projects,
+                shortcut: "2".into(),
+                admin_only: true,
+            },
         ]);
         // Key '2' maps to index 1. With is_admin=true, visible_items has 2 items, index 1 = Projects.
         // With is_admin=false (rbac default), visible_items has 1 item, index 1 = None.
@@ -1233,7 +1761,10 @@ mod tests {
     fn test_handle_token_refreshed_updates_rbac() {
         let mut app = make_app();
         assert!(!app.rbac.is_admin());
-        let roles = vec![crate::port::types::TokenRole { id: "r1".into(), name: "admin".into() }];
+        let roles = vec![crate::port::types::TokenRole {
+            id: "r1".into(),
+            name: "admin".into(),
+        }];
         app.handle_event(AppEvent::TokenRefreshed(roles));
         assert!(app.rbac.is_admin());
     }
@@ -1242,7 +1773,8 @@ mod tests {
     fn test_dispatch_migration_action_adds_progress_toast() {
         let mut app = make_app();
         app.dispatch_action(Action::LiveMigrateServer {
-            id: "s1".into(), host: None,
+            id: "s1".into(),
+            host: None,
         });
         let toasts = app.background_tracker().active_toasts();
         assert!(toasts.iter().any(|t| t.message.contains("Live migrating")));
@@ -1255,11 +1787,17 @@ mod tests {
         let mut app = App::new(config, tx);
         app.handle_event(AppEvent::ServerColdMigrated { id: "s1".into() });
         let toasts = app.background_tracker().active_toasts();
-        assert!(toasts.iter().any(|t| t.message.contains("confirm(Y) or revert(N)")));
+        assert!(
+            toasts
+                .iter()
+                .any(|t| t.message.contains("confirm(Y) or revert(N)"))
+        );
         // Should have sent FetchServers for refresh
         let mut found = false;
         while let Ok(action) = rx.try_recv() {
-            if matches!(action, Action::FetchServers) { found = true; }
+            if matches!(action, Action::FetchServers) {
+                found = true;
+            }
         }
         assert!(found, "expected FetchServers after migration event");
     }
@@ -1275,7 +1813,9 @@ mod tests {
     #[test]
     fn test_handle_permission_denied_adds_toast() {
         let mut app = make_app();
-        app.handle_event(AppEvent::PermissionDenied { operation: "CreateServer".into() });
+        app.handle_event(AppEvent::PermissionDenied {
+            operation: "CreateServer".into(),
+        });
         let toasts = app.background_tracker().active_toasts();
         assert_eq!(toasts.len(), 1);
         assert_eq!(toasts[0].level, crate::background::ToastLevel::Error);
@@ -1292,17 +1832,29 @@ mod tests {
 
     impl RefreshMock {
         fn new(action: Action) -> Self {
-            Self { action: Some(action), modal: false, transitional: false }
+            Self {
+                action: Some(action),
+                modal: false,
+                transitional: false,
+            }
         }
     }
 
     impl Component for RefreshMock {
-        fn handle_key(&mut self, _key: KeyEvent) -> Option<Action> { None }
+        fn handle_key(&mut self, _key: KeyEvent) -> Option<Action> {
+            None
+        }
         fn handle_event(&mut self, _event: &AppEvent) {}
         fn render(&self, _frame: &mut Frame, _area: Rect) {}
-        fn refresh_action(&self) -> Option<Action> { self.action.clone() }
-        fn is_modal(&self) -> bool { self.modal }
-        fn has_transitional_resources(&self) -> bool { self.transitional }
+        fn refresh_action(&self) -> Option<Action> {
+            self.action.clone()
+        }
+        fn is_modal(&self) -> bool {
+            self.modal
+        }
+        fn has_transitional_resources(&self) -> bool {
+            self.transitional
+        }
     }
 
     #[test]
@@ -1310,7 +1862,10 @@ mod tests {
         let (tx, mut rx) = crate::context::test_action_channel();
         let config = test_config();
         let mut app = App::new(config, tx);
-        app.register_component(Route::Servers, Box::new(RefreshMock::new(Action::FetchServers)));
+        app.register_component(
+            Route::Servers,
+            Box::new(RefreshMock::new(Action::FetchServers)),
+        );
         app.router = Router::new(Route::Servers);
 
         // Advance scheduler to trigger
@@ -1320,7 +1875,9 @@ mod tests {
         // Should have dispatched FetchServers
         let mut found = false;
         while let Ok(action) = rx.try_recv() {
-            if matches!(action, Action::FetchServers) { found = true; }
+            if matches!(action, Action::FetchServers) {
+                found = true;
+            }
         }
         assert!(found, "expected FetchServers to be dispatched");
     }
@@ -1330,7 +1887,10 @@ mod tests {
         let (tx, mut rx) = crate::context::test_action_channel();
         let config = test_config();
         let mut app = App::new(config, tx);
-        app.register_component(Route::Servers, Box::new(RefreshMock::new(Action::FetchServers)));
+        app.register_component(
+            Route::Servers,
+            Box::new(RefreshMock::new(Action::FetchServers)),
+        );
         app.router = Router::new(Route::Servers);
         app.input_mode = InputMode::Form;
 
@@ -1339,7 +1899,9 @@ mod tests {
         }
         let mut found = false;
         while let Ok(action) = rx.try_recv() {
-            if matches!(action, Action::FetchServers) { found = true; }
+            if matches!(action, Action::FetchServers) {
+                found = true;
+            }
         }
         assert!(!found, "should not dispatch when in form mode");
     }
@@ -1359,7 +1921,9 @@ mod tests {
         }
         let mut found = false;
         while let Ok(action) = rx.try_recv() {
-            if matches!(action, Action::FetchServers) { found = true; }
+            if matches!(action, Action::FetchServers) {
+                found = true;
+            }
         }
         assert!(!found, "should not dispatch when modal is active");
     }
@@ -1371,7 +1935,10 @@ mod tests {
         let (tx, mut rx) = crate::context::test_action_channel();
         let config = test_config();
         let mut app = App::new(config, tx);
-        app.register_component(Route::Servers, Box::new(RefreshMock::new(Action::FetchServers)));
+        app.register_component(
+            Route::Servers,
+            Box::new(RefreshMock::new(Action::FetchServers)),
+        );
         app.router = Router::new(Route::Servers);
 
         app.handle_event(AppEvent::ApiError {
@@ -1385,9 +1952,14 @@ mod tests {
         }
         let mut found = false;
         while let Ok(action) = rx.try_recv() {
-            if matches!(action, Action::FetchServers) { found = true; }
+            if matches!(action, Action::FetchServers) {
+                found = true;
+            }
         }
-        assert!(!found, "should not trigger at 150 ticks after backoff (2x = 300 needed)");
+        assert!(
+            !found,
+            "should not trigger at 150 ticks after backoff (2x = 300 needed)"
+        );
     }
 
     #[test]
@@ -1395,7 +1967,10 @@ mod tests {
         let (tx, mut rx) = crate::context::test_action_channel();
         let config = test_config();
         let mut app = App::new(config, tx);
-        app.register_component(Route::Servers, Box::new(RefreshMock::new(Action::FetchServers)));
+        app.register_component(
+            Route::Servers,
+            Box::new(RefreshMock::new(Action::FetchServers)),
+        );
         app.router = Router::new(Route::Servers);
 
         app.handle_event(AppEvent::ApiError {
@@ -1408,9 +1983,14 @@ mod tests {
         }
         let mut found = false;
         while let Ok(action) = rx.try_recv() {
-            if matches!(action, Action::FetchServers) { found = true; }
+            if matches!(action, Action::FetchServers) {
+                found = true;
+            }
         }
-        assert!(!found, "should not trigger at 150 ticks after backoff (2x = 300 needed)");
+        assert!(
+            !found,
+            "should not trigger at 150 ticks after backoff (2x = 300 needed)"
+        );
     }
 
     #[test]
@@ -1418,7 +1998,10 @@ mod tests {
         let (tx, mut rx) = crate::context::test_action_channel();
         let config = test_config();
         let mut app = App::new(config, tx);
-        app.register_component(Route::Servers, Box::new(RefreshMock::new(Action::FetchServers)));
+        app.register_component(
+            Route::Servers,
+            Box::new(RefreshMock::new(Action::FetchServers)),
+        );
         app.router = Router::new(Route::Servers);
 
         // Trigger backoff
@@ -1435,7 +2018,9 @@ mod tests {
         }
         let mut found = false;
         while let Ok(action) = rx.try_recv() {
-            if matches!(action, Action::FetchServers) { found = true; }
+            if matches!(action, Action::FetchServers) {
+                found = true;
+            }
         }
         assert!(found, "should trigger at 150 ticks after backoff reset");
     }
@@ -1458,9 +2043,15 @@ mod tests {
         let mut app = make_app();
         assert!(!app.show_activity_log);
         // '!' is Shift+1 in crossterm
-        app.handle_key(make_key_with_modifiers(KeyCode::Char('!'), KeyModifiers::SHIFT));
+        app.handle_key(make_key_with_modifiers(
+            KeyCode::Char('!'),
+            KeyModifiers::SHIFT,
+        ));
         assert!(app.show_activity_log);
-        app.handle_key(make_key_with_modifiers(KeyCode::Char('!'), KeyModifiers::SHIFT));
+        app.handle_key(make_key_with_modifiers(
+            KeyCode::Char('!'),
+            KeyModifiers::SHIFT,
+        ));
         assert!(!app.show_activity_log);
     }
 
@@ -1468,7 +2059,10 @@ mod tests {
     fn test_close_activity_popup_resets_scroll() {
         let mut app = make_app();
         // Open popup
-        app.handle_key(make_key_with_modifiers(KeyCode::Char('!'), KeyModifiers::SHIFT));
+        app.handle_key(make_key_with_modifiers(
+            KeyCode::Char('!'),
+            KeyModifiers::SHIFT,
+        ));
         assert!(app.show_activity_log);
         // Scroll down
         app.handle_key(make_key(KeyCode::Char('j')));
@@ -1482,17 +2076,21 @@ mod tests {
     fn test_exclamation_calls_mark_all_read_on_open() {
         let mut app = make_app();
         // Push an unread error entry
-        app.activity_log.push(crate::ui::activity_log::ActivityEntry {
-            timestamp: Instant::now(),
-            operation: "Delete".into(),
-            resource_name: "srv-1".into(),
-            success: false,
-            message: "fail".into(),
-            read: false,
-        });
+        app.activity_log
+            .push(crate::ui::activity_log::ActivityEntry {
+                timestamp: Instant::now(),
+                operation: "Delete".into(),
+                resource_name: "srv-1".into(),
+                success: false,
+                message: "fail".into(),
+                read: false,
+            });
         assert_eq!(app.activity_log.unread_error_count(), 1);
         // Open popup
-        app.handle_key(make_key_with_modifiers(KeyCode::Char('!'), KeyModifiers::SHIFT));
+        app.handle_key(make_key_with_modifiers(
+            KeyCode::Char('!'),
+            KeyModifiers::SHIFT,
+        ));
         assert!(app.show_activity_log);
         assert_eq!(app.activity_log.unread_error_count(), 0);
     }
@@ -1502,7 +2100,10 @@ mod tests {
         let mut app = make_app();
         app.input_mode = InputMode::Form;
         app.register_component(Route::Servers, Box::new(MockComponent::new()));
-        app.handle_key(make_key_with_modifiers(KeyCode::Char('!'), KeyModifiers::SHIFT));
+        app.handle_key(make_key_with_modifiers(
+            KeyCode::Char('!'),
+            KeyModifiers::SHIFT,
+        ));
         assert!(!app.show_activity_log);
     }
 
@@ -1511,7 +2112,10 @@ mod tests {
         let mut app = make_app();
         app.input_mode = InputMode::Confirm;
         app.register_component(Route::Servers, Box::new(MockComponent::new()));
-        app.handle_key(make_key_with_modifiers(KeyCode::Char('!'), KeyModifiers::SHIFT));
+        app.handle_key(make_key_with_modifiers(
+            KeyCode::Char('!'),
+            KeyModifiers::SHIFT,
+        ));
         assert!(!app.show_activity_log);
     }
 
@@ -1549,14 +2153,15 @@ mod tests {
         app.show_activity_log = true;
         // Push entries so scroll_down works
         for i in 0..5 {
-            app.activity_log.push(crate::ui::activity_log::ActivityEntry {
-                timestamp: Instant::now(),
-                operation: format!("Op{i}"),
-                resource_name: "r".into(),
-                success: true,
-                message: String::new(),
-                read: false,
-            });
+            app.activity_log
+                .push(crate::ui::activity_log::ActivityEntry {
+                    timestamp: Instant::now(),
+                    operation: format!("Op{i}"),
+                    resource_name: "r".into(),
+                    success: true,
+                    message: String::new(),
+                    read: false,
+                });
         }
         app.handle_key(make_key(KeyCode::Char('j')));
         assert_eq!(app.activity_popup.scroll_offset(), 1);
@@ -1606,7 +2211,10 @@ mod tests {
         });
         assert_eq!(app.activity_log.unread_error_count(), 2);
         // Opening popup marks all read
-        app.handle_key(make_key_with_modifiers(KeyCode::Char('!'), KeyModifiers::SHIFT));
+        app.handle_key(make_key_with_modifiers(
+            KeyCode::Char('!'),
+            KeyModifiers::SHIFT,
+        ));
         assert_eq!(app.activity_log.unread_error_count(), 0);
     }
 
@@ -1636,10 +2244,13 @@ mod tests {
     #[test]
     fn test_audit_server_created() {
         let (mut app, dir) = make_app_with_audit();
-        let server: crate::models::nova::Server = serde_json::from_str(r#"{
+        let server: crate::models::nova::Server = serde_json::from_str(
+            r#"{
             "id": "s1", "name": "web-01", "status": "ACTIVE",
             "addresses": {}, "flavor": {"id": "f1"}, "created": "2026-01-01"
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
         app.handle_event(AppEvent::ServerCreated(server));
         let lines = read_audit_lines(&dir);
         assert_eq!(lines.len(), 1);
@@ -1653,7 +2264,10 @@ mod tests {
     #[test]
     fn test_audit_server_deleted() {
         let (mut app, dir) = make_app_with_audit();
-        app.handle_event(AppEvent::ServerDeleted { id: "s1".into(), name: "web-01".into() });
+        app.handle_event(AppEvent::ServerDeleted {
+            id: "s1".into(),
+            name: "web-01".into(),
+        });
         let lines = read_audit_lines(&dir);
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0]["action"], "DeleteServer");
@@ -1664,9 +2278,12 @@ mod tests {
     #[test]
     fn test_audit_volume_created() {
         let (mut app, dir) = make_app_with_audit();
-        let volume: crate::models::cinder::Volume = serde_json::from_str(r#"{
+        let volume: crate::models::cinder::Volume = serde_json::from_str(
+            r#"{
             "id": "v1", "name": "data-vol", "status": "available", "size": 100
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
         app.handle_event(AppEvent::VolumeCreated(volume));
         let lines = read_audit_lines(&dir);
         assert_eq!(lines.len(), 1);
@@ -1688,14 +2305,18 @@ mod tests {
         assert_eq!(lines[0]["action"], "ApiError");
         assert_eq!(lines[0]["resource_type"], "error");
         let result = &lines[0]["result"];
-        assert!(result.is_object() || result.as_str().is_some(),
-            "result should indicate failure");
+        assert!(
+            result.is_object() || result.as_str().is_some(),
+            "result should indicate failure"
+        );
     }
 
     #[test]
     fn test_audit_permission_denied() {
         let (mut app, dir) = make_app_with_audit();
-        app.handle_event(AppEvent::PermissionDenied { operation: "DeleteServer".into() });
+        app.handle_event(AppEvent::PermissionDenied {
+            operation: "DeleteServer".into(),
+        });
         let lines = read_audit_lines(&dir);
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0]["action"], "PermissionDenied");
@@ -1785,16 +2406,28 @@ mod tests {
         let mut app = make_app();
         // Should not panic even without audit logger
         app.handle_event(AppEvent::ServerRebooted { id: "s1".into() });
-        app.handle_event(AppEvent::ApiError { operation: "op".into(), message: "err".into() });
+        app.handle_event(AppEvent::ApiError {
+            operation: "op".into(),
+            message: "err".into(),
+        });
     }
 
     #[test]
     fn test_audit_volume_attach_detach() {
         let (mut app, dir) = make_app_with_audit();
-        app.handle_event(AppEvent::VolumeAttached { volume_id: "v1".into(), server_id: "s1".into() });
-        app.handle_event(AppEvent::VolumeDetached { volume_id: "v2".into() });
-        app.handle_event(AppEvent::VolumeForceDetached { volume_id: "v3".into() });
-        app.handle_event(AppEvent::VolumeStateReset { volume_id: "v4".into() });
+        app.handle_event(AppEvent::VolumeAttached {
+            volume_id: "v1".into(),
+            server_id: "s1".into(),
+        });
+        app.handle_event(AppEvent::VolumeDetached {
+            volume_id: "v2".into(),
+        });
+        app.handle_event(AppEvent::VolumeForceDetached {
+            volume_id: "v3".into(),
+        });
+        app.handle_event(AppEvent::VolumeStateReset {
+            volume_id: "v4".into(),
+        });
         let lines = read_audit_lines(&dir);
         assert_eq!(lines.len(), 4);
         assert_eq!(lines[0]["action"], "AttachVolume");
@@ -1819,14 +2452,20 @@ mod tests {
     #[test]
     fn test_audit_keystone_events() {
         let (mut app, dir) = make_app_with_audit();
-        let project: crate::models::keystone::Project = serde_json::from_str(r#"{
+        let project: crate::models::keystone::Project = serde_json::from_str(
+            r#"{
             "id": "p1", "name": "infra", "domain_id": "default", "enabled": true
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
         app.handle_event(AppEvent::ProjectCreated(project));
         app.handle_event(AppEvent::ProjectDeleted { id: "p2".into() });
-        let user: crate::models::keystone::User = serde_json::from_str(r#"{
+        let user: crate::models::keystone::User = serde_json::from_str(
+            r#"{
             "id": "u1", "name": "jay", "domain_id": "default", "enabled": true
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
         app.handle_event(AppEvent::UserCreated(user));
         app.handle_event(AppEvent::UserDeleted { id: "u2".into() });
         let lines = read_audit_lines(&dir);
@@ -1840,10 +2479,13 @@ mod tests {
     #[test]
     fn test_audit_image_snapshot_events() {
         let (mut app, dir) = make_app_with_audit();
-        let image: crate::models::glance::Image = serde_json::from_str(r#"{
+        let image: crate::models::glance::Image = serde_json::from_str(
+            r#"{
             "id": "i1", "name": "ubuntu-22", "status": "active", "size": 1000,
             "min_disk": 0, "min_ram": 0, "visibility": "public"
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
         app.handle_event(AppEvent::ImageCreated(image));
         app.handle_event(AppEvent::ImageDeleted { id: "i2".into() });
         let lines = read_audit_lines(&dir);
@@ -1855,10 +2497,13 @@ mod tests {
     #[test]
     fn test_audit_does_not_break_toast_generation() {
         let (mut app, _dir) = make_app_with_audit();
-        let server: crate::models::nova::Server = serde_json::from_str(r#"{
+        let server: crate::models::nova::Server = serde_json::from_str(
+            r#"{
             "id": "s1", "name": "web-01", "status": "ACTIVE",
             "addresses": {}, "flavor": {"id": "f1"}, "created": "2026-01-01"
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
         app.handle_event(AppEvent::ServerCreated(server));
         // Toast should still be generated
         let toasts = app.background_tracker().active_toasts();
@@ -1886,8 +2531,14 @@ mod tests {
         let (tx, mut rx) = crate::context::test_action_channel();
         let config = test_config();
         let mut app = App::new(config, tx);
-        app.register_component(Route::Servers, Box::new(RefreshMock::new(Action::FetchServers)));
-        app.register_component(Route::Volumes, Box::new(RefreshMock::new(Action::FetchVolumes)));
+        app.register_component(
+            Route::Servers,
+            Box::new(RefreshMock::new(Action::FetchServers)),
+        );
+        app.register_component(
+            Route::Volumes,
+            Box::new(RefreshMock::new(Action::FetchVolumes)),
+        );
         app.router = Router::new(Route::Servers);
 
         // Advance 100 ticks (not enough to trigger)
@@ -1902,7 +2553,9 @@ mod tests {
         }
         let mut found = false;
         while let Ok(action) = rx.try_recv() {
-            if matches!(action, Action::FetchVolumes) { found = true; }
+            if matches!(action, Action::FetchVolumes) {
+                found = true;
+            }
         }
         assert!(found, "expected FetchVolumes after navigate + 150 ticks");
     }
@@ -2108,7 +2761,9 @@ mod tests {
         // directly. Instead, we verify the toast was surfaced.
         let toasts = app.background_tracker().active_toasts();
         assert!(
-            toasts.iter().any(|t| t.message.contains("Switch in progress")),
+            toasts
+                .iter()
+                .any(|t| t.message.contains("Switch in progress")),
             "expected mid-switch toast, got: {:?}",
             toasts.iter().map(|t| &t.message).collect::<Vec<_>>()
         );

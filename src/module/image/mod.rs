@@ -1,12 +1,12 @@
 pub mod view_model;
 
 use crossterm::event::{KeyCode, KeyEvent};
-use ratatui::layout::Rect;
 use ratatui::Frame;
+use ratatui::layout::Rect;
 
 use crate::action::Action;
-use crate::context::ActionSender;
 use crate::component::Component;
+use crate::context::ActionSender;
 use crate::event::AppEvent;
 use crate::models::glance::Image;
 use crate::module::{ConfirmHandler, PendingAction, ViewState};
@@ -68,7 +68,10 @@ impl ImageModule {
     }
 
     fn rows(&self) -> Vec<Row> {
-        self.images.iter().map(|i| image_to_row(i, self.all_tenants)).collect()
+        self.images
+            .iter()
+            .map(|i| image_to_row(i, self.all_tenants))
+            .collect()
     }
 
     fn resolve_action(pending: PendingAction) -> Option<Action> {
@@ -163,26 +166,24 @@ impl ImageModule {
                         _ => None,
                     })
                     .unwrap_or_default();
-                let visibility = values
-                    .get("Visibility")
-                    .and_then(|v| match v {
-                        crate::ui::form::FormValue::Selected(s) => {
-                            if s.is_empty() { None } else { Some(s.clone()) }
+                let visibility = values.get("Visibility").and_then(|v| match v {
+                    crate::ui::form::FormValue::Selected(s) => {
+                        if s.is_empty() {
+                            None
+                        } else {
+                            Some(s.clone())
                         }
-                        _ => None,
-                    });
-                let min_disk = values
-                    .get("Min Disk (GB)")
-                    .and_then(|v| match v {
-                        crate::ui::form::FormValue::Text(s) => s.parse::<u32>().ok(),
-                        _ => None,
-                    });
-                let min_ram = values
-                    .get("Min RAM (MB)")
-                    .and_then(|v| match v {
-                        crate::ui::form::FormValue::Text(s) => s.parse::<u32>().ok(),
-                        _ => None,
-                    });
+                    }
+                    _ => None,
+                });
+                let min_disk = values.get("Min Disk (GB)").and_then(|v| match v {
+                    crate::ui::form::FormValue::Text(s) => s.parse::<u32>().ok(),
+                    _ => None,
+                });
+                let min_ram = values.get("Min RAM (MB)").and_then(|v| match v {
+                    crate::ui::form::FormValue::Text(s) => s.parse::<u32>().ok(),
+                    _ => None,
+                });
 
                 self.close_form();
                 let _ = self.action_tx.send(Action::CreateImage(ImageCreateParams {
@@ -205,8 +206,12 @@ impl ImageModule {
 }
 
 impl Component for ImageModule {
-    fn refresh_action(&self) -> Option<Action> { Some(Action::FetchImages) }
-    fn is_modal(&self) -> bool { self.confirm.is_active() || self.form.is_some() }
+    fn refresh_action(&self) -> Option<Action> {
+        Some(Action::FetchImages)
+    }
+    fn is_modal(&self) -> bool {
+        self.confirm.is_active() || self.form.is_some()
+    }
 
     fn set_all_tenants(&mut self, v: bool) {
         self.all_tenants = v;
@@ -284,7 +289,9 @@ impl Component for ImageModule {
         match &self.view_state {
             ViewState::List => None,
             ViewState::Detail(id) => {
-                let name = self.images.iter()
+                let name = self
+                    .images
+                    .iter()
                     .find(|r| r.id == *id)
                     .map(|r| r.name.as_str())
                     .unwrap_or("...");
@@ -478,7 +485,10 @@ mod tests {
     #[test]
     fn test_help_hint_list_admin() {
         let (module, _rx) = setup(true);
-        assert_eq!(module.help_hint(), "Enter:Detail c:Create d:Delete r:Refresh");
+        assert_eq!(
+            module.help_hint(),
+            "Enter:Detail c:Create d:Delete r:Refresh"
+        );
     }
 
     #[test]
