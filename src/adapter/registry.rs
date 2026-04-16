@@ -30,38 +30,26 @@ pub struct AdapterRegistry {
 }
 
 impl AdapterRegistry {
-    /// Create all HTTP adapters from the given auth provider and region.
-    pub fn new_http(auth: Arc<dyn AuthProvider>, region: Option<String>) -> Result<Self, ApiError> {
-        let nova_base = Arc::new(BaseHttpClient::new(
-            auth.clone(),
-            "compute",
-            EndpointInterface::Public,
-            region.clone(),
-        )?);
-        let neutron_base = Arc::new(BaseHttpClient::new(
-            auth.clone(),
-            "network",
-            EndpointInterface::Public,
-            region.clone(),
-        )?);
-        let cinder_base = Arc::new(BaseHttpClient::new(
-            auth.clone(),
-            "block-storage",
-            EndpointInterface::Public,
-            region.clone(),
-        )?);
-        let glance_base = Arc::new(BaseHttpClient::new(
-            auth.clone(),
-            "image",
-            EndpointInterface::Public,
-            region.clone(),
-        )?);
-        let keystone_base = Arc::new(BaseHttpClient::new(
+    fn make_base(
+        auth: Arc<dyn AuthProvider>,
+        service_type: &str,
+        region: Option<String>,
+    ) -> Result<Arc<BaseHttpClient>, ApiError> {
+        Ok(Arc::new(BaseHttpClient::new(
             auth,
-            "identity",
+            service_type,
             EndpointInterface::Public,
             region,
-        )?);
+        )?))
+    }
+
+    /// Create all HTTP adapters from the given auth provider and region.
+    pub fn new_http(auth: Arc<dyn AuthProvider>, region: Option<String>) -> Result<Self, ApiError> {
+        let nova_base = Self::make_base(auth.clone(), "compute", region.clone())?;
+        let neutron_base = Self::make_base(auth.clone(), "network", region.clone())?;
+        let cinder_base = Self::make_base(auth.clone(), "block-storage", region.clone())?;
+        let glance_base = Self::make_base(auth.clone(), "image", region.clone())?;
+        let keystone_base = Self::make_base(auth, "identity", region)?;
 
         let http_caches: Vec<Arc<dyn HttpEndpointCache>> = vec![
             nova_base.clone(),
@@ -81,10 +69,10 @@ impl AdapterRegistry {
         })
     }
 
-    /// Collect endpoint caches from all HTTP adapters for the
-    /// EndpointCatalogInvalidator. Mock registries return an empty vec.
-    pub fn endpoint_caches(&self) -> Vec<Arc<dyn HttpEndpointCache>> {
-        self.http_caches.clone()
+    /// Endpoint caches for the EndpointCatalogInvalidator.
+    /// Mock registries return an empty slice.
+    pub fn endpoint_caches(&self) -> &[Arc<dyn HttpEndpointCache>] {
+        &self.http_caches
     }
 
     /// Create registry from mock adapters (for testing).

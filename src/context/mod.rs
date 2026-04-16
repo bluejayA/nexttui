@@ -22,15 +22,15 @@ pub mod types;
 pub mod versioned;
 
 pub use action_channel::{ActionReceiver, ActionSender, test_action_channel};
-pub use config_cloud_directory::ConfigCloudDirectory;
-pub use static_project_directory::StaticProjectDirectory;
 pub use cancellation::CancellationRegistry;
 pub use capabilities::{AuthMethod, KeystoneCapabilities, KeystoneVersion};
+pub use config_cloud_directory::ConfigCloudDirectory;
 pub use epoch::{ContextEpoch, Epoch};
 pub use error::SwitchError;
 pub use history::ContextHistoryStore;
 pub use resolver::{CloudDirectory, ContextTargetResolver, ProjectCandidate, ProjectDirectoryPort};
 pub use state_machine::{SwitchStateMachine, SwitchStateView};
+pub use static_project_directory::StaticProjectDirectory;
 pub use switcher::ContextSwitcher;
 pub use types::{ContextRequest, ContextSnapshot, ContextTarget, SessionHandle};
 pub use versioned::VersionedEvent;

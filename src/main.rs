@@ -133,7 +133,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?);
 
         // === Phase B: collect endpoint caches before worker consumes registry ===
-        let endpoint_caches = registry.endpoint_caches();
+        let endpoint_caches = registry.endpoint_caches().to_vec();
 
         // Trigger initial authentication, then initialize RBAC from token roles
         let rbac = std::sync::Arc::new(nexttui::infra::rbac::RbacGuard::new());

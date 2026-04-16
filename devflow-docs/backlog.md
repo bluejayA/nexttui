@@ -214,6 +214,16 @@ AI 개발 맥락에서 이는 "preference" 수준이 아니라 **claude-code 세
 **차단해제**: BL-P2-060, BL-P2-061
 **Ref**: BL-P2-063 PR #70 cargo-review (agent C)
 
+### BL-P2-070: main.rs 구조 개선 (production wire 함수 추출 + AuthCredential 변환 + clap 검토)
+**Priority**: Low
+**Category**: Readability / Maintainability
+**Description**: PR #75 cargo-review에서 식별된 3개 개선 사항 통합.
+1. main.rs else 블록 ~140줄 → `fn wire_production_mode(...)` 또는 유사 함수로 추출하여 main 흐름 가독성 향상
+2. `AuthCredential` 빌드 24줄 → `impl From<&CloudConfig> for AuthCredential` 변환 함수 추출 (단위 테스트 가능)
+3. CLI 인자 파싱 `std::env::args()` + `windows(2)` → `clap` derive API 도입 검토 (인자가 4개 이상 되면 투자 가치 있음)
+각 항목은 독립적으로 실행 가능. 기능 변경 없이 순수 리팩토링.
+**Ref**: BL-P2-031 T3 PR #75 cargo-review (Suggestions S4/S5/S6)
+
 ### BL-P2-050: LogPanel 텍스트 정제 (제어문자 필터링)
 **Priority**: Low
 **Category**: Security / UX
