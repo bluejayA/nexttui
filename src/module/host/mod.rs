@@ -188,27 +188,25 @@ impl Component for HostModule {
                     KeyCode::Char('a') => self.instance_list.select_all(),
                     KeyCode::Char('d') => self.instance_list.deselect_all(),
                     KeyCode::Char('f') => self.instance_list.cycle_filter(),
-                    KeyCode::Char('e') => {
-                        if self.evac_task.is_none() {
-                            if self.evac_confirm_pending {
-                                self.evac_confirm_pending = false;
-                                self.start_evacuate();
-                            } else {
-                                let count = self.instance_list.checked_count();
-                                if count > 0 {
-                                    self.evac_confirm_pending = true;
-                                    self.log_panel.push(
+                    KeyCode::Char('e') if self.evac_task.is_none() => {
+                        if self.evac_confirm_pending {
+                            self.evac_confirm_pending = false;
+                            self.start_evacuate();
+                        } else {
+                            let count = self.instance_list.checked_count();
+                            if count > 0 {
+                                self.evac_confirm_pending = true;
+                                self.log_panel.push(
                                     chrono::Local::now().format("%H:%M:%S").to_string(),
                                     LogLevel::Warning,
                                     format!("Evacuate {count} instances? Press 'e' again to confirm, any other key to cancel"),
                                 );
-                                } else {
-                                    self.log_panel.push(
-                                        chrono::Local::now().format("%H:%M:%S").to_string(),
-                                        LogLevel::Warning,
-                                        "No instances selected for evacuation".into(),
-                                    );
-                                }
+                            } else {
+                                self.log_panel.push(
+                                    chrono::Local::now().format("%H:%M:%S").to_string(),
+                                    LogLevel::Warning,
+                                    "No instances selected for evacuation".into(),
+                                );
                             }
                         }
                     }

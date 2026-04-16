@@ -1028,13 +1028,11 @@ impl Component for ServerModule {
             AppEvent::FloatingIpsLoaded(fips) => {
                 self.cached_floating_ips = fips.clone();
             }
-            AppEvent::PortsLoaded { server_id, ports } => {
-                // Only consume if this response matches our pending request
+            AppEvent::PortsLoaded { server_id, ports }
                 if self.pending_fip_id.is_some()
-                    && self.pending_ports_server_id.as_deref() == Some(server_id.as_str())
-                {
-                    self.handle_ports_loaded(ports.clone());
-                }
+                    && self.pending_ports_server_id.as_deref() == Some(server_id.as_str()) =>
+            {
+                self.handle_ports_loaded(ports.clone());
             }
             AppEvent::VolumeAttached { .. }
             | AppEvent::VolumeDetached { .. }

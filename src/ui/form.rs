@@ -681,12 +681,12 @@ impl FormWidget {
                         (FieldDef::Checkbox { .. }, FieldState::Checkbox { checked }) => {
                             *checked = !*checked;
                         }
-                        (FieldDef::Text { .. }, FieldState::Text { value, cursor }) => {
-                            if value.chars().count() < MAX_INPUT_LEN {
-                                let byte_pos = char_to_byte_pos(value, *cursor);
-                                value.insert(byte_pos, ' ');
-                                *cursor += 1;
-                            }
+                        (FieldDef::Text { .. }, FieldState::Text { value, cursor })
+                            if value.chars().count() < MAX_INPUT_LEN =>
+                        {
+                            let byte_pos = char_to_byte_pos(value, *cursor);
+                            value.insert(byte_pos, ' ');
+                            *cursor += 1;
                         }
                         _ => {}
                     }
