@@ -10,16 +10,20 @@
 pub mod action_channel;
 pub mod cancellation;
 pub mod capabilities;
+pub mod config_cloud_directory;
 pub mod epoch;
 pub mod error;
 pub mod history;
 pub mod resolver;
 pub mod state_machine;
+pub mod static_project_directory;
 pub mod switcher;
 pub mod types;
 pub mod versioned;
 
 pub use action_channel::{ActionReceiver, ActionSender, test_action_channel};
+pub use config_cloud_directory::ConfigCloudDirectory;
+pub use static_project_directory::StaticProjectDirectory;
 pub use cancellation::CancellationRegistry;
 pub use capabilities::{AuthMethod, KeystoneCapabilities, KeystoneVersion};
 pub use epoch::{ContextEpoch, Epoch};

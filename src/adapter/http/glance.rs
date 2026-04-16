@@ -12,14 +12,18 @@ use crate::port::glance::GlancePort;
 use crate::port::types::*;
 
 pub struct GlanceHttpAdapter {
-    base: BaseHttpClient,
+    base: Arc<BaseHttpClient>,
 }
 
 impl GlanceHttpAdapter {
     pub fn new(auth: Arc<dyn AuthProvider>, region: Option<String>) -> Result<Self, ApiError> {
         Ok(Self {
-            base: BaseHttpClient::new(auth, "image", EndpointInterface::Public, region)?,
+            base: Arc::new(BaseHttpClient::new(auth, "image", EndpointInterface::Public, region)?),
         })
+    }
+
+    pub fn from_base(base: Arc<BaseHttpClient>) -> Self {
+        Self { base }
     }
 }
 

@@ -3,7 +3,7 @@
 **Mode**: LIST (목록 단계, Council 리뷰 반영 개정)
 **Timestamp**: 2026-04-13T00:00:00+09:00
 **BL**: BL-P2-031 Keystone Rescoping
-**Revision**: r2 (3-AI Council 종합 반영 — design-review-raw/synthesis.md 참조)
+**Revision**: r3 (T3 Runtime Wire UPDATE — 2026-04-16)
 
 ## 의존 방향 원칙
 
@@ -534,3 +534,356 @@ ContextSwitcher 협력자 4개 (state + cancel + resolver + session). atomic은 
 19. commit 실패 시 atomic 계약: port self-reverting (commit 내부 자동 rollback)
 20. Cancel during Switching: 거부 (InProgress) — 협조적 cancel은 후속 BL
 21. SwitchStateMachine: parking_lot::Mutex + &self, Switcher가 Arc로 보유
+
+---
+
+# T3 Runtime Wire UPDATE (r3)
+
+**Timestamp**: 2026-04-16
+**Scope**: FR-11 — PR1 switch-core를 main.rs에 실제 연결. B3 축소 범위.
+
+## T3 신규 컴포넌트 (2개)
+
+### ConfigCloudDirectory (Service — CloudDirectory impl)
+
+**위치**: `src/context/config_cloud_directory.rs` (신규)
+**Responsibility**: `Config`를 래핑하여 `CloudDirectory` trait 구현. Startup 시점 cloud 목록을 반영.
+**Dependencies**: `Arc<Config>` (현재 `Config`는 `Arc` 미래핑 — 아래 변경사항 참조)
+
+```rust
+use std::sync::Arc;
+use crate::config::Config;
+use crate::context::resolver::CloudDirectory;
+
+pub struct ConfigCloudDirectory {
+    config: Arc<Config>,
+}
+
+impl ConfigCloudDirectory {
+    pub fn new(config: Arc<Config>) -> Self {
+        Self { config }
+    }
+}
+
+impl CloudDirectory for ConfigCloudDirectory {
+    fn active_cloud(&self) -> String {
+        self.config.active_cloud_name().to_string()
+    }
+
+    fn known_clouds(&self) -> Vec<String> {
+        self.config.cloud_names().iter().map(|s| s.to_string()).collect()
+    }
+}
+```
+
+**설계 판단**:
+- `Config`를 `Arc`로 감싸는 이유: main.rs에서 Config를 App + ConfigCloudDirectory 양쪽에 공유해야 함
+- `Config`의 `switch_cloud()` mutation은 main.rs 초기화에서만 호출되므로 `Arc` 공유에 문제 없음 (wire 시점엔 이미 확정)
+- 단, `Config::switch_cloud`는 `&mut self`이므로 **wire 전에** 호출 완료되어야 함
+
+### StaticProjectDirectory (Service — ProjectDirectoryPort impl)
+
+**위치**: `src/context/static_project_directory.rs` (신규)
+**Responsibility**: `Config` 기반 정적 프로젝트 목록 반환. 동적 HTTP 조회 없이 `clouds.yaml`에 선언된 `project_name`만 반환.
+**Dependencies**: `Arc<Config>`
+
+```rust
+use std::sync::Arc;
+use async_trait::async_trait;
+use crate::config::Config;
+use crate::context::{SwitchError, resolver::{ProjectCandidate, ProjectDirectoryPort}};
+
+pub struct StaticProjectDirectory {
+    config: Arc<Config>,
+}
+
+impl StaticProjectDirectory {
+    pub fn new(config: Arc<Config>) -> Self {
+        Self { config }
+    }
+}
+
+#[async_trait]
+impl ProjectDirectoryPort for StaticProjectDirectory {
+    async fn list_projects(&self, cloud: &str) -> Result<Vec<ProjectCandidate>, SwitchError> {
+        let Some(cloud_config) = self.config.cloud_config(cloud) else {
+            return Ok(Vec::new());
+        };
+
+        let Some(ref project_name) = cloud_config.auth.project_name else {
+            return Ok(Vec::new());
+        };
+
+        let domain = cloud_config.auth.project_domain_name
+            .clone()
+            .unwrap_or_else(|| "Default".to_string());
+
+        Ok(vec![ProjectCandidate {
+            cloud: cloud.to_string(),
+            project_id: project_name.clone(), // placeholder — 실제 id lookup은 BL-P2-052
+            project_name: project_name.clone(),
+            domain,
+        }])
+    }
+}
+```
+
+**설계 판단**:
+- `project_id`에 `project_name`을 placeholder로 사용 — FR-11 Assumption #4에 명시
+- `project_name` 없는 cloud → 빈 목록 반환 (에러 아님)
+- BL-P2-052에서 `StaticProjectDirectory`를 `HttpProjectDirectory`로 교체 예정 (trait 이면의 구현 교체)
+
+## T3 변경 컴포넌트 (2개)
+
+### AdapterRegistry — HttpEndpointCache 노출
+
+**위치**: `src/adapter/registry.rs` 변경
+**변경**:
+- 각 HttpAdapter의 `BaseHttpClient`를 `Arc<dyn HttpEndpointCache>`로 수집하는 메서드 추가
+- HttpAdapter에 `base` 필드 접근자 필요
+
+```rust
+// registry.rs에 추가
+use crate::port::http_endpoint_cache::HttpEndpointCache;
+
+impl AdapterRegistry {
+    /// Collect endpoint caches from all HTTP adapters for the
+    /// EndpointCatalogInvalidator. Only meaningful for HTTP-backed
+    /// registries — mock registries return an empty vec.
+    pub fn endpoint_caches(&self) -> Vec<Arc<dyn HttpEndpointCache>> {
+        // 각 HttpAdapter에 as_endpoint_cache() 메서드 추가 필요
+        // 또는 별도 필드로 생성 시점에 캡처
+        self.http_caches.clone()
+    }
+}
+```
+
+**구현 전략 — 2안 비교**:
+
+| 방안 | 설명 | 장단점 |
+|------|------|--------|
+| **A) 생성 시 캡처** | `new_http`에서 각 BaseHttpClient를 Arc로 감싸 별도 Vec에 보관 | 타입 안전, 추가 trait 불필요. 단 구조체 크기 증가 |
+| **B) downcast** | 각 Port trait에 `as_endpoint_cache()` 메서드 추가 | 기존 trait 오염, mock에서도 구현 필요 |
+
+**선택: A안** — `new_http` 시점에 `BaseHttpClient`를 `Arc`로 먼저 생성 → adapter에 `Arc::clone` 전달 + `http_caches: Vec<Arc<dyn HttpEndpointCache>>`에 보관.
+
+**구체 구현**:
+
+```rust
+pub struct AdapterRegistry {
+    pub nova: Arc<dyn NovaPort>,
+    pub neutron: Arc<dyn NeutronPort>,
+    pub cinder: Arc<dyn CinderPort>,
+    pub glance: Arc<dyn GlancePort>,
+    pub keystone: Arc<dyn KeystonePort>,
+    http_caches: Vec<Arc<dyn HttpEndpointCache>>,
+}
+
+impl AdapterRegistry {
+    pub fn new_http(auth: Arc<dyn AuthProvider>, region: Option<String>) -> Result<Self, ApiError> {
+        let nova_base = Arc::new(BaseHttpClient::new(auth.clone(), "compute", EndpointInterface::Public, region.clone())?);
+        let neutron_base = Arc::new(BaseHttpClient::new(auth.clone(), "network", EndpointInterface::Public, region.clone())?);
+        let cinder_base = Arc::new(BaseHttpClient::new(auth.clone(), "block-storage", EndpointInterface::Public, region.clone())?);
+        let glance_base = Arc::new(BaseHttpClient::new(auth.clone(), "image", EndpointInterface::Public, region.clone())?);
+        let keystone_base = Arc::new(BaseHttpClient::new(auth, "identity", EndpointInterface::Public, region)?);
+
+        let http_caches: Vec<Arc<dyn HttpEndpointCache>> = vec![
+            nova_base.clone(),
+            neutron_base.clone(),
+            cinder_base.clone(),
+            glance_base.clone(),
+            keystone_base.clone(),
+        ];
+
+        Ok(Self {
+            nova: Arc::new(NovaHttpAdapter::from_base(nova_base)),
+            neutron: Arc::new(NeutronHttpAdapter::from_base(neutron_base)),
+            cinder: Arc::new(CinderHttpAdapter::from_base(cinder_base)),
+            glance: Arc::new(GlanceHttpAdapter::from_base(glance_base)),
+            keystone: Arc::new(KeystoneHttpAdapter::from_base(keystone_base)),
+            http_caches,
+        })
+    }
+
+    pub fn endpoint_caches(&self) -> Vec<Arc<dyn HttpEndpointCache>> {
+        self.http_caches.clone()
+    }
+
+    #[cfg(test)]
+    pub fn new_mock() -> Self {
+        // ... 기존 + http_caches: Vec::new()
+    }
+}
+```
+
+**연쇄 변경 — 각 HttpAdapter**:
+- `NovaHttpAdapter`, `NeutronHttpAdapter`, `CinderHttpAdapter`, `GlanceHttpAdapter`, `KeystoneHttpAdapter` 모두:
+  - `base: BaseHttpClient` → `base: Arc<BaseHttpClient>`
+  - 신규: `pub fn from_base(base: Arc<BaseHttpClient>) -> Self`
+  - 기존 `new()` 유지 (하위 호환) — 내부에서 `Arc::new(BaseHttpClient::new(...))` 호출
+  - `self.base.method()` 호출은 `Arc<BaseHttpClient>`도 `Deref`로 동일 동작
+
+### main.rs — T3 Wire 시퀀스
+
+**위치**: `src/main.rs` 변경 (else 분기 — 실제 모드)
+**변경**: `app.wire_context_switch(switcher, event_tx)` 호출 추가
+
+#### 삽입 위치 제약 (R1 리뷰 I1 반영)
+
+현재 main.rs 흐름에서 `config`는 `App::from_registry`에 move, `registry`는 `Arc`로 감싸져 worker에 clone 전달. wire 시퀀스는 3개 시점에 분산 삽입해야 한다:
+
+```
+Phase A: App::from_registry 호출 전 (config move 전)
+  ① config_for_wire = Arc::new(config.clone())
+  ② credential 복제 (auth_url, username — TokenCacheStore용)
+
+Phase B: AdapterRegistry 생성 후, worker spawn 전
+  ③ endpoint_caches = registry.endpoint_caches()
+
+Phase C: worker spawn 후 (app 생성 완료 후)
+  ④~⑫ 나머지 wire + app.wire_context_switch
+```
+
+#### 구체 코드 (3-phase)
+
+```rust
+// === Phase A: config move 전 ===
+
+// ① Config clone → Arc (Config는 #[derive(Clone)] 확인됨)
+let config_for_wire = Arc::new(config.clone());
+
+// ② credential 복제 — TokenCacheStore 경로 계산용 (R1 리뷰 I2 반영)
+//    auth_provider.cloud_key()는 존재하지 않음.
+//    token_cache::compute_cloud_key(auth_url, username)을 직접 호출.
+let wire_auth_url = credential.auth_url.clone();
+let wire_username = match &credential.method {
+    AuthMethod::Password { username, .. } => username.clone(),
+    AuthMethod::ApplicationCredential { id, .. } => id.clone(),
+};
+
+// ... App::from_registry(config, ...) — config move ...
+
+// === Phase B: registry 생성 후, worker spawn 전 ===
+
+// ③ endpoint caches 수집 (registry는 Arc이므로 clone 후 worker에 전달)
+let endpoint_caches = registry.endpoint_caches();
+
+// ... worker spawn(registry.clone(), ...) ...
+
+// === Phase C: worker spawn 후 ===
+
+// ④ CloudDirectory + ProjectDirectory (Config 기반 정적)
+let cloud_dir: Arc<dyn CloudDirectory> =
+    Arc::new(ConfigCloudDirectory::new(config_for_wire.clone()));
+let project_dir: Arc<dyn ProjectDirectoryPort> =
+    Arc::new(StaticProjectDirectory::new(config_for_wire.clone()));
+
+// ⑤ ContextTargetResolver
+let resolver = Arc::new(ContextTargetResolver::new(cloud_dir, project_dir));
+
+// ⑥ EndpointCatalogInvalidator
+let invalidator = Arc::new(EndpointCatalogInvalidator::new(endpoint_caches));
+
+// ⑦ KeystoneRescopeAdapter (R1 리뷰 W1 반영 — timeout 설정)
+let rescope_client = reqwest::Client::builder()
+    .timeout(std::time::Duration::from_secs(30))
+    .connect_timeout(std::time::Duration::from_secs(10))
+    .build()
+    .expect("rescope client build");
+let rescoper: Arc<dyn KeystoneRescopePort> = Arc::new(KeystoneRescopeAdapter::new(
+    rescope_client,
+    config_for_wire.active_cloud_config().auth.auth_url.clone(),
+));
+
+// ⑧ TokenCacheStore (R1 리뷰 I2 반영 — compute_cloud_key 직접 호출)
+let cloud_key = token_cache::compute_cloud_key(&wire_auth_url, &wire_username);
+let token_cache = TokenCacheStore::new(token_cache::cache_dir_path(&cloud_key));
+
+// ⑨ ScopedAuthSession (ContextSessionPort impl)
+let session: Arc<dyn ContextSessionPort> = Arc::new(ScopedAuthSession::new(
+    auth_provider.clone() as Arc<dyn ScopedAuthPort>,
+    rescoper,
+    invalidator,
+    token_cache,
+));
+
+// ⑩ SwitchStateMachine
+let state = Arc::new(SwitchStateMachine::new(current_epoch.clone()));
+
+// ⑪ CancellationRegistry + ContextHistoryStore
+let cancellation = Arc::new(CancellationRegistry::new());
+let history = Arc::new(std::sync::Mutex::new(ContextHistoryStore::new()));
+
+// ⑫ ContextSwitcher 조립 + App wire
+let switcher = Arc::new(ContextSwitcher::new(
+    state, cancellation, resolver, session, history,
+));
+app.wire_context_switch(switcher, event_tx.clone());
+```
+
+**demo 모드 가드**: demo 분기에서는 wire_context_switch 호출 없음 → `app.switcher == None` → 기존 동작 유지. NFR-7 충족.
+
+## Config 소유권 전략 (확정 — 옵션 2)
+
+Config는 `#[derive(Clone)]` 확인됨 (`src/config.rs:18`).
+- `config.clone()` → `Arc::new()` 후 App에 owned Config 전달, wire에 `Arc<Config>` 사용
+- App 시그니처 변경 없음
+
+## 의존 그래프 (T3 추가분)
+
+```
+main.rs (wire 시퀀스)
+  |
+  |-- Arc<Config> ──────────────┐
+  |                              |
+  |-- ConfigCloudDirectory ──── Config
+  |-- StaticProjectDirectory ── Config
+  |         |
+  |         v
+  |    ContextTargetResolver
+  |         |
+  |-- ScopedAuthSession ───── KeystoneRescopeAdapter
+  |         |                  EndpointCatalogInvalidator ── registry.endpoint_caches()
+  |         |                  TokenCacheStore
+  |         |                  ScopedAuthPort (KeystoneAuthAdapter)
+  |         v
+  |    ContextSwitcher ──── SwitchStateMachine
+  |         |               CancellationRegistry
+  |         |               ContextHistoryStore
+  |         v
+  └── app.wire_context_switch(switcher, event_tx)
+```
+
+## NFR 매핑 (T3 추가분)
+
+| NFR | T3 보장 방법 |
+|-----|-------------|
+| NFR-6 컴파일 안전성 | 모든 wire가 concrete type → trait object 변환으로 컴파일 타임 검증. dyn 다운캐스트 없음 |
+| NFR-7 Demo 모드 무회귀 | demo 분기에서 wire_context_switch 호출 없음. switcher=None → spawn_switch가 에러 toast 표시 |
+
+## T3 DETAIL 체크리스트 (13개)
+
+1. ConfigCloudDirectory: Config 래퍼, active_cloud/known_clouds 위임
+2. StaticProjectDirectory: Config.cloud_config(cloud).auth.project_name → ProjectCandidate 1건 반환
+3. StaticProjectDirectory: project_id = project_name (placeholder, BL-P2-052에서 교체). 테스트에 PLACEHOLDER 주석 추가
+4. StaticProjectDirectory: project_name 없는 cloud → 빈 목록 (에러 아님)
+5. AdapterRegistry: new_http에서 BaseHttpClient를 Arc로 생성 → http_caches Vec 보유
+6. 각 HttpAdapter: base 필드 Arc<BaseHttpClient>로 변경 + from_base 생성자 추가
+7. AdapterRegistry: endpoint_caches() 메서드 추가. new_mock()에도 http_caches: Vec::new() 추가
+8. main.rs: 3-phase 분산 삽입 (A: config clone 전, B: registry 후 worker 전, C: worker 후 wire)
+9. main.rs: demo 분기는 wire_context_switch 미호출 (NFR-7)
+10. Config 소유권: 옵션 2 확정. config.clone() → Arc, App에 owned Config
+11. TokenCacheStore: `token_cache::compute_cloud_key(auth_url, username)` 직접 호출 (cloud_key() 메서드 없음)
+12. KeystoneRescopeAdapter: reqwest::Client에 timeout(30s) + connect_timeout(10s) 설정
+13. credential 복제 (auth_url, username): Phase A에서 config move 전에 수행
+
+## R1 리뷰 반영 이력
+
+| 이슈 | 출처 | 반영 |
+|------|------|------|
+| I1 wire 삽입 위치 | quality | 3-phase 분산 삽입으로 재설계 (체크리스트 #8) |
+| I2 cloud_key() 미존재 | spec | compute_cloud_key 직접 호출로 교정 (체크리스트 #11) |
+| W1 timeout 미설정 | quality | rescope client에 30s/10s 설정 추가 (체크리스트 #12) |
+| W2 wire helper 추출 | maintainability | CONSTRUCTION에서 판단 (현시점 미반영) |
+| W3 placeholder 주석 | maintainability | 테스트에 PLACEHOLDER 주석 추가 (체크리스트 #3) |
+| W4 r2 SwitchStateMachine drift | quality | 본 세션 범위 밖 (기록만) |

@@ -1,6 +1,7 @@
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crossterm::{
     execute,
@@ -12,13 +13,24 @@ use tokio::sync::mpsc;
 use tracing_subscriber::EnvFilter;
 
 use nexttui::adapter::auth::keystone::KeystoneAuthAdapter;
+use nexttui::adapter::auth::rescope::KeystoneRescopeAdapter;
+use nexttui::adapter::auth::scoped_session::ScopedAuthSession;
+use nexttui::adapter::auth::token_cache::{self as token_cache, TokenCacheStore};
+use nexttui::adapter::http::endpoint_invalidator::EndpointCatalogInvalidator;
 use nexttui::adapter::registry::AdapterRegistry;
 use nexttui::app::App;
 use nexttui::config::Config;
+use nexttui::context::{
+    CancellationRegistry, ConfigCloudDirectory, ContextHistoryStore, ContextSwitcher,
+    ContextTargetResolver, StaticProjectDirectory, SwitchStateMachine,
+};
 use nexttui::demo::create_demo_app;
 use nexttui::event::AppEvent;
 use nexttui::event_loop::run_event_loop;
 use nexttui::port::auth::AuthProvider;
+use nexttui::port::context_session::ContextSessionPort;
+use nexttui::port::keystone_rescope::KeystoneRescopePort;
+use nexttui::port::scoped_auth::ScopedAuthPort;
 use nexttui::port::types::{AuthCredential, AuthMethod, ProjectScopeParam};
 use nexttui::worker::run_worker;
 
@@ -106,11 +118,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }),
         };
 
+        // === Phase A: capture wire data before config moves ===
+        let config_for_wire = Arc::new(config.clone());
+        let wire_auth_url = credential.auth_url.clone();
+        let wire_username = match &credential.method {
+            AuthMethod::Password { username, .. } => username.clone(),
+            AuthMethod::ApplicationCredential { id, .. } => id.clone(),
+        };
+
         let auth_provider = Arc::new(KeystoneAuthAdapter::new(credential)?);
         let registry = Arc::new(AdapterRegistry::new_http(
             auth_provider.clone(),
             cloud.region_name.clone(),
         )?);
+
+        // === Phase B: collect endpoint caches before worker consumes registry ===
+        let endpoint_caches = registry.endpoint_caches();
 
         // Trigger initial authentication, then initialize RBAC from token roles
         let rbac = std::sync::Arc::new(nexttui::infra::rbac::RbacGuard::new());
@@ -120,7 +143,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let mut module_registry = nexttui::registry::ModuleRegistry::new();
         nexttui::registry::register_all_modules(&mut module_registry, &action_tx);
-        let (app, initial_actions) =
+        let (mut app, initial_actions) =
             App::from_registry(config, action_tx.clone(), module_registry, rbac.clone());
 
         // Spawn background worker
@@ -129,13 +152,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             rbac,
             app.all_tenants.clone(),
             action_rx,
-            event_tx,
+            event_tx.clone(),
         ));
 
         // Trigger initial data load
         for action in initial_actions {
             let _ = action_tx.send(action);
         }
+
+        // === Phase C: wire context switcher ===
+        let cloud_dir = Arc::new(ConfigCloudDirectory::new(config_for_wire.clone()));
+        let project_dir = Arc::new(StaticProjectDirectory::new(config_for_wire.clone()));
+        let resolver = Arc::new(ContextTargetResolver::new(cloud_dir, project_dir));
+
+        let invalidator = Arc::new(EndpointCatalogInvalidator::new(endpoint_caches));
+
+        let rescope_client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(10))
+            .build()?;
+        let rescoper: Arc<dyn KeystoneRescopePort> =
+            Arc::new(KeystoneRescopeAdapter::new(rescope_client, wire_auth_url));
+
+        let cloud_key = token_cache::compute_cloud_key(
+            &config_for_wire.active_cloud_config().auth.auth_url,
+            &wire_username,
+        );
+        let token_cache = TokenCacheStore::new(token_cache::cache_dir_path(&cloud_key));
+
+        let session: Arc<dyn ContextSessionPort> = Arc::new(ScopedAuthSession::new(
+            auth_provider.clone() as Arc<dyn ScopedAuthPort>,
+            rescoper,
+            invalidator,
+            token_cache,
+        ));
+
+        let state = Arc::new(SwitchStateMachine::new(current_epoch.clone()));
+        let cancellation = Arc::new(CancellationRegistry::new());
+        let history = Arc::new(std::sync::Mutex::new(ContextHistoryStore::new()));
+
+        let switcher = Arc::new(ContextSwitcher::new(
+            state, cancellation, resolver, session, history,
+        ));
+        app.wire_context_switch(switcher, event_tx);
 
         (app, event_rx, None)
     };
