@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::adapter::http::base::BaseHttpClient;
 use crate::adapter::http::cinder::CinderHttpAdapter;
 use crate::adapter::http::glance::GlanceHttpAdapter;
 use crate::adapter::http::keystone::KeystoneHttpAdapter;
@@ -9,9 +10,11 @@ use crate::port::auth::AuthProvider;
 use crate::port::cinder::CinderPort;
 use crate::port::error::ApiError;
 use crate::port::glance::GlancePort;
+use crate::port::http_endpoint_cache::HttpEndpointCache;
 use crate::port::keystone::KeystonePort;
 use crate::port::neutron::NeutronPort;
 use crate::port::nova::NovaPort;
+use crate::port::types::EndpointInterface;
 
 /// AdapterRegistry creates and holds all service adapters.
 /// In Phase 1, all adapters use HTTP/REST via BaseHttpClient.
@@ -23,18 +26,53 @@ pub struct AdapterRegistry {
     pub cinder: Arc<dyn CinderPort>,
     pub glance: Arc<dyn GlancePort>,
     pub keystone: Arc<dyn KeystonePort>,
+    http_caches: Vec<Arc<dyn HttpEndpointCache>>,
 }
 
 impl AdapterRegistry {
+    fn make_base(
+        auth: Arc<dyn AuthProvider>,
+        service_type: &str,
+        region: Option<String>,
+    ) -> Result<Arc<BaseHttpClient>, ApiError> {
+        Ok(Arc::new(BaseHttpClient::new(
+            auth,
+            service_type,
+            EndpointInterface::Public,
+            region,
+        )?))
+    }
+
     /// Create all HTTP adapters from the given auth provider and region.
     pub fn new_http(auth: Arc<dyn AuthProvider>, region: Option<String>) -> Result<Self, ApiError> {
+        let nova_base = Self::make_base(auth.clone(), "compute", region.clone())?;
+        let neutron_base = Self::make_base(auth.clone(), "network", region.clone())?;
+        let cinder_base = Self::make_base(auth.clone(), "block-storage", region.clone())?;
+        let glance_base = Self::make_base(auth.clone(), "image", region.clone())?;
+        let keystone_base = Self::make_base(auth, "identity", region)?;
+
+        let http_caches: Vec<Arc<dyn HttpEndpointCache>> = vec![
+            nova_base.clone(),
+            neutron_base.clone(),
+            cinder_base.clone(),
+            glance_base.clone(),
+            keystone_base.clone(),
+        ];
+
         Ok(Self {
-            nova: Arc::new(NovaHttpAdapter::new(auth.clone(), region.clone())?),
-            neutron: Arc::new(NeutronHttpAdapter::new(auth.clone(), region.clone())?),
-            cinder: Arc::new(CinderHttpAdapter::new(auth.clone(), region.clone())?),
-            glance: Arc::new(GlanceHttpAdapter::new(auth.clone(), region.clone())?),
-            keystone: Arc::new(KeystoneHttpAdapter::new(auth, region)?),
+            nova: Arc::new(NovaHttpAdapter::from_base(nova_base)),
+            neutron: Arc::new(NeutronHttpAdapter::from_base(neutron_base)),
+            cinder: Arc::new(CinderHttpAdapter::from_base(cinder_base)),
+            glance: Arc::new(GlanceHttpAdapter::from_base(glance_base)),
+            keystone: Arc::new(KeystoneHttpAdapter::from_base(keystone_base)),
+            http_caches,
         })
+    }
+
+    /// Endpoint caches for the EndpointCatalogInvalidator.
+    /// Mock registries return an empty slice.
+    pub fn endpoint_caches(&self) -> &[Arc<dyn HttpEndpointCache>] {
+        &self.http_caches
     }
 
     /// Create registry from mock adapters (for testing).
@@ -47,6 +85,7 @@ impl AdapterRegistry {
             cinder: Arc::new(MockCinderAdapter),
             glance: Arc::new(MockGlanceAdapter),
             keystone: Arc::new(MockKeystoneAdapter),
+            http_caches: Vec::new(),
         }
     }
 }
@@ -69,5 +108,11 @@ mod tests {
     fn test_registry_adapters_are_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<AdapterRegistry>();
+    }
+
+    #[test]
+    fn test_mock_registry_endpoint_caches_empty() {
+        let registry = AdapterRegistry::new_mock();
+        assert!(registry.endpoint_caches().is_empty());
     }
 }

@@ -14,14 +14,23 @@ use crate::port::neutron::NeutronPort;
 use crate::port::types::*;
 
 pub struct NeutronHttpAdapter {
-    base: BaseHttpClient,
+    base: Arc<BaseHttpClient>,
 }
 
 impl NeutronHttpAdapter {
     pub fn new(auth: Arc<dyn AuthProvider>, region: Option<String>) -> Result<Self, ApiError> {
         Ok(Self {
-            base: BaseHttpClient::new(auth, "network", EndpointInterface::Public, region)?,
+            base: Arc::new(BaseHttpClient::new(
+                auth,
+                "network",
+                EndpointInterface::Public,
+                region,
+            )?),
         })
+    }
+
+    pub fn from_base(base: Arc<BaseHttpClient>) -> Self {
+        Self { base }
     }
 }
 

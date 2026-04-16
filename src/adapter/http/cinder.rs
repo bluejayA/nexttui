@@ -13,14 +13,23 @@ use crate::port::error::{ApiError, ApiResult};
 use crate::port::types::*;
 
 pub struct CinderHttpAdapter {
-    base: BaseHttpClient,
+    base: Arc<BaseHttpClient>,
 }
 
 impl CinderHttpAdapter {
     pub fn new(auth: Arc<dyn AuthProvider>, region: Option<String>) -> Result<Self, ApiError> {
         Ok(Self {
-            base: BaseHttpClient::new(auth, "block-storage", EndpointInterface::Public, region)?,
+            base: Arc::new(BaseHttpClient::new(
+                auth,
+                "block-storage",
+                EndpointInterface::Public,
+                region,
+            )?),
         })
+    }
+
+    pub fn from_base(base: Arc<BaseHttpClient>) -> Self {
+        Self { base }
     }
 }
 

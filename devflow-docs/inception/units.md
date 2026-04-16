@@ -2,7 +2,8 @@
 
 **BL**: BL-P2-031 Keystone Rescoping
 **Timestamp**: 2026-04-13T00:00:00+09:00
-**총 7개 단위** (PR1: Unit 1~4, PR3: Unit 5, PR4: Unit 6, PR5: Unit 7)
+**Updated**: 2026-04-16 — T3 Runtime Wire unit 추가
+**총 10개 단위** (PR1: Unit 1~4 ✅, PR3: Unit 5, PR4: Unit 6, PR5: Unit 7, **T3: Unit 8~10**)
 
 ## 분해 원칙
 
@@ -229,9 +230,126 @@ Unit 6와 Unit 7은 Unit 5 완료 후 **병렬 가능**.
 | PR4 | Unit 6 | 피커 모달 |
 | PR5 | Unit 7 | Identity 통합 + 모든 모듈의 ContextChanged 핸들러 |
 
+---
+
+# T3 Runtime Wire Units (UPDATE 2026-04-16)
+
+**Scope**: FR-11 — switch-core를 main.rs에 실제 연결 (B3 축소 범위)
+**Prerequisites**: Unit 1~4 구현 완료 (PR #68 머지됨). Unit 5~7은 후속.
+**Baseline**: 1240 tests
+
+## T3 구현 순서
+
+```
+Unit 8 (AdapterRegistry HttpEndpointCache 노출)
+  └──> Unit 9 (ConfigCloudDirectory + StaticProjectDirectory)
+         └──> Unit 10 (main.rs Wire + Demo Guard)
+```
+
+선형 의존 — 병렬 없음. 각 unit이 작으므로 단일 세션에서 순차 완료 가능.
+
+---
+
+## Unit 8: AdapterRegistry HttpEndpointCache 노출
+
+**Responsibility**: 5개 HttpAdapter의 BaseHttpClient를 Arc로 변경하고, AdapterRegistry가 endpoint_caches()를 노출하도록 한다.
+**Dependencies**: Unit 3 (HttpEndpointCache trait, EndpointCatalogInvalidator — 이미 구현됨)
+**Interfaces (exposes)**:
+- `src/adapter/http/nova.rs` 변경 — `base: Arc<BaseHttpClient>` + `pub fn from_base(base: Arc<BaseHttpClient>) -> Self`
+- `src/adapter/http/neutron.rs` 변경 — 동일 패턴
+- `src/adapter/http/cinder.rs` 변경 — 동일 패턴
+- `src/adapter/http/glance.rs` 변경 — 동일 패턴
+- `src/adapter/http/keystone.rs` 변경 — 동일 패턴
+- `src/adapter/registry.rs` 변경:
+  - `http_caches: Vec<Arc<dyn HttpEndpointCache>>` 필드 추가
+  - `new_http`: BaseHttpClient를 Arc로 먼저 생성 → adapter에 from_base 전달 + http_caches Vec 보유
+  - `pub fn endpoint_caches(&self) -> Vec<Arc<dyn HttpEndpointCache>>`
+  - `new_mock()`: `http_caches: Vec::new()` 추가
+
+**Tests**:
+- AdapterRegistry::new_http: endpoint_caches().len() == 5
+- AdapterRegistry::new_mock: endpoint_caches().is_empty()
+- 각 HttpAdapter from_base: 기존 API 호출이 Deref로 동일 동작 (대표로 Nova 1개)
+- 기존 new() 생성자 하위 호환 유지 (호출 사이트 깨짐 없음)
+- EndpointCatalogInvalidator::new(registry.endpoint_caches()) → invalidate_all 호출 성공
+- 회귀: 1240 tests pass
+
+**Implementation order**: 8
+**PR**: T3 PR (단일 PR)
+
+---
+
+## Unit 9: ConfigCloudDirectory + StaticProjectDirectory
+
+**Responsibility**: Config 래퍼 2개를 구현하여 ContextTargetResolver에 주입 가능하게 한다.
+**Dependencies**: Unit 8 (불필요하나 T3 PR 내 순서 유지), Unit 4 (CloudDirectory/ProjectDirectoryPort trait — 이미 구현됨)
+**Interfaces (exposes)**:
+- `src/context/config_cloud_directory.rs` (신규) — `ConfigCloudDirectory { new(Arc<Config>) }`, `CloudDirectory` impl
+- `src/context/static_project_directory.rs` (신규) — `StaticProjectDirectory { new(Arc<Config>) }`, `ProjectDirectoryPort` impl
+- `src/context/mod.rs` 변경 — 두 모듈 pub re-export
+
+**Tests**:
+- ConfigCloudDirectory: active_cloud() == config.active_cloud_name()
+- ConfigCloudDirectory: known_clouds() == config.cloud_names() (순서 무관)
+- StaticProjectDirectory: list_projects("existing_cloud") → project_name 1건 반환
+- StaticProjectDirectory: project_id == project_name (placeholder 검증 + PLACEHOLDER 주석)
+- StaticProjectDirectory: project_name 없는 cloud → 빈 목록
+- StaticProjectDirectory: 존재하지 않는 cloud → 빈 목록
+- ContextTargetResolver::new(ConfigCloudDirectory, StaticProjectDirectory) → resolve 성공 (통합)
+- 회귀: 1240 + Unit 8 tests pass
+
+**Implementation order**: 9
+**PR**: T3 PR (단일 PR)
+
+---
+
+## Unit 10: main.rs Wire + Demo Guard
+
+**Responsibility**: main.rs에 3-phase wire 시퀀스를 삽입하여 ContextSwitcher를 App에 연결한다. Demo 모드 무회귀 보장.
+**Dependencies**: Unit 8, 9
+**Interfaces (exposes)**:
+- `src/main.rs` 변경:
+  - Phase A (config move 전): `config.clone()` → `Arc::new()`, credential 복제
+  - Phase B (registry 후 worker 전): `registry.endpoint_caches()` 수집
+  - Phase C (worker 후): wire 시퀀스 ④~⑫ + `app.wire_context_switch(switcher, event_tx)`
+- KeystoneRescopeAdapter: `reqwest::Client::builder().timeout(30s).connect_timeout(10s)` 사용
+- TokenCacheStore: `token_cache::compute_cloud_key(auth_url, username)` 직접 호출
+
+**Tests**:
+- 컴파일 성공 (NFR-6 — 타입 매칭 컴파일 타임 검증)
+- `--demo` 모드: app.switcher == None (NFR-7)
+- `--demo` 모드: 기존 동작 변경 없음 (회귀)
+- 실제 모드: app.switcher == Some(_) (wire 성공 검증)
+- 실제 모드: SwitchContext 액션 dispatch → switcher.switch 호출 경로 존재 (spawn_switch 테스트는 기존 Unit 4에 있음)
+- 회귀: 1240 + Unit 8, 9 tests pass
+
+**주의**: main.rs 통합 테스트는 실제 Keystone 없이 수행. mock auth_provider + mock registry를 사용하는 별도 integration test 또는 App 생성 후 wire 검증으로 대체.
+
+**Implementation order**: 10
+**PR**: T3 PR (단일 PR)
+
+---
+
+## T3 PR 매핑
+
+| PR | Units | 기대 산출 |
+|----|-------|----------|
+| T3 PR | Unit 8, 9, 10 | switch-core가 main.rs에 실제 연결. demo 무회귀. 사용자 노출: 아직 없음 (명령/피커는 Unit 5~7) |
+
+## 전체 PR 매핑 (갱신)
+
+| PR | Units | 상태 |
+|----|-------|------|
+| PR1 (#68) | Unit 1, 2, 3, 4 | ✅ 머지 완료 |
+| **T3 PR** | **Unit 8, 9, 10** | **← 현재 세션 대상** |
+| PR3 | Unit 5 | 후속 |
+| PR4 | Unit 6 | 후속 |
+| PR5 | Unit 7 | 후속 |
+
 ## 실행 모드 가이드
 
 각 unit은 TDD RED-GREEN-REFACTOR. Standard depth.
-- Unit 1, 2, 3, 4 (PR1): 단일 PR로 누적. PR1 머지 시점에 통합 회귀 테스트 + Codex/Council 리뷰
-- Unit 5 (PR3): 별도 PR. 머지 후 사용자가 실제 전환 사용 가능 — 문서/changelog 동반
+- Unit 1, 2, 3, 4 (PR1): ✅ 완료
+- **Unit 8, 9, 10 (T3 PR)**: 단일 PR로 누적. 순차 실행. 완료 후 통합 회귀 + Codex 리뷰
+- Unit 5 (PR3): 후속 — 사용자 노출 시작
 - Unit 6, 7: 각각 PR

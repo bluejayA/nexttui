@@ -12,14 +12,23 @@ use crate::port::keystone::KeystonePort;
 use crate::port::types::*;
 
 pub struct KeystoneHttpAdapter {
-    base: BaseHttpClient,
+    base: Arc<BaseHttpClient>,
 }
 
 impl KeystoneHttpAdapter {
     pub fn new(auth: Arc<dyn AuthProvider>, region: Option<String>) -> Result<Self, ApiError> {
         Ok(Self {
-            base: BaseHttpClient::new(auth, "identity", EndpointInterface::Public, region)?,
+            base: Arc::new(BaseHttpClient::new(
+                auth,
+                "identity",
+                EndpointInterface::Public,
+                region,
+            )?),
         })
+    }
+
+    pub fn from_base(base: Arc<BaseHttpClient>) -> Self {
+        Self { base }
     }
 }
 

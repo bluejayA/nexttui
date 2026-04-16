@@ -188,3 +188,24 @@
 - 2026-04-15T01:13:21Z — file-edit — devflow-docs/backlog.md
 - 2026-04-15T13:25:03Z — file-edit — devflow-docs/backlog.md
 - 2026-04-15T13:25:10Z — file-edit — devflow-docs/backlog.md
+- 2026-04-16T03:25:45Z — New aidlc session started — BL-P2-031 T3 wire (B3 scope: static ProjectDirectory, ConfigCloudDirectory, EndpointCache expose, main.rs wire)
+- 2026-04-16T03:26:32Z — New flow — UPDATE mode (preserving existing artifacts)
+- 2026-04-16T03:33:35Z — file-edit — devflow-docs/inception/workspace.md
+- 2026-04-16T03:36:20Z — workspace-detection — delta update: 125 .rs files, 1240 tests, src/context/ 모듈 추가, CI 추가, deps +2 (tokio-util, http)
+- 2026-04-16T03:37:54Z — complexity-declaration — Standard 선언 (기존 설계 wire이나 cross-cutting 변경)
+- 2026-04-16T03:39:21Z — file-edit — devflow-docs/inception/requirements.md
+- 2026-04-16T04:27:05Z — file-edit — devflow-docs/inception/requirements.md
+- 2026-04-16T08:11:15Z — file-edit — devflow-docs/inception/requirements.md
+- 2026-04-16T08:18:22Z — file-edit — devflow-docs/inception/requirements.md
+- 2026-04-16T08:30:28Z — requirements-analysis UPDATE — FR-11 T3 wire 추가, NFR-3 baseline 1240, Assumption #4 T3 한정
+- 2026-04-16T08:31:34Z — Session paused — pre-planning 게이트 대기 (C 권장)
+- 2026-04-16T14:16:13Z — file-edit — devflow-docs/inception/requirements.md
+- 2026-04-16T14:16:27Z — file-edit — devflow-docs/inception/requirements.md
+- 2026-04-16T14:20:09Z — file-edit — devflow-docs/inception/workflow-plan.md
+- 2026-04-16T14:24:41Z — file-edit — devflow-docs/inception/application-design.md
+- 2026-04-16T14:26:06Z — file-edit — devflow-docs/inception/application-design.md
+- 2026-04-16T14:38:39Z — file-edit — devflow-docs/inception/application-design.md
+- 2026-04-16T14:39:04Z — file-edit — devflow-docs/inception/application-design.md
+- 2026-04-16T14:40:01Z — file-edit — devflow-docs/inception/units.md
+- 2026-04-16T14:40:56Z — file-edit — devflow-docs/inception/units.md
+- 2026-04-16T15:13:41Z — file-edit — devflow-docs/backlog.md

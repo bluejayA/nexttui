@@ -319,11 +319,11 @@ impl App {
                     }
                     return true;
                 }
+                KeyCode::Esc if self.focus == FocusPane::Sidebar => {
+                    self.focus = FocusPane::Content;
+                    return true;
+                }
                 KeyCode::Esc => {
-                    if self.focus == FocusPane::Sidebar {
-                        self.focus = FocusPane::Content;
-                        return true;
-                    }
                     // Fall through to let component handle Esc
                     // (Detail→List transition, or return Action::Back for router)
                 }

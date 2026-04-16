@@ -467,11 +467,10 @@ impl Component for FloatingIpModule {
                     form.set_field_options("External Network", opts);
                 }
             }
-            AppEvent::PortsLoaded { server_id, ports } => {
-                // Only consume if this response matches our pending request
-                if self.pending_ports_server_id.as_deref() == Some(server_id.as_str()) {
-                    self.handle_ports_loaded(ports.clone());
-                }
+            AppEvent::PortsLoaded { server_id, ports }
+                if self.pending_ports_server_id.as_deref() == Some(server_id.as_str()) =>
+            {
+                self.handle_ports_loaded(ports.clone());
             }
             AppEvent::ApiError {
                 operation, message, ..

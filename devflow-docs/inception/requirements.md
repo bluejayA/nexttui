@@ -64,6 +64,20 @@ nexttui에서 런타임 중 활성 cloud / project 컨텍스트를 전환할 수
 - 본 BL은 Keystone scope 변경 (cloud / project)만 다룬다
 - region 변경은 별도 명령/모달로 후속 백로그에 분리
 
+### FR-11. T3 Runtime Wire (Must — 본 세션 스코프)
+PR1(#68)에서 구현된 switch-core를 main.rs에 실제 연결하여 switch 경로가 end-to-end로 동작하도록 한다. B3 축소 범위 — HTTP 기반 프로젝트 탐색은 BL-P2-052로 분리.
+
+- **ConfigCloudDirectory**: `Config` 래퍼. `CloudDirectory` trait 구현 (`active_cloud()`, `known_clouds()`). `Arc<Config>`를 공유하여 startup 시점 cloud 목록 반영.
+- **StaticProjectDirectory**: `Config` 기반 `ProjectDirectoryPort` 구현. `list_projects(cloud)` → 해당 cloud의 `auth.project_name` 1건 반환. project_name 없는 cloud는 빈 목록. project_id는 name을 placeholder로 사용 (실제 id lookup은 BL-P2-052).
+- **HttpEndpointCache 노출**: 5개 HttpAdapter(Nova/Neutron/Cinder/Glance/Keystone)의 `BaseHttpClient`를 `Arc<dyn HttpEndpointCache>`로 접근 가능하게 AdapterRegistry에 메서드 추가. `EndpointCatalogInvalidator`에 전달.
+- **main.rs wire**: `KeystoneRescopeAdapter` + `EndpointCatalogInvalidator` + `TokenCacheStore` → `ScopedAuthSession` 조립. `SwitchStateMachine` + `CancellationRegistry` + `ContextTargetResolver`(ConfigCloudDirectory + StaticProjectDirectory) + `ContextHistoryStore` → `ContextSwitcher` 조립. `app.wire_context_switch(switcher, event_tx)` 호출.
+- **demo 모드**: wire 없이 기존대로 동작 (switcher = None). 변경 없음.
+
+#### T3 Out of Scope (BL-P2-052로 분리)
+- `/v3/auth/projects` HTTP 호출 (동적 프로젝트 탐색)
+- `AppEvent::ContextChanged` handler (16 모듈 캐시 무효화 + Fetch dispatch)
+- Rescoped 토큰 자동 refresh
+
 ## Non-Functional Requirements
 
 ### NFR-1. 안전성 (Critical)
@@ -77,7 +91,7 @@ nexttui에서 런타임 중 활성 cloud / project 컨텍스트를 전환할 수
 ### NFR-3. 테스트 커버리지
 - 단위 테스트: state machine, epoch 검증, 명령 파서, 충돌 disambiguation
 - 통합 테스트: rescope 성공/실패, catalog 재조회 실패, 전환 중 in-flight 폴링, app-credential 경로 거부
-- 기존 1116 tests baseline 무회귀
+- 기존 1240 tests baseline 무회귀 (PR1 이후)
 
 ### NFR-4. UX 일관성
 - 단축키와 명령은 기존 CommandRegistry / KeyMap 패턴 준수
@@ -86,6 +100,14 @@ nexttui에서 런타임 중 활성 cloud / project 컨텍스트를 전환할 수
 ### NFR-5. 관측성
 - 전환 단계별 `tracing` 이벤트 (epoch, 대상 cloud/project, 결과)
 - rescope 실패 사유 로깅
+
+### NFR-6. 컴파일 안전성 (T3)
+- wire 조립은 모두 컴파일 타임 타입 매칭으로 보장
+- `dyn Trait` 다운캐스트 없이 직접 `Arc` 전달 — 런타임 타입 에러 원천 차단
+
+### NFR-7. Demo 모드 무회귀 (T3)
+- `--demo` 플래그 시 switcher=None으로 기존 동작 유지
+- demo 경로에 switch 관련 코드 진입 금지 — demo 모드 테스트 무회귀
 
 ## Technology Stack
 | 계층 | 선택 | 소스 | 비고 |
@@ -101,7 +123,7 @@ nexttui에서 런타임 중 활성 cloud / project 컨텍스트를 전환할 수
 1. 대상 OpenStack 배포는 Keystone v3 + token-method rescoping을 허용한다. 비활성 환경은 가시적 실패 + full re-auth 폴백으로 대응한다.
 2. cloud 정의는 기존 `clouds.yaml` 또는 nexttui Config의 cloud 목록을 그대로 사용한다 (별도 cloud 추가 UX는 본 BL 비포함).
 3. App-credential 인증 사용자는 본 BL의 전환 UX에서 명시적 거부 메시지로 안내한다 (별도 BL로 분리).
-4. 피커의 프로젝트 목록은 user-accessible projects API (`/v3/auth/projects` 또는 동등 엔드포인트)로 조회한다 (admin 전체 조회 아님).
+4. **T3 한정**: 피커의 프로젝트 목록은 `clouds.yaml`에 선언된 정적 항목만 반환한다. 동적 조회(`/v3/auth/projects`)는 BL-P2-052에서 `StaticProjectDirectory`를 교체하여 구현한다.
 5. `:switch-back` 히스토리 깊이는 1 (직전 컨텍스트만). 다단계 히스토리는 후속 백로그.
 6. Region은 본 BL 비포함. 별도 후속 BL로 신설한다.
 
@@ -110,3 +132,5 @@ nexttui에서 런타임 중 활성 cloud / project 컨텍스트를 전환할 수
 
 ## Change Log
 - 2026-04-13: 초안 작성. Codex 적대적 리뷰 (10개 질문 + 3개 치명 결함 + 권장 수정안) 반영. UX 안 B+ 확정, 구현 전략 옵션 C (단일 BL 단계적 머지) 확정.
+- 2026-04-16: UPDATE — FR-11 (T3 Runtime Wire) 추가. B3 축소 범위: ConfigCloudDirectory + StaticProjectDirectory(config 기반) + HttpEndpointCache 노출 + main.rs wire. NFR-3 baseline 1116→1240. Assumption #4를 T3 한정 정적 목록으로 한정.
+- 2026-04-16: NFR-6 (컴파일 안전성), NFR-7 (Demo 모드 무회귀) 추가 — T3 wire 특화.

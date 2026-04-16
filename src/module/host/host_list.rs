@@ -116,16 +116,10 @@ impl HostList {
 
             // Line 2: resource usage summary
             if lines.len() < inner.height as usize {
-                let cpu_pct = if h.vcpus > 0 {
-                    h.vcpus_used * 100 / h.vcpus
-                } else {
-                    0
-                };
-                let mem_pct = if h.memory_mb > 0 {
-                    h.memory_mb_used * 100 / h.memory_mb
-                } else {
-                    0
-                };
+                let cpu_pct = (h.vcpus_used * 100).checked_div(h.vcpus).unwrap_or(0);
+                let mem_pct = (h.memory_mb_used * 100)
+                    .checked_div(h.memory_mb)
+                    .unwrap_or(0);
                 lines.push(Line::from(vec![
                     Span::raw("  "),
                     Span::styled("CPU", Style::default().fg(Color::DarkGray)),
