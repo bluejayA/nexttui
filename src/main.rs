@@ -192,7 +192,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let history = Arc::new(std::sync::Mutex::new(ContextHistoryStore::new()));
 
         let switcher = Arc::new(ContextSwitcher::new(
-            state, cancellation, resolver, session, history,
+            state,
+            cancellation,
+            resolver,
+            session,
+            history,
         ));
         app.wire_context_switch(switcher, event_tx);
 

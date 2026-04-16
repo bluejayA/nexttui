@@ -19,7 +19,12 @@ pub struct CinderHttpAdapter {
 impl CinderHttpAdapter {
     pub fn new(auth: Arc<dyn AuthProvider>, region: Option<String>) -> Result<Self, ApiError> {
         Ok(Self {
-            base: Arc::new(BaseHttpClient::new(auth, "block-storage", EndpointInterface::Public, region)?),
+            base: Arc::new(BaseHttpClient::new(
+                auth,
+                "block-storage",
+                EndpointInterface::Public,
+                region,
+            )?),
         })
     }
 
