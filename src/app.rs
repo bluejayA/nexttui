@@ -13,10 +13,12 @@ use crate::config::Config;
 use crate::event::AppEvent;
 use crate::infra::audit::{AuditEntry, AuditLogger, AuditResult};
 use crate::infra::rbac::{ActionKind, RbacGuard};
+use crate::input::command::{Command, CommandParser};
 use crate::models::common::Route;
 use crate::router::Router;
 use crate::ui::activity_log::{ActivityLog, ActivityLogPopup};
 use crate::ui::header::{Header, HeaderContext};
+use crate::ui::input_bar::{InputAction, InputBar, InputMode as InputBarMode};
 use crate::ui::layout::LayoutManager;
 use crate::ui::refresh::RefreshScheduler;
 use crate::ui::sidebar::Sidebar;
@@ -67,6 +69,9 @@ pub struct App {
     activity_popup: ActivityLogPopup,
     show_activity_log: bool,
     audit_logger: Option<AuditLogger>,
+    /// Command bar input widget (`:`-triggered). Paired with `command_parser`.
+    pub(crate) input_bar: InputBar,
+    pub(crate) command_parser: CommandParser,
 }
 
 impl App {
@@ -75,6 +80,7 @@ impl App {
         crate::ui::theme::Theme::init(config.app_config().theme);
         let audit_logger = Self::init_audit_logger();
         let current_epoch = action_tx.epoch();
+        let command_parser = Self::init_command_parser(&config);
         Self {
             should_quit: false,
             input_mode: InputMode::Normal,
@@ -100,6 +106,8 @@ impl App {
             activity_popup: ActivityLogPopup::new(),
             show_activity_log: false,
             audit_logger,
+            input_bar: InputBar::new(),
+            command_parser,
         }
     }
 
@@ -114,6 +122,7 @@ impl App {
         crate::ui::theme::Theme::init(config.app_config().theme);
         let audit_logger = Self::init_audit_logger();
         let current_epoch = action_tx.epoch();
+        let command_parser = Self::init_command_parser(&config);
         let mut app = Self {
             should_quit: false,
             input_mode: InputMode::Normal,
@@ -139,6 +148,8 @@ impl App {
             activity_popup: ActivityLogPopup::new(),
             show_activity_log: false,
             audit_logger,
+            input_bar: InputBar::new(),
+            command_parser,
         };
         // Store sidebar items for number-key navigation
         app.sidebar.sync_active(&Route::Servers, false);
@@ -250,11 +261,56 @@ impl App {
             }
         }
 
+        // Command mode — delegate keys to InputBar, then convert InputAction
+        // back into app-level effects. Runs before the Esc-to-Normal block so
+        // Esc cancels via InputBar (which clears the buffer).
+        if self.input_mode == InputMode::Command {
+            let act = self.input_bar.handle_key(key);
+            match act {
+                InputAction::Commit(buf) => {
+                    self.input_mode = InputMode::Normal;
+                    if !buf.trim().is_empty() {
+                        let cmd = self.command_parser.parse(&buf);
+                        // Only persist successfully-parsed commands so typos
+                        // don't pollute history (PR3 cargo-review C2).
+                        if !matches!(cmd, Command::Unknown(_)) {
+                            self.command_parser.push_history(&buf);
+                        }
+                        self.execute_command(cmd);
+                    }
+                }
+                InputAction::Cancel => {
+                    self.input_mode = InputMode::Normal;
+                }
+                InputAction::AutoComplete => {
+                    let current = self.input_bar.buffer().to_string();
+                    if let Some(expanded) = self.command_parser.auto_complete(&current) {
+                        self.input_bar.set_buffer(expanded);
+                    }
+                }
+                InputAction::HistoryUp => {
+                    if let Some(h) = self.command_parser.history_prev() {
+                        self.input_bar.set_buffer(h.to_string());
+                    }
+                }
+                InputAction::HistoryDown => {
+                    if let Some(h) = self.command_parser.history_next() {
+                        self.input_bar.set_buffer(h.to_string());
+                    }
+                }
+                InputAction::None | InputAction::SearchChanged(_) => {}
+            }
+            return true;
+        }
+
         // Global keys in Normal mode (only without modifiers to avoid Ctrl+q etc.)
         if self.input_mode == InputMode::Normal && no_modifiers {
             match key.code {
                 KeyCode::Char(':') => {
                     self.input_mode = InputMode::Command;
+                    self.input_bar.activate(InputBarMode::Command);
+                    self.command_parser.history_reset_cursor();
+                    self.command_parser.reset_completion();
                     return true;
                 }
                 // '/' search is handled by SelectPopup when open (not App-level)
@@ -595,6 +651,22 @@ impl App {
             Action::ConfirmResize { .. } => Some("Confirming resize...".into()),
             Action::RevertResize { .. } => Some("Reverting resize...".into()),
             _ => None,
+        }
+    }
+
+    /// Build the `CommandParser` with the configured history path and, in
+    /// non-test builds, best-effort load prior history.
+    fn init_command_parser(config: &Config) -> CommandParser {
+        let history_path = config.app_config().command_history_path.clone();
+        #[cfg(test)]
+        {
+            CommandParser::new(history_path)
+        }
+        #[cfg(not(test))]
+        {
+            let mut parser = CommandParser::new(history_path);
+            let _ = parser.load_history();
+            parser
         }
     }
 
@@ -1405,6 +1477,9 @@ impl App {
             context_hints,
             error_badge_count: self.activity_log.unread_error_count(),
         };
+        // Command / Search / hint input bar
+        self.input_bar.render(frame, areas.input_bar);
+
         // Toast — render in dedicated toast_bar area
         let active_toasts = self.background_tracker.active_toasts();
         if let Some(t) = active_toasts.first() {
@@ -1534,6 +1609,80 @@ impl App {
     pub fn action_tx(&self) -> &crate::context::ActionSender {
         &self.action_tx
     }
+
+    /// Translate a parsed `Command` into app-level effects.
+    /// Unit 4.5 Step B covers Navigate / Quit / Refresh / Help / Switch* and
+    /// soft-deprecates the legacy `:ctx` variants with a toast. Unknown input
+    /// surfaces as an error toast so nothing ever silently drops.
+    fn execute_command(&mut self, cmd: Command) {
+        match cmd {
+            Command::Quit => {
+                self.should_quit = true;
+            }
+            Command::Navigate(route) => {
+                self.dispatch_action(Action::Navigate(route));
+            }
+            Command::Refresh => {
+                if let Some(component) = self.components.get(&self.router.current())
+                    && let Some(action) = component.refresh_action()
+                {
+                    self.dispatch_action(action);
+                }
+            }
+            Command::Help => {
+                self.background_tracker.add_toast(
+                    "Help — :<route> navigate · :q quit · :refresh · :switch-project <name> · :switch-cloud <name> · :switch-back".into(),
+                    crate::background::ToastLevel::Info,
+                );
+            }
+            Command::SwitchProject(name) => {
+                self.dispatch_action(Action::SwitchContext(
+                    crate::context::ContextRequest::ByName {
+                        cloud: None,
+                        project: name,
+                        domain: None,
+                    },
+                ));
+            }
+            Command::SwitchCloud(name) => {
+                // `ContextRequest` requires a project; a pure cloud-only
+                // switch has no first-class representation yet (BL-P2-074).
+                self.background_tracker.add_toast(
+                    format!(
+                        "switch-cloud {name}: not available yet — use :switch-project <name> once the cloud's project list is exposed"
+                    ),
+                    crate::background::ToastLevel::Info,
+                );
+            }
+            Command::SwitchBack => {
+                self.dispatch_action(Action::SwitchBack);
+            }
+            Command::ContextSwitch(cloud) => {
+                // Legacy `:ctx <cloud>` — soft-deprecated in favor of the
+                // Unit 4.5/5 switch commands.
+                self.background_tracker.add_toast(
+                    format!("Legacy :ctx {cloud} — use :switch-cloud or :switch-project instead"),
+                    crate::background::ToastLevel::Info,
+                );
+            }
+            Command::ContextList => {
+                let active = self.config.active_cloud_name();
+                self.background_tracker.add_toast(
+                    format!("Active cloud: {active} (picker: Ctrl+P — Unit 6)"),
+                    crate::background::ToastLevel::Info,
+                );
+            }
+            Command::Unknown(raw) => {
+                let message = if raw.is_empty() {
+                    "Unknown command".to_string()
+                } else {
+                    format!("Unknown command: {raw}")
+                };
+                self.background_tracker
+                    .add_toast(message, crate::background::ToastLevel::Error);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1635,9 +1784,250 @@ mod tests {
     #[test]
     fn test_app_esc_to_normal() {
         let mut app = make_app();
-        app.input_mode = InputMode::Command;
+        // Enter Command mode through the real user path so `input_bar` and
+        // `input_mode` are both activated together.
+        app.handle_key(make_key(KeyCode::Char(':')));
+        assert_eq!(app.input_mode, InputMode::Command);
         app.handle_key(make_key(KeyCode::Esc));
         assert_eq!(app.input_mode, InputMode::Normal);
+    }
+
+    // --- Unit 4.5 Step A: Command Bar Integration ---
+
+    #[test]
+    fn test_command_bar_colon_activates_input_bar() {
+        let mut app = make_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        assert_eq!(app.input_mode, InputMode::Command);
+        // Typing while in command mode accumulates in the input bar buffer.
+        app.handle_key(make_key(KeyCode::Char('s')));
+        app.handle_key(make_key(KeyCode::Char('r')));
+        app.handle_key(make_key(KeyCode::Char('v')));
+        assert_eq!(app.input_bar.buffer(), "srv");
+    }
+
+    #[test]
+    fn test_command_bar_enter_commits_quit() {
+        let mut app = make_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "quit".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        assert!(app.should_quit, "quit should flip should_quit");
+        assert_eq!(app.input_mode, InputMode::Normal);
+        assert_eq!(app.input_bar.buffer(), "");
+    }
+
+    #[test]
+    fn test_command_bar_enter_commits_quit_abbrev_q() {
+        let mut app = make_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        app.handle_key(make_key(KeyCode::Char('q')));
+        app.handle_key(make_key(KeyCode::Enter));
+        assert!(app.should_quit);
+        assert_eq!(app.input_mode, InputMode::Normal);
+    }
+
+    #[test]
+    fn test_command_bar_empty_enter_returns_to_normal() {
+        let mut app = make_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        app.handle_key(make_key(KeyCode::Enter));
+        assert_eq!(app.input_mode, InputMode::Normal);
+        assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn test_command_bar_esc_cancels_and_clears_buffer() {
+        let mut app = make_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        app.handle_key(make_key(KeyCode::Char('x')));
+        app.handle_key(make_key(KeyCode::Esc));
+        assert_eq!(app.input_mode, InputMode::Normal);
+        assert_eq!(app.input_bar.buffer(), "");
+    }
+
+    #[test]
+    fn test_command_bar_tab_expands_abbreviation() {
+        let mut app = make_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        app.handle_key(make_key(KeyCode::Char('s')));
+        app.handle_key(make_key(KeyCode::Char('r')));
+        app.handle_key(make_key(KeyCode::Char('v')));
+        app.handle_key(make_key(KeyCode::Tab));
+        // "srv" is an abbreviation for "servers" — Tab expands the buffer.
+        assert_eq!(app.input_bar.buffer(), "servers");
+    }
+
+    #[test]
+    fn test_command_bar_history_up_restores_previous() {
+        let mut app = make_app();
+        // Use a valid command so it gets pushed to history (Unknown commands
+        // are filtered out per PR3 cargo-review C2).
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "servers".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        // Re-enter command mode and navigate up.
+        app.handle_key(make_key(KeyCode::Char(':')));
+        app.handle_key(make_key(KeyCode::Up));
+        assert_eq!(app.input_bar.buffer(), "servers");
+    }
+
+    #[test]
+    fn test_command_bar_unknown_not_pushed_to_history() {
+        // PR3 cargo-review C2: unknown input must not pollute history.
+        let mut app = make_app();
+        // Push a valid command first.
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "servers".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        // Then an unknown command — should NOT enter history.
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "foobar".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        // Up restores the valid command, skipping the unknown one.
+        app.handle_key(make_key(KeyCode::Char(':')));
+        app.handle_key(make_key(KeyCode::Up));
+        assert_eq!(app.input_bar.buffer(), "servers");
+    }
+
+    #[test]
+    fn test_command_bar_backspace_shrinks_buffer() {
+        let mut app = make_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        app.handle_key(make_key(KeyCode::Char('a')));
+        app.handle_key(make_key(KeyCode::Char('b')));
+        app.handle_key(make_key(KeyCode::Backspace));
+        assert_eq!(app.input_bar.buffer(), "a");
+    }
+
+    // --- Unit 4.5 Step B: Command → Action dispatch ---
+
+    #[test]
+    fn test_command_bar_navigate_servers() {
+        let mut app = make_app();
+        // Start elsewhere so the navigation is observable (default is Servers).
+        app.router_mut().navigate(Route::Networks);
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "servers".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        assert_eq!(app.router().current(), Route::Servers);
+        assert_eq!(app.input_mode, InputMode::Normal);
+    }
+
+    #[test]
+    fn test_command_bar_navigate_abbreviation() {
+        let mut app = make_app();
+        app.router_mut().navigate(Route::Servers);
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "net".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        assert_eq!(app.router().current(), Route::Networks);
+    }
+
+    #[test]
+    fn test_command_bar_switch_project_without_switcher_emits_toast() {
+        let mut app = make_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "switch-project admin".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        let toasts = app.background_tracker().active_toasts();
+        assert!(
+            toasts
+                .iter()
+                .any(|t| t.message.to_lowercase().contains("not available")),
+            "expected switcher-pending toast for switch-project, got: {:?}",
+            toasts.iter().map(|t| t.message.clone()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_command_bar_switch_back_without_switcher_emits_toast() {
+        let mut app = make_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "switch-back".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        let toasts = app.background_tracker().active_toasts();
+        assert!(
+            toasts
+                .iter()
+                .any(|t| t.message.to_lowercase().contains("not available")),
+            "expected switcher-pending toast for switch-back"
+        );
+    }
+
+    #[test]
+    fn test_command_bar_switch_cloud_emits_info_toast() {
+        let mut app = make_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "switch-cloud prod".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        let toasts = app.background_tracker().active_toasts();
+        assert!(
+            toasts
+                .iter()
+                .any(|t| t.message.to_lowercase().contains("switch-cloud")),
+            "expected switch-cloud toast, got: {:?}",
+            toasts.iter().map(|t| t.message.clone()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_command_bar_help_emits_toast() {
+        let mut app = make_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "help".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        let toasts = app.background_tracker().active_toasts();
+        assert!(
+            toasts.iter().any(|t| t.message.contains(":switch-project")
+                || t.message.contains(":switch-back")
+                || t.message.contains(":q")),
+            "expected help toast listing commands, got: {:?}",
+            toasts.iter().map(|t| t.message.clone()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_command_bar_unknown_command_stays_in_normal() {
+        let mut app = make_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "foobar".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        assert_eq!(app.input_mode, InputMode::Normal);
+        assert!(!app.should_quit);
+        // The unknown command must surface through the user-visible toast/log path,
+        // not silently vanish. A warning-level toast is expected.
+        let toasts = app.background_tracker().active_toasts();
+        assert!(
+            toasts
+                .iter()
+                .any(|t| t.message.to_lowercase().contains("unknown")
+                    || t.message.contains("foobar")),
+            "expected toast for unknown command, got: {:?}",
+            toasts.iter().map(|t| t.message.clone()).collect::<Vec<_>>()
+        );
     }
 
     #[test]
