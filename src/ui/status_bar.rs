@@ -3,10 +3,10 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
+use unicode_width::UnicodeWidthStr;
 
 use super::context_indicator::ContextIndicator;
-use super::theme;
-use super::theme::Theme;
+use super::theme::{self, Theme};
 
 pub struct StatusInfo {
     pub panel_name: String,
@@ -47,15 +47,18 @@ impl StatusBar {
 
         // Context indicator — rendered as the leading span so switches are
         // immediately visible. Empty string when no context is set.
-        let ctx_text = match indicator.target() {
-            Some(t) => format!(" {} • {} ", t.cloud, t.project_name),
-            None => String::new(),
-        };
-        let ctx_len = ctx_text.chars().count();
+        // BL-P2-077 C5: no explicit bg on span — container Paragraph owns the
+        // DarkGray bg, and overriding it here breaks NO_COLOR mode where
+        // `Theme::disabled()` strips color entirely.
+        let ctx_text = indicator
+            .target()
+            .map(|t| format!(" {} • {} ", t.cloud, t.project_name))
+            .unwrap_or_default();
+        let ctx_len = UnicodeWidthStr::width(ctx_text.as_str());
         let ctx_style = if indicator.is_highlighting() {
-            Theme::warning().bg(Color::DarkGray)
+            Theme::warning()
         } else {
-            Theme::disabled().bg(Color::DarkGray)
+            Theme::disabled()
         };
 
         // Error badge: " ⚠N" in red after left text
@@ -64,8 +67,7 @@ impl StatusBar {
         } else {
             String::new()
         };
-        // Use char count for display width (⚠ is 1 column in most terminals)
-        let badge_len = badge.chars().count();
+        let badge_len = UnicodeWidthStr::width(badge.as_str());
 
         // Right: key hints using theme::key_hint()
         let mut hint_spans: Vec<Span> = Vec::new();
@@ -75,11 +77,16 @@ impl StatusBar {
             }
             hint_spans.extend(theme::key_hint(key, desc));
         }
-        let hint_plain_len: usize = hint_spans.iter().map(|s| s.content.len()).sum();
+        // BL-P2-077 C1/G4: display width (columns), not bytes — hint labels
+        // include Korean characters that are 3 bytes but ~2 columns wide.
+        let hint_plain_len: usize = hint_spans
+            .iter()
+            .map(|s| UnicodeWidthStr::width(s.content.as_ref()))
+            .sum();
 
         let padding_len = (area.width as usize)
             .saturating_sub(ctx_len)
-            .saturating_sub(left.len())
+            .saturating_sub(UnicodeWidthStr::width(left.as_str()))
             .saturating_sub(badge_len)
             .saturating_sub(hint_plain_len);
         let padding = " ".repeat(padding_len);

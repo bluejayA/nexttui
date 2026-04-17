@@ -312,23 +312,18 @@ AI 개발 맥락에서 이는 "preference" 수준이 아니라 **claude-code 세
 ### BL-P2-077: PR3 cargo-review 잔여 MED finding (unicode-width + NO_COLOR + event test)
 **Priority**: Medium
 **Category**: UX correctness / Test robustness
-**Status**: **Step 4/5 진행 중 병행 처리 예정** (신규 세션 시작 시 반드시 확인)
+**Status**: C1 + G4 + C5 = Done (PR3 Step 4 병행 처리, commit 준비 중). G6 남음.
 **Description**: PR3 Step 2/3 cargo-review에서 식별된 MED finding 3건. APPROVE verdict였으나 Step 4 (ConfirmDialog — 한글 메시지 다수) 이전/병행 처리가 자연스러움.
 
-**C1 + G4 — `unicode-width` 전환** (우선순위 최고):
-- `src/ui/status_bar.rs`의 `hint_plain_len`은 `content.len()` (byte) 기반 → 한글 hint("이동", "패널", "상세")는 3 byte/글자로 과대 계산
-- `ctx_len`은 `.chars().count()` → 단위 혼용
-- 좁은 터미널에서 `saturating_sub`가 padding_len을 0으로 만들어 hint 가림 가능
-- 해결: `unicode-width::UnicodeWidthStr::width()`로 통일 (ratatui가 이미 의존성으로 가지고 있어 추가 비용 0)
-- Step 4: ConfirmDialog fingerprint가 `cloud • project` 한글 project 이름 포함 시 동일 이슈 반복 → 같이 전환
-- **타이밍**: Step 4 착수 직후 (before 콜사이트 확장)
+**C1 + G4 — `unicode-width` 전환** ✅ Done:
+- `src/ui/status_bar.rs`의 `hint_plain_len`이 `content.len()` (byte) → `UnicodeWidthStr::width()` (column)로 통일
+- `ctx_len` / `badge_len` / `left_text` 모두 동일 유틸 사용
+- 한글 hint(3 byte/글자)가 ~2 column으로 정확히 계산됨
+- Cargo.toml에 `unicode-width = "0.2"` 추가 (ratatui transitive 유무와 무관하게 명시)
 
-**C5 — `ctx_style.bg(Color::DarkGray)` NO_COLOR 침범**:
-- `Theme::disabled()`가 NO_COLOR 시 fg=None으로 색 strip 기획
-- `.bg(Color::DarkGray)` 하류 패치가 NO_COLOR 의도를 우회
-- 컨테이너 Paragraph가 이미 `bg(DarkGray)` → span 단위 재설정 불필요
-- 해결: `.bg()` 제거, 컨테이너 bg에 위임
-- **타이밍**: Step 4 스타일 정리 시 함께
+**C5 — `ctx_style.bg(Color::DarkGray)` NO_COLOR 침범** ✅ Done:
+- `ctx_style`에서 `.bg(Color::DarkGray)` 제거. 컨테이너 Paragraph bg가 이미 DarkGray이므로 span-level 재설정 불필요
+- `Theme::disabled()`의 NO_COLOR 동작 보존
 
 **G6 — ContextChanged channel round-trip 통합 테스트**:
 - 현재 `test_context_changed_updates_indicator`는 `app.handle_event(AppEvent::ContextChanged{..})` 직접 호출
