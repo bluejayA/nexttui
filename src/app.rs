@@ -1610,6 +1610,21 @@ impl App {
         &self.action_tx
     }
 
+    /// Persist user state before the process exits. Currently best-effort
+    /// saves command history. Safe to call from any successful exit path
+    /// (Ctrl+C, `:quit`, normal `q`, etc.). Errors are logged, never
+    /// propagated, so terminal cleanup still runs. (BL-P2-071)
+    pub fn shutdown(&self) {
+        if let Err(e) = self.command_parser.save_history() {
+            tracing::warn!(%e, "failed to save command history on shutdown");
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_command_history_path(&mut self, path: std::path::PathBuf) {
+        self.command_parser = CommandParser::new(path);
+    }
+
     /// Translate a parsed `Command` into app-level effects.
     /// Unit 4.5 Step B covers Navigate / Quit / Refresh / Help / Switch* and
     /// soft-deprecates the legacy `:ctx` variants with a toast. Unknown input
@@ -1874,6 +1889,42 @@ mod tests {
         app.handle_key(make_key(KeyCode::Char(':')));
         app.handle_key(make_key(KeyCode::Up));
         assert_eq!(app.input_bar.buffer(), "servers");
+    }
+
+    #[test]
+    fn test_shutdown_persists_command_history() {
+        // BL-P2-071: shutdown() must save history so the next session can
+        // restore previous commands via Up.
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("history");
+        let mut app = make_app();
+        app.set_command_history_path(path.clone());
+
+        // Enter and commit a valid command so it's pushed to history.
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "servers".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+
+        app.shutdown();
+
+        assert!(path.exists(), "history file must exist after shutdown");
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            content.contains("servers"),
+            "history file should contain 'servers', got: {content:?}"
+        );
+    }
+
+    #[test]
+    fn test_shutdown_with_no_commands_does_not_error() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("history");
+        let mut app = make_app();
+        app.set_command_history_path(path);
+        // No commands entered. shutdown must be a no-op crash-wise.
+        app.shutdown();
     }
 
     #[test]

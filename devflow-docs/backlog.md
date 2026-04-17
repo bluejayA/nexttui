@@ -224,17 +224,17 @@ AI 개발 맥락에서 이는 "preference" 수준이 아니라 **claude-code 세
 각 항목은 독립적으로 실행 가능. 기능 변경 없이 순수 리팩토링.
 **Ref**: BL-P2-031 T3 PR #75 cargo-review (Suggestions S4/S5/S6)
 
-### BL-P2-071: Command history persist (`save_history()` Quit/shutdown hook)
+### BL-P2-071: Command history persist (`save_history()` Quit/shutdown hook) ✅
 **Priority**: High
 **Category**: UX / Functional gap
-**Description**: PR3 cargo-review C1 (HIGH). `init_command_parser`가 `load_history()`만 호출하고 `save_history()`는 어디서도 호출되지 않음. 세션 간 history 영속화 0% — `Up` 키로 이전 세션 명령 복구 불가. PR3 (사용자 노출 시작) 머지 시점에 첫 사용자가 휘발 UX를 경험.
-필요 작업:
-- `Command::Quit` 분기 직전에서 `let _ = self.command_parser.save_history();` 호출
-- main.rs 종료 경로 (Ctrl+C, normal exit, panic guard 검토) 에서도 동일 호출
-- `Drop` 또는 `App::shutdown()` 훅 도입 검토 (panic 시 보존 필요 여부 결정)
-- 신규 테스트: history persist 라운드트립 (push → save → reload → prev)
-**Acceptance**: 앱 종료 후 재시작 시 `Up` 키로 직전 세션 명령 복원.
-**Ref**: PR3 Unit 4.5 cargo-review C1. PR3 안에서 처리 (사용자 노출 PR과 동행)
+**Status**: Done (PR3 안에서 닫음)
+**Description**: PR3 cargo-review C1 (HIGH) + Codex review P2. `init_command_parser`가 `load_history()`만 호출하고 `save_history()`는 어디서도 호출되지 않던 문제.
+**해결**:
+- `App::shutdown(&self)` 메서드 도입 — best-effort `command_parser.save_history()` 호출, 에러는 tracing::warn로 로깅 후 무시
+- main.rs `run_event_loop` 종료 직후 `app.shutdown()` 호출 — 모든 정상 종료 경로(`:quit`, `q`, Ctrl+C 모두 should_quit=true → loop 종료) cover
+- 신규 테스트 2건: `test_shutdown_persists_command_history` (라운드트립), `test_shutdown_with_no_commands_does_not_error` (no-op 안전성)
+- test-only `set_command_history_path()` setter 추가 (사용자 ~/.config 오염 방지)
+**Acceptance**: 앱 종료 후 재시작 시 `Up` 키로 직전 세션 명령 복원. ✅
 
 ### BL-P2-072: Unknown command 토스트 페이로드 일관성 + truncation/sanitize
 **Priority**: Medium
