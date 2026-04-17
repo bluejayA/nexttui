@@ -309,6 +309,31 @@ AI 개발 맥락에서 이는 "preference" 수준이 아니라 **claude-code 세
 **Acceptance**: PR3 동일 동작 + 스타일 일관성 + 미래 variant 추가 시 컴파일러 감지.
 **Ref**: PR3 Unit 4.5 cargo-review S1/S3/S4/S8/G8/G9 + PR3 Step 2/3 cargo-review S3~S10/C3/C5/G7/G9
 
+### BL-P2-078: destructive ConfirmDialog API 강제력 보완 (Codex adversarial HIGH #2 후속)
+**Priority**: Medium
+**Category**: Safety / Release enforcement
+**Status**: **Step 5 이후 처리 예정** — 신규 세션 시작 시 반드시 확인
+**Description**: Codex adversarial review HIGH #2 권고 "타입/상태로 강제해 caller가 잊을 수 없게 하라"에서 PR3는 차선책(A+B: `ConfirmDialog::for_destructive` convenience + `ContextTarget::fingerprint` helper)만 채택. 여전히 `ConfirmDialog::yes_no`로 직접 호출하면 fingerprint/recontext escalation이 누락되는 opt-in 구조.
+
+**미달된 조건**: "caller cannot forget" — 신규 destructive action 추가 시 `for_destructive`를 안 쓰면 그만.
+
+**강제력 옵션 검토**:
+- (A) Lint/CI test: destructive keyword(`Delete`/`Force`/`Evacuate` 등)를 포함한 Action variant에 대응하는 모듈의 `ConfirmDialog` 호출이 `for_destructive`인지 grep 검증. CI `cargo test --test destructive_enforcement`.
+- (B) PendingAction 레벨 강제: `PendingAction::Delete*`가 `context_fingerprint: ContextTarget` 필드를 필수로 가지고 `to_dialog(&indicator)` 메서드 자체가 자동 attach. 16 모듈 파급 있으나 컴파일 강제.
+- (C) ConfirmMode에 `kind: Destructive/NonDestructive` payload — Destructive variant는 생성 시 target 필수. 기존 4개 factory 시그니처 변경.
+- (D) `#[must_use]` 또는 clippy custom lint — 약한 강제.
+
+**필요 작업**:
+1. 위 옵션 중 trade-off 분석 (Step 5 콜사이트 32개 적용 완료 후 재평가)
+2. 선택된 옵션 구현 + 테스트
+3. 신규 destructive action 추가 플로우 문서화 (CONTRIBUTING 또는 src/module/README)
+
+**Acceptance**: 신규 destructive action을 `for_destructive` 없이 추가하면 CI/컴파일이 차단.
+
+**타이밍**: PR3 Step 5 완료 후. Step 5가 실제 콜사이트 패턴을 드러내므로 그 이후가 강제력 설계 비용 최저.
+
+**Ref**: Codex adversarial review HIGH #2 (verbatim 원문은 PR3 feat/bl-p2-031-pr3-commands-ui 브랜치 세션 기록).
+
 ### BL-P2-077: PR3 cargo-review 잔여 MED finding (unicode-width + NO_COLOR + event test)
 **Priority**: Medium
 **Category**: UX correctness / Test robustness

@@ -4,43 +4,53 @@
 CONSTRUCTION
 
 ## Current Stage
-Unit 5 Step 3 완료 → Step 4 (ConfirmDialog fingerprint) 진입 대기
+Unit 5 Step 4 완료 + Codex adversarial HIGH #3 (UTF-8) 반영 → HIGH #2 (ConfirmDialog destructive API) 작업 중
 
 ## Complexity
 Standard
 
 ## Selected Approach
-Unit 5 구현 중 stub blind spot 발견 — CommandParser + InputBar가 app.rs에 wire되지 않음. Unit 4.5 신규 분해로 선행 처리 후 Unit 5 원래 설계 진행.
+Unit 5 구현 중 stub blind spot 발견 — Unit 4.5 신규 분해로 선행. Step 4 후 Codex adversarial review 3건 HIGH 발견 → 순차 처리 중.
 
 ## Step Plan
 **Unit 4.5 — Command Bar Integration** ✅
-- Step A: app.rs wire ✅
-- Step B: Command → Action dispatch ✅
+- Step A/B ✅
 
 **Unit 5 — Commands & Safety UI**
-- Step 1: `src/input/command.rs` — switch 파싱 + Tab ✅
-- Step 2: `src/ui/context_indicator.rs` — 패시브 타이머 위젯 ✅
-- Step 3: `src/ui/status_bar.rs` — ContextIndicator 연결 + ContextChanged arm ✅
-- **Step 4**: `src/ui/confirm.rs` — `with_context_fingerprint(target)` + `require_recontext_confirm(recently_switched)` ⬅ 다음
-- Step 5: destructive 콜사이트 ~32개에 fingerprint 적용 + 통합 테스트
+- Step 1 ✅ Step 2 ✅ Step 3 ✅ Step 4 ✅
+- ⬅ 현재: Codex HIGH 3건 순차 반영 (#3 ✅, #2 진행, #1 대기)
+- Step 5 (destructive 32 콜사이트) — HIGH 3건 모두 완료 후 착수
+
+**Codex adversarial HIGH follow-up**
+- #3 UTF-8 panic: ✅ (fa85900)
+- #2 ConfirmDialog destructive API: 진행 중 (A+B 경로 — for_destructive convenience + ContextTarget::fingerprint)
+- #1 ContextChanged 최소 무효화: 대기
 
 ## Branch
-feat/bl-p2-031-pr3-commands-ui (from a00c044, 현재 HEAD: d316127)
+feat/bl-p2-031-pr3-commands-ui (from a00c044, HEAD: fa85900)
 
-## ⚠️ Step 4 진입 시 필수 반영 — PR3 cargo-review 잔여 MED finding
+## ⚠️ Step 5 진입 시 필수 반영
 
-신규 세션 재개 시 이 항목을 반드시 확인하고 Step 4 착수 직후 병행 처리.
+신규 세션 재개 시 반드시 확인.
 
-자세한 내용: `devflow-docs/backlog.md` → **BL-P2-077** (PR3 cargo-review 잔여 MED finding)
+### 새 항목 (Codex adversarial review 결과)
+자세한 내용: `devflow-docs/backlog.md` → **BL-P2-078** (destructive ConfirmDialog 강제력 보완)
 
 요약:
-- **C1 + G4**: `unicode-width` 전환 (한글 hint byte/char 단위 혼용 해결). Step 4 ConfirmDialog 한글 메시지와 함께 전환.
-- **C5**: `status_bar.rs` `ctx_style.bg(DarkGray)` 제거 (NO_COLOR 침범 방지 — 컨테이너 bg 위임).
-- **G6**: ContextChanged channel round-trip 통합 테스트 — BL-P2-052 Part B 착수 또는 Step 5 완료 후.
+- PR3는 Codex HIGH #2에 대해 **차선책 A+B만 채택** (`for_destructive` convenience + `ContextTarget::fingerprint` helper)
+- Codex 본래 권고 "caller cannot forget"은 미달 — `yes_no` 직접 호출로 우회 가능
+- **Step 5 완료 후 BL-P2-078**: grep/CI test 또는 타입 강제로 destructive 콜사이트 enforcement
+- Step 5는 32 콜사이트를 `for_destructive`로 일괄 적용 — 이 패턴이 확정되어야 강제력 설계 비용 최저
 
-Low-priority 스타일 항목은 BL-P2-076에 수집됨 (필수 아님).
+### 기존 항목 유지
+자세한 내용: `devflow-docs/backlog.md` → **BL-P2-077** (PR3 cargo-review 잔여 MED finding)
 
-## Completed Commits (main 위 8 commits)
+- **G6**: ContextChanged channel round-trip 통합 테스트 — BL-P2-052 Part B 착수 또는 Step 5 완료 후
+- **BL-P2-052 Part B 전체** — full invalidation + Fetch* + toast. PR3는 Codex HIGH #1에 대해 "module Vec clear + is_loading" 최소 안전만 포함 예정.
+
+Low-priority 스타일 항목: BL-P2-076 (필수 아님).
+
+## Completed Commits (main 위 10 commits)
 - 9e1fdb7 INCEPTION UPDATE (Unit 4.5)
 - b628eb6 backlog 등록 (BL-P2-071..076)
 - 4cd32c5 Unit 4.5 + Unit 5 Step 1
@@ -49,10 +59,13 @@ Low-priority 스타일 항목은 BL-P2-076에 수집됨 (필수 아님).
 - d2fa95d BL-P2-073 (InputMode 단일화)
 - f138af6 Unit 5 Step 3
 - d316127 cargo-review C2/S1/S2 follow-up
+- e9f497e Unit 5 Step 4 (ConfirmDialog fingerprint)
+- 0ca88d3 BL-P2-077 (unicode-width + bg)
+- feaad06 backlog + state 안전장치
+- fa85900 Codex HIGH #3 (UTF-8 cursor panic fix)
 
 ## Session Note
-- 2026-04-17: PR3 CONSTRUCTION 사이클 시작. 이전 T3(PR #75) 머지 완료 상태에서 분기.
-- 2026-04-17 INCEPTION UPDATE: Unit 4.5 Command Bar Integration 추가 (stub blind spot 대응).
-- 리뷰 사이클: Unit 4.5/Step 1 cargo-review + Codex (C1/P2 = BL-P2-071) → Step 2/3 cargo-review (C2/S1/S2 반영 완료, C1/C5/G6 = BL-P2-077로 추적).
-- 커밋 전략: Step 단위 + 각 리뷰 follow-up 별도 commit. 현재까지 8 commits.
-- push/PR: CONSTRUCTION 완료 + 최종 Codex 리뷰 후 사용자 승인받아 진행.
+- 2026-04-17: PR3 CONSTRUCTION 사이클.
+- 리뷰 사이클: Unit 4.5/Step 1 cargo-review + Codex → Step 2/3 cargo-review → Step 4 cargo-review + Codex adversarial → HIGH 3건 순차 반영.
+- 커밋 전략: Step 단위 + 각 리뷰 follow-up 별도 commit.
+- push/PR: Step 5 완료 + 최종 Codex 리뷰 후 사용자 승인.
