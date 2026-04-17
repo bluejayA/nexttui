@@ -424,6 +424,47 @@ impl Component for ContextIndicator {
   }
   ```
 
+**Unit 4.5 추가 (Command Bar Integration — 2026-04-17)**:
+- `input_bar: crate::ui::input_bar::InputBar` (기존 정의만 있던 타입을 실제 필드로 보유)
+- `command_parser: crate::input::command::CommandParser` (동일)
+- `handle_key(key)` 내 `InputMode::Command` 분기:
+  ```rust
+  if self.input_mode == InputMode::Command {
+      match self.input_bar.handle_key(key) {
+          InputAction::Commit(buf) => {
+              self.input_mode = InputMode::Normal;
+              if !buf.trim().is_empty() {
+                  self.command_parser.push_history(&buf);
+                  let cmd = self.command_parser.parse(&buf);
+                  if let Some(action) = command_to_action(cmd, ..) {
+                      self.dispatch_action(action);
+                  }
+              }
+          }
+          InputAction::AutoComplete => {
+              if let Some(expanded) = self.command_parser.auto_complete(self.input_bar.buffer()) {
+                  self.input_bar.set_buffer(expanded);
+              }
+          }
+          InputAction::HistoryUp => { if let Some(h) = self.command_parser.history_prev() { self.input_bar.set_buffer(h.to_string()); } }
+          InputAction::HistoryDown => { if let Some(h) = self.command_parser.history_next() { self.input_bar.set_buffer(h.to_string()); } }
+          InputAction::Cancel => { self.input_mode = InputMode::Normal; }
+          InputAction::None | InputAction::SearchChanged(_) => {}
+      }
+      return true;
+  }
+  ```
+- `:` 키 → `InputMode::Command` 전환 시 `self.input_bar.activate(ui::input_bar::InputMode::Command)` 호출로 버퍼 초기화 보장
+- InputMode 타입 일치 문제: `component::InputMode`(app 상태용) ≠ `ui::input_bar::InputMode`(입력 위젯용). 두 모드를 동기화하는 단일 진입점(`enter_command_mode()` 헬퍼) 도입
+- `command_to_action(cmd: Command) -> Option<Action>` 매퍼 (app.rs 내부 함수 또는 command.rs 헬퍼):
+  - Navigate/Quit/Refresh/Help/Switch* → 해당 Action 또는 직접 상태 변경
+  - Unknown → `None` + toast/log 에러 노출
+  - ContextSwitch/ContextList (legacy): 현재 미사용 경로 — Unknown과 동일 취급(toast 안내)
+
+**Render**:
+- 기존 `layout.input_bar` Rect에 `self.input_bar.render(frame, area)` 호출
+- StatusBar 라인과 분리된 InputBar 영역 (이미 `ui/layout.rs`에 확보됨)
+
 ### Worker (src/worker.rs)
 **시그니처 통일**:
 ```rust

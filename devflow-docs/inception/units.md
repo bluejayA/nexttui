@@ -2,8 +2,11 @@
 
 **BL**: BL-P2-031 Keystone Rescoping
 **Timestamp**: 2026-04-13T00:00:00+09:00
-**Updated**: 2026-04-16 — T3 Runtime Wire unit 추가
-**총 10개 단위** (PR1: Unit 1~4 ✅, PR3: Unit 5, PR4: Unit 6, PR5: Unit 7, **T3: Unit 8~10**)
+**Updated**:
+- 2026-04-16 — T3 Runtime Wire unit 추가
+- 2026-04-17 — Unit 4.5 Command Bar Integration 추가 (stub blind spot 대응)
+
+**총 11개 단위** (PR1: Unit 1~4 ✅, **PR3: Unit 4.5 + Unit 5**, PR4: Unit 6, PR5: Unit 7, T3: Unit 8~10 ✅)
 
 ## 분해 원칙
 
@@ -19,12 +22,18 @@ Unit 1 (Foundation Types)
   ├──> Unit 2 (Concurrency Infra)  ─┐
   └──> Unit 3 (Auth & Session Port) ─┼──> Unit 4 (Switch Orchestration)
                                       │      │
-                                      │      ├──> Unit 5 (Commands & Safety UI)  ─┬──> Unit 6 (Picker UI)
-                                      │      │                                      │
-                                      │      └──────────────────────────────────────┴──> Unit 7 (Identity Module)
+                                      │      ▼
+                                      │   Unit 4.5 (Command Bar Integration) ──┐
+                                      │                                         │
+                                      │                                         ▼
+                                      │                        Unit 5 (Commands & Safety UI) ─┬──> Unit 6 (Picker UI)
+                                      │                                                         │
+                                      │                                                         └──> Unit 7 (Identity Module)
 ```
 
 Unit 2와 Unit 3는 Unit 1 완료 후 **병렬 가능**.
+Unit 4.5는 Unit 4 완료 후 수행 (기존 dead-code stub 해소 — Command Bar wire).
+Unit 5는 Unit 4.5 완료 후 수행 (wire 위에서 switch 명령이 실제 동작).
 Unit 6와 Unit 7은 Unit 5 완료 후 **병렬 가능**.
 
 ---
@@ -147,10 +156,57 @@ Unit 6와 Unit 7은 Unit 5 완료 후 **병렬 가능**.
 
 ---
 
+## Unit 4.5: Command Bar Integration (신규 — 2026-04-17)
+
+**Responsibility**: 기존에 정의만 되어 있던 `CommandParser`와 `InputBar`를 `App`에 실제로 연결한다. `:` 키 → 커맨드 모드 → 입력 수집 → Enter 시 파싱 → Action dispatch의 전체 경로를 동작 상태로 전환한다.
+**Dependencies**: Unit 4 (Action::SwitchContext / Action::SwitchBack variants)
+**Rationale**: 2026-04-17 CONSTRUCTION 중 발견 — `CommandParser` 및 `InputBar`가 모두 외부 콜러 없는 dead code. app.rs:256은 `:` 키를 누르면 `input_mode = InputMode::Command`로 전환만 하고, 입력 수집·파싱·dispatch가 비어 있음. Unit 5에서 추가하는 switch 명령이 실동작하려면 이 wire가 선행되어야 함.
+
+**Interfaces (exposes)**:
+- `src/app.rs` 변경:
+  - `App` 필드 추가: `input_bar: crate::ui::input_bar::InputBar`, `command_parser: crate::input::command::CommandParser`
+  - `InputMode::Command` 분기: InputBar로 키 위임 → `InputAction::Commit(buf)` / `AutoComplete` / `HistoryUp` / `HistoryDown` / `Cancel` 처리
+  - `InputAction::Commit` 수신 시: `command_parser.parse(&buf)` → `Command` → `Action` 변환 → dispatch
+  - `InputAction::AutoComplete`: `command_parser.auto_complete(buffer)` → `input_bar.set_buffer(expanded)`
+  - History Up/Down: `command_parser.history_prev/next` → `input_bar.set_buffer`
+  - 히스토리 save/load: `new()` + quit 플로우
+- `Command → Action` 변환 헬퍼 (`command.rs` 또는 `app.rs` 내부):
+  - `Command::Navigate(route)` → `Action::Navigate(route)`
+  - `Command::Quit` → `self.should_quit = true`
+  - `Command::Refresh` → `Action::Refresh` (존재 시) 또는 기존 refresh 경로
+  - `Command::Help` → 기존 help 경로 또는 toast
+  - `Command::SwitchProject(name)` → `Action::SwitchContext(ContextRequest::ByName { cloud: None, project: name })`
+  - `Command::SwitchCloud(name)` → `Action::SwitchContext(ContextRequest::ByName { cloud: Some(name), project: "" | 기본 })` *(정확한 시그니처는 Unit 4 types에 맞춤)*
+  - `Command::SwitchBack` → `Action::SwitchBack`
+  - `Command::ContextSwitch(_)` / `Command::ContextList` — 기존 legacy 명령. PR3에서는 Unknown 또는 toast 안내로 격하 처리 가능 (결정은 Step B에서)
+  - `Command::Unknown(s)` → Toast/LogPanel 에러 메시지
+
+**Tests** (`src/app.rs::tests` + 필요 시 `command.rs`):
+- `:` 입력 → `input_mode == Command` (기존 테스트 유지)
+- 문자 누적: `:`, `s`, `r`, `v` → InputBar buffer == "srv" (InputBar 내부 위임 검증)
+- Enter → `Command::Navigate(Route::Servers)` → Action dispatch → route 전환
+- Enter empty → Normal 모드 복귀, action 없음
+- Tab(`s` + Tab) → buffer가 completions 중 하나로 확장
+- Up/Down → 히스토리 네비게이션 (push_history 후 Enter → Up → buffer 복원)
+- Esc → 취소, buffer 비움
+- `:quit` Enter → `should_quit == true`
+- `:switch-project admin` Enter → `Action::SwitchContext(ContextRequest::ByName { project: "admin", .. })` dispatch
+- `:switch-back` Enter → `Action::SwitchBack` dispatch
+- `:foobar` Enter → Unknown → toast/log 에러 emit (구체 형태는 Step B에서)
+
+**비대상** (별도 Unit):
+- ContextIndicator (Unit 5 Step 2)
+- ConfirmDialog fingerprint (Unit 5 Step 4)
+
+**Implementation order**: 4.5
+**PR**: PR3 (Unit 5와 함께)
+
+---
+
 ## Unit 5: Commands & Safety UI
 
 **Responsibility**: 사용자 노출 시점의 명령 + 안전 가시성 (인디케이터 + destructive fingerprint).
-**Dependencies**: Unit 4 (App.switch_context, Action variants)
+**Dependencies**: Unit 4 (App.switch_context, Action variants), **Unit 4.5 (Command Bar wire — switch 명령의 실제 dispatch 경로)**
 **Interfaces (exposes)**:
 - `src/input/command.rs` 변경 — `:switch-project`, `:switch-cloud`, `:switch-back` 명령 등록
   - 충돌 시 후보 출력 + 재선택 안내
@@ -225,8 +281,8 @@ Unit 6와 Unit 7은 Unit 5 완료 후 **병렬 가능**.
 
 | PR | Units | 기대 산출 |
 |----|-------|----------|
-| PR1 | Unit 1, 2, 3, 4 | safety infra + atomic switch core (사용자 노출 0) |
-| PR3 | Unit 5 | 사용자 노출 시작 — 명령 + 인디케이터 + fingerprint 동시 활성 |
+| PR1 (#68) | Unit 1, 2, 3, 4 | safety infra + atomic switch core (사용자 노출 0) |
+| PR3 | **Unit 4.5, Unit 5** | 사용자 노출 시작 — Command Bar wire + 명령 + 인디케이터 + fingerprint 동시 활성 |
 | PR4 | Unit 6 | 피커 모달 |
 | PR5 | Unit 7 | Identity 통합 + 모든 모듈의 ContextChanged 핸들러 |
 
