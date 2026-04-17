@@ -52,7 +52,7 @@ impl StatusBar {
         // `Theme::disabled()` strips color entirely.
         let ctx_text = indicator
             .target()
-            .map(|t| format!(" {} • {} ", t.cloud, t.project_name))
+            .map(|t| t.fingerprint())
             .unwrap_or_default();
         let ctx_len = UnicodeWidthStr::width(ctx_text.as_str());
         let ctx_style = if indicator.is_highlighting() {

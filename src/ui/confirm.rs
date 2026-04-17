@@ -4,6 +4,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 
+use super::context_indicator::ContextIndicator;
 use super::theme::Theme;
 use crate::context::types::ContextTarget;
 use ratatui::Frame;
@@ -103,11 +104,53 @@ impl ConfirmDialog {
     /// dialog so destructive actions surface the active target next to the
     /// prompt. The project name is also retained so
     /// [`Self::require_recontext_confirm`] can echo it as an expected typing
-    /// token. (Unit 5 Step 4.)
+    /// token.
+    ///
+    /// For destructive callsites prefer [`Self::for_destructive`] — it binds
+    /// fingerprint + recontext escalation in one call so the two safety bits
+    /// can't drift apart across the 30+ destructive confirm sites.
     pub fn with_context_fingerprint(mut self, target: &ContextTarget) -> Self {
-        self.context_fingerprint = Some(format!(" {} • {} ", target.cloud, target.project_name));
+        self.context_fingerprint = Some(target.fingerprint());
         self.context_project = Some(target.project_name.clone());
         self
+    }
+
+    /// Destructive-action factory. Attaches the target fingerprint and, if the
+    /// user just switched context (indicator still highlighting), escalates a
+    /// plain YesNo into a TypeToConfirm that demands the project name.
+    ///
+    /// Use this at every destructive call site (`Delete*`, `ForceDelete*`,
+    /// `Evacuate`, `Detach`, etc.) instead of calling `yes_no` +
+    /// `with_context_fingerprint` + `require_recontext_confirm` separately.
+    /// Follow-up BL-P2-078 will enforce this at compile/CI level.
+    ///
+    /// Example:
+    /// ```ignore
+    /// ConfirmDialog::for_destructive(
+    ///     format!("Delete server '{name}'?"),
+    ///     app.context_indicator.target().unwrap_or(&fallback_target),
+    ///     &app.context_indicator,
+    /// )
+    /// ```
+    pub fn for_destructive(
+        message: impl Into<String>,
+        target: &ContextTarget,
+        indicator: &ContextIndicator,
+    ) -> Self {
+        Self::yes_no(message)
+            .with_context_fingerprint(target)
+            .require_recontext_confirm(indicator.is_highlighting())
+    }
+
+    /// TypeToConfirm variant of [`Self::for_destructive`] — retains the typed
+    /// resource-name prompt while attaching the context fingerprint. Used for
+    /// paths that already require typing (server delete / volume force delete).
+    pub fn for_destructive_typed(
+        message: impl Into<String>,
+        expected: impl Into<String>,
+        target: &ContextTarget,
+    ) -> Self {
+        Self::type_to_confirm(message, expected).with_context_fingerprint(target)
     }
 
     /// Read-only accessor for tests / introspection.
@@ -505,6 +548,67 @@ mod tests {
         let mut dialog = ConfirmDialog::yes_no("Delete server?").require_recontext_confirm(true);
         let r = dialog.handle_key(key(KeyCode::Char('y')));
         assert!(matches!(r, ConfirmResult::Confirmed));
+    }
+
+    #[test]
+    fn test_for_destructive_with_unhighlighted_indicator_keeps_yes_no() {
+        // indicator has target but is not highlighting (no recent switch)
+        // → for_destructive must attach fingerprint but keep a YesNo dialog.
+        let mut indicator = ContextIndicator::new(std::time::Duration::from_secs(2));
+        indicator.set_target(&sample_target(), false); // mark_highlight=false
+        let target = sample_target();
+        let mut dialog = ConfirmDialog::for_destructive("Delete server?", &target, &indicator);
+        assert!(dialog.context_fingerprint().is_some());
+        let r = dialog.handle_key(key(KeyCode::Char('y')));
+        assert!(matches!(r, ConfirmResult::Confirmed));
+    }
+
+    #[test]
+    fn test_for_destructive_with_highlighted_indicator_escalates() {
+        // indicator is highlighting (recent switch) → for_destructive escalates
+        // the YesNo into a TypeToConfirm demanding the project name.
+        let mut indicator = ContextIndicator::new(std::time::Duration::from_secs(10));
+        indicator.set_target(&sample_target(), true);
+        assert!(indicator.is_highlighting());
+        let target = sample_target();
+        let mut dialog = ConfirmDialog::for_destructive("Delete server?", &target, &indicator);
+        // `y` alone must not confirm — escalation active.
+        let r = dialog.handle_key(key(KeyCode::Char('y')));
+        assert!(matches!(r, ConfirmResult::Pending));
+        // Backspace + project name confirms.
+        dialog.handle_key(key(KeyCode::Backspace));
+        for c in "admin".chars() {
+            dialog.handle_key(key(KeyCode::Char(c)));
+        }
+        let r = dialog.handle_key(key(KeyCode::Enter));
+        assert!(matches!(r, ConfirmResult::Confirmed));
+    }
+
+    #[test]
+    fn test_for_destructive_typed_keeps_resource_name_prompt() {
+        // TypeToConfirm variant must retain its own expected-name echo even
+        // with a fingerprint attached.
+        let target = sample_target();
+        let mut dialog =
+            ConfirmDialog::for_destructive_typed("Type 'web-01' to delete", "web-01", &target);
+        assert!(dialog.context_fingerprint().is_some());
+        for c in "web-01".chars() {
+            dialog.handle_key(key(KeyCode::Char(c)));
+        }
+        let r = dialog.handle_key(key(KeyCode::Enter));
+        assert!(matches!(r, ConfirmResult::Confirmed));
+    }
+
+    #[test]
+    fn test_context_target_fingerprint_shared_with_status_bar() {
+        // BL-P2-077 G2 / Codex follow-up: the fingerprint format lives on
+        // `ContextTarget` so StatusBar and ConfirmDialog stay in sync.
+        let target = sample_target();
+        let fp = target.fingerprint();
+        assert!(fp.contains("devstack"));
+        assert!(fp.contains("admin"));
+        assert!(fp.starts_with(' '));
+        assert!(fp.ends_with(' '));
     }
 
     #[test]
