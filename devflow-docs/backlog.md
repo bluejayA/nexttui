@@ -224,6 +224,81 @@ AI 개발 맥락에서 이는 "preference" 수준이 아니라 **claude-code 세
 각 항목은 독립적으로 실행 가능. 기능 변경 없이 순수 리팩토링.
 **Ref**: BL-P2-031 T3 PR #75 cargo-review (Suggestions S4/S5/S6)
 
+### BL-P2-071: Command history persist (`save_history()` Quit/shutdown hook)
+**Priority**: High
+**Category**: UX / Functional gap
+**Description**: PR3 cargo-review C1 (HIGH). `init_command_parser`가 `load_history()`만 호출하고 `save_history()`는 어디서도 호출되지 않음. 세션 간 history 영속화 0% — `Up` 키로 이전 세션 명령 복구 불가. PR3 (사용자 노출 시작) 머지 시점에 첫 사용자가 휘발 UX를 경험.
+필요 작업:
+- `Command::Quit` 분기 직전에서 `let _ = self.command_parser.save_history();` 호출
+- main.rs 종료 경로 (Ctrl+C, normal exit, panic guard 검토) 에서도 동일 호출
+- `Drop` 또는 `App::shutdown()` 훅 도입 검토 (panic 시 보존 필요 여부 결정)
+- 신규 테스트: history persist 라운드트립 (push → save → reload → prev)
+**Acceptance**: 앱 종료 후 재시작 시 `Up` 키로 직전 세션 명령 복원.
+**Ref**: PR3 Unit 4.5 cargo-review C1. PR3 안에서 처리 (사용자 노출 PR과 동행)
+
+### BL-P2-072: Unknown command 토스트 페이로드 일관성 + truncation/sanitize
+**Priority**: Medium
+**Category**: UX / Defensive UI
+**Description**: PR3 cargo-review C4 + G3.
+- C4: `:foobar` → `Command::Unknown("foobar")` (콜론 strip 후), `switch-project` 무인자 → `Command::Unknown(resolved)` (소문자 명령). 토스트 메시지가 입력에 따라 다른 형태로 노출. 정책 결정 필요: 원본 입력 보존 vs 일관된 resolved.
+- G3: `format!("Unknown command: {raw}")`가 입력 원문을 그대로 토스트로 노출. 길이 제한(예: 64자 truncate, `…` 표기) + 개행/제어문자 제거 없음 → 악성 붙여넣기/긴 명령 시 토스트/상태바 레이아웃 깨짐 가능.
+필요 작업:
+- 페이로드 정책 결정 (원본 vs resolved) 문서화
+- `safe_display(&str, max_len)` 유틸로 추출 (다른 사용자 입력 표시 지점에서 재사용 가능)
+- BL-P2-050 (LogPanel 제어문자 필터링) 과 정책 정렬 검토
+**Ref**: PR3 Unit 4.5 cargo-review C4 + G3
+
+### BL-P2-073: InputMode 단일화 (`component::InputMode` ↔ `ui::input_bar::InputMode`)
+**Priority**: Medium
+**Category**: Architecture / Tech debt
+**Description**: PR3 cargo-review C5 + C6 + G4. 두 InputMode enum 공존:
+- `component::InputMode` (5-variant: Normal/Command/Search/Form/Confirm) — App 상태용
+- `ui::input_bar::InputMode` (3-variant: Normal/Command/Search) — InputBar 위젯용
+현재 `:` 키 핸들러 1곳만 두 enum 동기화. `EnterFormMode`/`ExitFormMode`/Esc-to-Normal 등 5곳에서 `self.input_mode = ...` 직접 대입하면서 InputBar 미동기화 → 싱크 드리프트 가능. Search/Form 경로에서 InputBar buffer 잔존 위험.
+필요 작업:
+- 단일 `component::InputMode`로 통일, InputBar는 내부적으로 무관 variant를 Normal로 매핑
+- `set_input_mode()` 사적 헬퍼로 전환 일원화
+- 기존 InputBar API 영향 검토
+**의존**: 없음. **권장 타이밍**: Unit 5 Step 3 직전 (ConfirmDialog 진입 전이 마이그레이션 면적 최저).
+**Ref**: PR3 Unit 4.5 cargo-review C5 + C6 + G4
+
+### BL-P2-074: SwitchCloud wire 전략 (`CloudOnly` variant or picker 두 단계 플로우)
+**Priority**: Medium
+**Category**: Feature / Architecture
+**Description**: PR3 cargo-review C8 + G2. 현재 `:switch-cloud <name>` 입력 시 `ContextRequest`가 project: String 필수라 cloud-only 전환 표현 불가 → toast만 발행하고 실제 전환 0. PR3는 stub 유지.
+선택지:
+- (a) `ContextRequest::CloudOnly { cloud: String }` variant 추가 → resolver에서 해당 cloud의 default project로 위임
+- (b) `Command::SwitchCloud(name)` 수신 시 resolver에게 해당 cloud의 project 목록을 조회 → picker를 여는 두 단계 플로우 (Unit 6 ContextPicker와 통합)
+필요 작업:
+- 두 옵션의 trade-off 결정 (resolver/Keystone 호출 빈도, UX 일관성)
+- 선택된 옵션 구현 + 통합 테스트
+- ContextIndicator (Unit 5 Step 2) 의 pending 상태 표시 연동
+**의존**: Unit 5 Step 2 (ContextIndicator)
+**Ref**: PR3 Unit 4.5 cargo-review C8 + G2
+
+### BL-P2-075: legacy `:ctx` 명령 deprecation 타임라인
+**Priority**: Low
+**Category**: Tech debt
+**Description**: PR3 cargo-review G6. `Command::ContextSwitch(String)` / `Command::ContextList`는 파서가 여전히 생성하나 실행부는 toast 안내뿐. dead path 축적 방지를 위해 deprecation 일정 명시 필요.
+필요 작업:
+- Unit 6 (ContextPicker) 머지 후 파서에서 `ctx` 매치를 `Command::Unknown` 위임으로 전환
+- `Command::ContextSwitch` / `Command::ContextList` enum variant 제거
+- 기존 `test_parse_context` 테스트 업데이트 또는 제거
+- 사용자 안내 메시지 (CHANGELOG, help 토스트) 갱신
+**의존**: Unit 6 (ContextPicker) 완료
+**Ref**: PR3 Unit 4.5 cargo-review G6
+
+### BL-P2-076: Command Bar 코드 품질 cleanup (가시성/toast 호출/Switch 테이블 단일화)
+**Priority**: Low
+**Category**: Code quality
+**Description**: PR3 cargo-review S1 + S3 + S4 + G8 + G9 + S8. PR3에서 도입된 Command Bar wire 코드의 컨벤션 정렬.
+- S1: `App.input_bar` / `command_parser` 가시성 `pub(crate)` → 주변 wire 필드(`audit_logger` 등)와 동일하게 private + `#[cfg(test)]` accessor
+- S3: `add_toast` 호출 시 `format!()` / `.into()` 혼용 → 메시지 변수 분리 후 일관 호출
+- S4 + G8: `SWITCH_ABBREVIATIONS` (튜플 배열) ↔ `COMMAND_TABLE` (struct 배열) 형식 이원화 → 단일 `&[(&str, &str)]` source로 통합 + `SWITCH_COMMANDS`는 iter로 유도
+- G9 + S8: `switch-project` / `switch-cloud` arm 패턴 복붙 → `fn require_arg(arg, resolved, ctor) -> Command` 헬퍼 추출
+**Acceptance**: PR3 동일 동작 + 신규 switch 명령 추가 시 1곳 수정으로 충족.
+**Ref**: PR3 Unit 4.5 cargo-review S1 + S3 + S4 + S8 + G8 + G9
+
 ### BL-P2-050: LogPanel 텍스트 정제 (제어문자 필터링)
 **Priority**: Low
 **Category**: Security / UX
