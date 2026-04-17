@@ -248,18 +248,18 @@ AI 개발 맥락에서 이는 "preference" 수준이 아니라 **claude-code 세
 - BL-P2-050 (LogPanel 제어문자 필터링) 과 정책 정렬 검토
 **Ref**: PR3 Unit 4.5 cargo-review C4 + G3
 
-### BL-P2-073: InputMode 단일화 (`component::InputMode` ↔ `ui::input_bar::InputMode`)
+### BL-P2-073: InputMode 단일화 (`component::InputMode` ↔ `ui::input_bar::InputMode`) ✅
 **Priority**: Medium
 **Category**: Architecture / Tech debt
-**Description**: PR3 cargo-review C5 + C6 + G4. 두 InputMode enum 공존:
-- `component::InputMode` (5-variant: Normal/Command/Search/Form/Confirm) — App 상태용
-- `ui::input_bar::InputMode` (3-variant: Normal/Command/Search) — InputBar 위젯용
-현재 `:` 키 핸들러 1곳만 두 enum 동기화. `EnterFormMode`/`ExitFormMode`/Esc-to-Normal 등 5곳에서 `self.input_mode = ...` 직접 대입하면서 InputBar 미동기화 → 싱크 드리프트 가능. Search/Form 경로에서 InputBar buffer 잔존 위험.
-필요 작업:
-- 단일 `component::InputMode`로 통일, InputBar는 내부적으로 무관 variant를 Normal로 매핑
-- `set_input_mode()` 사적 헬퍼로 전환 일원화
-- 기존 InputBar API 영향 검토
-**의존**: 없음. **권장 타이밍**: Unit 5 Step 3 직전 (ConfirmDialog 진입 전이 마이그레이션 면적 최저).
+**Status**: Done (Unit 5 Step 3 직전 처리)
+**Description**: PR3 cargo-review C5 + C6 + G4.
+**해결**:
+- `ui::input_bar::InputMode` enum 삭제 → `crate::component::InputMode` 사용으로 통일
+- `InputBar::handle_key` early return 조건: `!matches!(mode, Command | Search)`로 Form/Confirm 상태에서 inert 보장
+- `InputBar::render`도 Command/Search 외 모든 variant를 hint 표시로 fallthrough
+- `App::set_input_mode(mode)` 헬퍼 도입 — `input_mode` + `input_bar.activate/deactivate` 동시 설정. 모든 `self.input_mode = ...` 직접 대입 6곳을 이 헬퍼로 교체
+- 신규 테스트 4건: Command 활성화 / Normal 버퍼 clear / Form 비활성 / Confirm 비활성
+**Acceptance**: App 내부에서 `input_mode`를 바꿀 때 InputBar가 항상 싱크. ✅
 **Ref**: PR3 Unit 4.5 cargo-review C5 + C6 + G4
 
 ### BL-P2-074: SwitchCloud wire 전략 (`CloudOnly` variant or picker 두 단계 플로우)

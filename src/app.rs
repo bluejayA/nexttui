@@ -18,7 +18,7 @@ use crate::models::common::Route;
 use crate::router::Router;
 use crate::ui::activity_log::{ActivityLog, ActivityLogPopup};
 use crate::ui::header::{Header, HeaderContext};
-use crate::ui::input_bar::{InputAction, InputBar, InputMode as InputBarMode};
+use crate::ui::input_bar::{InputAction, InputBar};
 use crate::ui::layout::LayoutManager;
 use crate::ui::refresh::RefreshScheduler;
 use crate::ui::sidebar::Sidebar;
@@ -268,7 +268,7 @@ impl App {
             let act = self.input_bar.handle_key(key);
             match act {
                 InputAction::Commit(buf) => {
-                    self.input_mode = InputMode::Normal;
+                    self.set_input_mode(InputMode::Normal);
                     if !buf.trim().is_empty() {
                         let cmd = self.command_parser.parse(&buf);
                         // Only persist successfully-parsed commands so typos
@@ -280,7 +280,7 @@ impl App {
                     }
                 }
                 InputAction::Cancel => {
-                    self.input_mode = InputMode::Normal;
+                    self.set_input_mode(InputMode::Normal);
                 }
                 InputAction::AutoComplete => {
                     let current = self.input_bar.buffer().to_string();
@@ -307,10 +307,7 @@ impl App {
         if self.input_mode == InputMode::Normal && no_modifiers {
             match key.code {
                 KeyCode::Char(':') => {
-                    self.input_mode = InputMode::Command;
-                    self.input_bar.activate(InputBarMode::Command);
-                    self.command_parser.history_reset_cursor();
-                    self.command_parser.reset_completion();
+                    self.set_input_mode(InputMode::Command);
                     return true;
                 }
                 // '/' search is handled by SelectPopup when open (not App-level)
@@ -393,7 +390,7 @@ impl App {
             InputMode::Command | InputMode::Search | InputMode::Confirm
         ) && key.code == KeyCode::Esc
         {
-            self.input_mode = InputMode::Normal;
+            self.set_input_mode(InputMode::Normal);
             return true;
         }
 
@@ -475,10 +472,10 @@ impl App {
                 }
             }
             Action::EnterFormMode => {
-                self.input_mode = InputMode::Form;
+                self.set_input_mode(InputMode::Form);
             }
             Action::ExitFormMode => {
-                self.input_mode = InputMode::Normal;
+                self.set_input_mode(InputMode::Normal);
             }
             Action::ToggleAllTenants => {
                 let prev = self.all_tenants.load(Ordering::Relaxed);
@@ -1610,6 +1607,25 @@ impl App {
         &self.action_tx
     }
 
+    /// Single write path for `input_mode` that keeps the `InputBar` widget in
+    /// sync (BL-P2-073). Activates the bar for Command / Search, deactivates
+    /// it for Normal / Form / Confirm. All direct `self.input_mode = ...`
+    /// assignments must route through this method so the two representations
+    /// can never drift apart.
+    fn set_input_mode(&mut self, mode: InputMode) {
+        self.input_mode = mode;
+        match mode {
+            InputMode::Command | InputMode::Search => {
+                self.input_bar.activate(mode);
+                self.command_parser.history_reset_cursor();
+                self.command_parser.reset_completion();
+            }
+            InputMode::Normal | InputMode::Form | InputMode::Confirm => {
+                self.input_bar.deactivate();
+            }
+        }
+    }
+
     /// Persist user state before the process exits. Currently best-effort
     /// saves command history. Safe to call from any successful exit path
     /// (Ctrl+C, `:quit`, normal `q`, etc.). Errors are logged, never
@@ -1889,6 +1905,50 @@ mod tests {
         app.handle_key(make_key(KeyCode::Char(':')));
         app.handle_key(make_key(KeyCode::Up));
         assert_eq!(app.input_bar.buffer(), "servers");
+    }
+
+    // --- BL-P2-073: InputMode sync invariants ---
+
+    #[test]
+    fn test_set_input_mode_command_activates_input_bar() {
+        let mut app = make_app();
+        app.set_input_mode(InputMode::Command);
+        assert_eq!(app.input_mode, InputMode::Command);
+        // InputBar must now capture typed characters.
+        app.handle_key(make_key(KeyCode::Char('x')));
+        assert_eq!(app.input_bar.buffer(), "x");
+    }
+
+    #[test]
+    fn test_set_input_mode_normal_clears_input_bar_buffer() {
+        let mut app = make_app();
+        app.set_input_mode(InputMode::Command);
+        app.handle_key(make_key(KeyCode::Char('x')));
+        assert_eq!(app.input_bar.buffer(), "x");
+        app.set_input_mode(InputMode::Normal);
+        assert_eq!(app.input_bar.buffer(), "");
+    }
+
+    #[test]
+    fn test_set_input_mode_form_deactivates_input_bar() {
+        let mut app = make_app();
+        app.set_input_mode(InputMode::Command);
+        app.handle_key(make_key(KeyCode::Char('x')));
+        // Switching to Form must drop any in-flight command buffer so the
+        // bar cannot show stale input while a form owns the screen.
+        app.set_input_mode(InputMode::Form);
+        assert_eq!(app.input_mode, InputMode::Form);
+        assert_eq!(app.input_bar.buffer(), "");
+    }
+
+    #[test]
+    fn test_set_input_mode_confirm_deactivates_input_bar() {
+        let mut app = make_app();
+        app.set_input_mode(InputMode::Command);
+        app.handle_key(make_key(KeyCode::Char('x')));
+        app.set_input_mode(InputMode::Confirm);
+        assert_eq!(app.input_mode, InputMode::Confirm);
+        assert_eq!(app.input_bar.buffer(), "");
     }
 
     #[test]

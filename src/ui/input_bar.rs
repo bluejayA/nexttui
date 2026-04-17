@@ -8,13 +8,10 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use super::theme::Theme;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum InputMode {
-    Normal,
-    Command,
-    Search,
-}
+// Single source of truth for input modes (BL-P2-073). The widget only reacts
+// to `Command` and `Search`; other variants (Normal / Form / Confirm) leave
+// the bar inert and render the default hint.
+use crate::component::InputMode;
 
 #[derive(Debug)]
 pub enum InputAction {
@@ -68,7 +65,9 @@ impl InputBar {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> InputAction {
-        if self.mode == InputMode::Normal {
+        // Only Command / Search modes capture input here; everything else is
+        // inert (Form is handled by its own widget, Confirm by ConfirmDialog).
+        if !matches!(self.mode, InputMode::Command | InputMode::Search) {
             return InputAction::None;
         }
 
@@ -114,14 +113,14 @@ impl InputBar {
 
     pub fn render(&self, frame: &mut Frame, area: Rect) {
         let (prefix, style) = match self.mode {
-            InputMode::Normal => {
+            InputMode::Command => (":", Theme::warning()),
+            InputMode::Search => ("/", Theme::focus_border()),
+            _ => {
                 let hint = "Press : for command, / for search";
                 let widget = Paragraph::new(Span::styled(hint, Theme::disabled()));
                 frame.render_widget(widget, area);
                 return;
             }
-            InputMode::Command => (":", Theme::warning()),
-            InputMode::Search => ("/", Theme::focus_border()),
         };
 
         let line = Line::from(vec![
