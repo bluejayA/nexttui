@@ -18,6 +18,9 @@ use std::time::{Duration, Instant};
 
 use crate::context::types::ContextTarget;
 
+/// Active cloud/project identity plus a transient "just switched" highlight
+/// timer. Rendering is performed by the host widget (StatusBar) so this type
+/// stays a pure state holder.
 pub struct ContextIndicator {
     target: Option<ContextTarget>,
     last_switch_at: Option<Instant>,
@@ -25,6 +28,8 @@ pub struct ContextIndicator {
 }
 
 impl ContextIndicator {
+    /// Build a new indicator with no target set yet and the given highlight
+    /// window applied to future `set_target(.., true)` calls.
     pub fn new(highlight_duration: Duration) -> Self {
         Self {
             target: None,
@@ -44,10 +49,14 @@ impl ContextIndicator {
         };
     }
 
+    /// Current target, or `None` if no context has been set yet.
     pub fn target(&self) -> Option<&ContextTarget> {
         self.target.as_ref()
     }
 
+    /// True while the highlight timer has not yet elapsed. Evaluated lazily
+    /// against `Instant::now()`, so the host must trigger a redraw within the
+    /// window for the style transition to be observed.
     pub fn is_highlighting(&self) -> bool {
         self.last_switch_at
             .is_some_and(|t| t.elapsed() < self.highlight_duration)

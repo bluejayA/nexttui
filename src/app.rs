@@ -35,7 +35,11 @@ pub enum FocusPane {
 
 pub struct App {
     pub should_quit: bool,
-    pub input_mode: InputMode,
+    /// All writes must route through [`App::set_input_mode`] so the
+    /// `input_bar` widget stays in sync with `input_mode` (BL-P2-073).
+    /// `pub(crate)` blocks external crates from breaking that invariant;
+    /// intra-crate test readers (`assert_eq!(app.input_mode, ...)`) still work.
+    pub(crate) input_mode: InputMode,
     pub sidebar_visible: bool,
     pub focus: FocusPane,
 
@@ -2431,7 +2435,7 @@ mod tests {
             Box::new(RefreshMock::new(Action::FetchServers)),
         );
         app.router = Router::new(Route::Servers);
-        app.input_mode = InputMode::Form;
+        app.set_input_mode(InputMode::Form);
 
         for _ in 0..150 {
             app.on_tick();
@@ -2637,7 +2641,7 @@ mod tests {
     #[test]
     fn test_exclamation_blocked_in_form_mode() {
         let mut app = make_app();
-        app.input_mode = InputMode::Form;
+        app.set_input_mode(InputMode::Form);
         app.register_component(Route::Servers, Box::new(MockComponent::new()));
         app.handle_key(make_key_with_modifiers(
             KeyCode::Char('!'),
@@ -2649,7 +2653,7 @@ mod tests {
     #[test]
     fn test_exclamation_blocked_in_confirm_mode() {
         let mut app = make_app();
-        app.input_mode = InputMode::Confirm;
+        app.set_input_mode(InputMode::Confirm);
         app.register_component(Route::Servers, Box::new(MockComponent::new()));
         app.handle_key(make_key_with_modifiers(
             KeyCode::Char('!'),
