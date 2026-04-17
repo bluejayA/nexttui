@@ -11,13 +11,13 @@
 필요 작업: ScopedAuthSession 또는 신규 RescopeRefresher가 active scope 토큰의 near-expiry를 감지 → KeystoneRescopePort로 새 토큰 발급 → set_active로 갱신. 또는 최소한 get_token 에러 메시지를 "session expired, please switch context again"으로 명확화.
 
 **Part B — `AppEvent::ContextChanged` handler 구현**: 현재 ContextChanged는 fire-and-forget. handle_event에 arm이 없어 switch 성공 후 16개 모듈 캐시(Vec<Server> 등)가 이전 project 데이터 유지. T3 wire 이후에도 동일 문제. 필요 작업:
-- `App.handle_event::ContextChanged` arm 구현
-- 16개 Resource Module 캐시 invalidate (Vec 비움 + is_loading=true)
-- `Fetch*` 일괄 dispatch
-- router reset (필요 시) + toast ("Switched to project X")
+- ~~`App.handle_event::ContextChanged` arm 구현~~ — **PR3 Unit 5 Step 3에서 부분 선처리** (ContextIndicator 갱신만). 나머지는 아래.
+- 16개 Resource Module 캐시 invalidate (Vec 비움 + is_loading=true) — **미구현**
+- `Fetch*` 일괄 dispatch — **미구현**
+- router reset (필요 시) + toast ("Switched to project X") — **미구현**
 
 **Acceptance**: switch 성공 → UI 즉시 새 project 데이터로 전환 + token expiry 자동 처리.
-**Ref**: Security Reviewer S2 (P0 fix 리뷰), Cargo Review PR #68 통합 finding
+**Ref**: Security Reviewer S2 (P0 fix 리뷰), Cargo Review PR #68 통합 finding. Part B indicator 부분: PR3 Step 3 commit.
 
 ### BL-P2-053: SwitchError NotAuthenticated variant + ApiError ScopeDrift variant
 **Priority**: Medium

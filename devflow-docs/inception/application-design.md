@@ -366,28 +366,27 @@ pub trait HttpEndpointCache: Send + Sync {
 - `pub fn previous(&self) -> Option<&ContextSnapshot>`
 - `pub fn pop_previous(&mut self) -> Option<ContextSnapshot>`
 
-### ContextIndicator (UI Widget — 패시브 타이머)
-**Interface**:
+### ContextIndicator (state holder — 패시브 타이머)
+**Actual implementation (PR3 Step 2/3 — 2026-04-17)**:
 ```rust
 pub struct ContextIndicator {
-    snapshot: Option<ContextSnapshot>,
+    target: Option<ContextTarget>,
     last_switch_at: Option<Instant>,
     highlight_duration: Duration,
 }
 impl ContextIndicator {
     pub fn new(highlight_duration: Duration) -> Self;
-    pub fn set_context(&mut self, snapshot: &ContextSnapshot, mark_highlight: bool);
-}
-impl Component for ContextIndicator {
-    fn render(&self, frame, area) {
-        // 매 render마다 비교: Instant::now() - last_switch_at < highlight_duration
-        let highlighting = self.last_switch_at
-            .map_or(false, |t| t.elapsed() < self.highlight_duration);
-        // ...
-    }
+    pub fn set_target(&mut self, target: &ContextTarget, mark_highlight: bool);
+    pub fn target(&self) -> Option<&ContextTarget>;
+    pub fn is_highlighting(&self) -> bool; // last_switch_at.elapsed() < highlight_duration
 }
 ```
-**Tick 의존성 명시**: 강조가 자동 종료되려면 highlight_duration 이내에 redraw가 발생해야 함. App의 idle redraw 정책이 없다면 `AppEvent::Tick` 또는 short-interval refresh 필요.
+**설계와 다른 점 + 근거**:
+1. `ContextSnapshot` → `ContextTarget`로 파라미터 축소. 인디케이터가 실제로 쓰는 필드는 `cloud` / `project_name` 뿐이라 Token/Epoch를 끌고 다니는 건 과설계였음. `AppEvent::ContextChanged { target }`와 바로 맞물림 → 중간 어댑터 불필요, Token clone 비용(수 KB) 제거.
+2. `Component` trait impl 제거 + 자체 `render()` 제거. 접근 주체가 `App.handle_event`(write) / `StatusBar.render`(read) 둘뿐이고 모두 메인 스레드. `StatusBar`가 `indicator.target()` / `indicator.is_highlighting()`으로 직접 스타일·텍스트를 만들어 렌더링하는 편이 더 단순.
+3. 소유 모델: `Arc<RwLock<ContextIndicator>>` → `App` 단독 소유 + `&ContextIndicator`로 StatusBar에 참조 전달. 동시 접근 없음이 확인되어 락은 불필요. 향후 교차-스레드 접근이 실제로 필요해지면 그 시점에 Arc로 감싼다.
+
+**Tick 의존성**: 강조 자동 종료는 기존 tick_rate 기반 redraw로 충족. 별도 `AppEvent::Tick` 도입 없음.
 
 ### ContextPicker (UI Widget — modal)
 **Interface (impl Component, is_modal=true)**:

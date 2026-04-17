@@ -4,7 +4,9 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
+use super::context_indicator::ContextIndicator;
 use super::theme;
+use super::theme::Theme;
 
 pub struct StatusInfo {
     pub panel_name: String,
@@ -32,10 +34,29 @@ impl StatusBar {
         Self
     }
 
-    pub fn render(&self, frame: &mut Frame, area: Rect, info: &StatusInfo) {
+    pub fn render(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        info: &StatusInfo,
+        indicator: &ContextIndicator,
+    ) {
         // Paragraph bg applies to spans without explicit bg (ratatui style merge)
         let bg = Style::default().bg(Color::DarkGray).fg(Color::White);
         let left = info.left_text();
+
+        // Context indicator — rendered as the leading span so switches are
+        // immediately visible. Empty string when no context is set.
+        let ctx_text = match indicator.target() {
+            Some(t) => format!(" {} • {} ", t.cloud, t.project_name),
+            None => String::new(),
+        };
+        let ctx_len = ctx_text.chars().count();
+        let ctx_style = if indicator.is_highlighting() {
+            Theme::warning().bg(Color::DarkGray)
+        } else {
+            Theme::disabled().bg(Color::DarkGray)
+        };
 
         // Error badge: " ⚠N" in red after left text
         let badge = if info.error_badge_count > 0 {
@@ -57,12 +78,17 @@ impl StatusBar {
         let hint_plain_len: usize = hint_spans.iter().map(|s| s.content.len()).sum();
 
         let padding_len = (area.width as usize)
+            .saturating_sub(ctx_len)
             .saturating_sub(left.len())
             .saturating_sub(badge_len)
             .saturating_sub(hint_plain_len);
         let padding = " ".repeat(padding_len);
 
-        let mut spans = vec![Span::styled(&left, bg)];
+        let mut spans: Vec<Span> = Vec::new();
+        if !ctx_text.is_empty() {
+            spans.push(Span::styled(ctx_text, ctx_style));
+        }
+        spans.push(Span::styled(&left, bg));
         if info.error_badge_count > 0 {
             spans.push(Span::styled(
                 badge,
@@ -87,6 +113,8 @@ impl Default for StatusBar {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::types::ContextTarget;
+    use std::time::Duration;
 
     fn sample_info() -> StatusInfo {
         StatusInfo {
@@ -99,6 +127,24 @@ mod tests {
             ],
             error_badge_count: 0,
         }
+    }
+
+    fn empty_indicator() -> ContextIndicator {
+        ContextIndicator::new(Duration::from_secs(2))
+    }
+
+    fn indicator_with(cloud: &str, project: &str) -> ContextIndicator {
+        let mut ind = ContextIndicator::new(Duration::from_secs(2));
+        ind.set_target(
+            &ContextTarget {
+                cloud: cloud.into(),
+                project_id: format!("{project}-id"),
+                project_name: project.into(),
+                domain: "default".into(),
+            },
+            true,
+        );
+        ind
     }
 
     #[test]
@@ -150,10 +196,11 @@ mod tests {
         let backend = TestBackend::new(80, 1);
         let mut terminal = Terminal::new(backend).ok();
         if let Some(ref mut term) = terminal {
+            let ind = empty_indicator();
             let _ = term.draw(|frame| {
                 let area = frame.area();
                 let bar = StatusBar::new();
-                StatusBar::render(&bar, frame, area, &info);
+                StatusBar::render(&bar, frame, area, &info, &ind);
             });
             let buf = term.backend().buffer().clone();
             let content: String = (0..buf.area.width)
@@ -168,6 +215,61 @@ mod tests {
                 "badge count should appear: {content}"
             );
         }
+    }
+
+    #[test]
+    fn test_status_bar_renders_context_indicator() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let info = sample_info();
+        let ind = indicator_with("devstack", "admin");
+        let backend = TestBackend::new(80, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                let bar = StatusBar::new();
+                bar.render(frame, frame.area(), &info, &ind);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let content: String = (0..buf.area.width)
+            .map(|x| buf[(x, 0)].symbol().to_string())
+            .collect();
+        assert!(
+            content.contains("devstack"),
+            "cloud should appear: {content}"
+        );
+        assert!(
+            content.contains("admin"),
+            "project should appear: {content}"
+        );
+    }
+
+    #[test]
+    fn test_status_bar_omits_indicator_when_empty() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let info = sample_info();
+        let ind = empty_indicator();
+        let backend = TestBackend::new(80, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                let bar = StatusBar::new();
+                bar.render(frame, frame.area(), &info, &ind);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let content: String = (0..buf.area.width)
+            .map(|x| buf[(x, 0)].symbol().to_string())
+            .collect();
+        // No bullet dot leaked in because the target is None.
+        assert!(
+            !content.contains('•'),
+            "bullet should be absent with no target: {content}"
+        );
     }
 
     #[test]

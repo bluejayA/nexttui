@@ -17,6 +17,7 @@ use crate::input::command::{Command, CommandParser};
 use crate::models::common::Route;
 use crate::router::Router;
 use crate::ui::activity_log::{ActivityLog, ActivityLogPopup};
+use crate::ui::context_indicator::ContextIndicator;
 use crate::ui::header::{Header, HeaderContext};
 use crate::ui::input_bar::{InputAction, InputBar};
 use crate::ui::layout::LayoutManager;
@@ -72,6 +73,9 @@ pub struct App {
     /// Command bar input widget (`:`-triggered). Paired with `command_parser`.
     pub(crate) input_bar: InputBar,
     pub(crate) command_parser: CommandParser,
+    /// Active cloud/project identity rendered by the status bar. Updated from
+    /// `AppEvent::ContextChanged` after a successful switch. (Unit 5 Step 3)
+    pub(crate) context_indicator: ContextIndicator,
 }
 
 impl App {
@@ -108,6 +112,7 @@ impl App {
             audit_logger,
             input_bar: InputBar::new(),
             command_parser,
+            context_indicator: ContextIndicator::new(std::time::Duration::from_secs(2)),
         }
     }
 
@@ -150,6 +155,7 @@ impl App {
             audit_logger,
             input_bar: InputBar::new(),
             command_parser,
+            context_indicator: ContextIndicator::new(std::time::Duration::from_secs(2)),
         };
         // Store sidebar items for number-key navigation
         app.sidebar.sync_active(&Route::Servers, false);
@@ -569,6 +575,12 @@ impl App {
         if let AppEvent::TokenRefreshed(ref roles) = event {
             self.rbac.update_roles(roles.clone(), None);
             self.broadcast_admin();
+        }
+        // Unit 5 Step 3: update the status-bar indicator on switch completion.
+        // Cache invalidation / Fetch-all / toast on ContextChanged is tracked
+        // by BL-P2-052 (Part B).
+        if let AppEvent::ContextChanged { ref target } = event {
+            self.context_indicator.set_target(target, true);
         }
         // Migration complete → refresh server list to reflect status change
         let refresh_servers = matches!(
@@ -1488,7 +1500,8 @@ impl App {
             toast_msg.render(frame, areas.toast_bar);
         }
 
-        self.status_bar.render(frame, areas.status_bar, &info);
+        self.status_bar
+            .render(frame, areas.status_bar, &info, &self.context_indicator);
     }
 
     pub fn router(&self) -> &Router {
@@ -1905,6 +1918,31 @@ mod tests {
         app.handle_key(make_key(KeyCode::Char(':')));
         app.handle_key(make_key(KeyCode::Up));
         assert_eq!(app.input_bar.buffer(), "servers");
+    }
+
+    // --- Unit 5 Step 3: ContextIndicator wired to ContextChanged ---
+
+    #[test]
+    fn test_context_changed_updates_indicator() {
+        use crate::context::types::ContextTarget;
+        let mut app = make_app();
+        assert!(app.context_indicator.target().is_none());
+        app.handle_event(AppEvent::ContextChanged {
+            target: ContextTarget {
+                cloud: "devstack".into(),
+                project_id: "p1".into(),
+                project_name: "admin".into(),
+                domain: "default".into(),
+            },
+        });
+        let t = app
+            .context_indicator
+            .target()
+            .expect("indicator should be set after ContextChanged");
+        assert_eq!(t.cloud, "devstack");
+        assert_eq!(t.project_name, "admin");
+        // The switch marks a highlight.
+        assert!(app.context_indicator.is_highlighting());
     }
 
     // --- BL-P2-073: InputMode sync invariants ---
