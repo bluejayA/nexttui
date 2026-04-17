@@ -291,13 +291,54 @@ AI 개발 맥락에서 이는 "preference" 수준이 아니라 **claude-code 세
 ### BL-P2-076: Command Bar 코드 품질 cleanup (가시성/toast 호출/Switch 테이블 단일화)
 **Priority**: Low
 **Category**: Code quality
-**Description**: PR3 cargo-review S1 + S3 + S4 + G8 + G9 + S8. PR3에서 도입된 Command Bar wire 코드의 컨벤션 정렬.
-- S1: `App.input_bar` / `command_parser` 가시성 `pub(crate)` → 주변 wire 필드(`audit_logger` 등)와 동일하게 private + `#[cfg(test)]` accessor
-- S3: `add_toast` 호출 시 `format!()` / `.into()` 혼용 → 메시지 변수 분리 후 일관 호출
-- S4 + G8: `SWITCH_ABBREVIATIONS` (튜플 배열) ↔ `COMMAND_TABLE` (struct 배열) 형식 이원화 → 단일 `&[(&str, &str)]` source로 통합 + `SWITCH_COMMANDS`는 iter로 유도
-- G9 + S8: `switch-project` / `switch-cloud` arm 패턴 복붙 → `fn require_arg(arg, resolved, ctor) -> Command` 헬퍼 추출
-**Acceptance**: PR3 동일 동작 + 신규 switch 명령 추가 시 1곳 수정으로 충족.
-**Ref**: PR3 Unit 4.5 cargo-review S1 + S3 + S4 + S8 + G8 + G9
+**Description**: PR3 cargo-review 잔여 style/idiom finding 모음.
+- S1 (Unit 4.5 리뷰): `App.input_bar` / `command_parser` 가시성 `pub(crate)` → 주변 wire 필드(`audit_logger` 등)와 동일하게 private + `#[cfg(test)]` accessor
+- S3 (Unit 4.5): `add_toast` 호출 시 `format!()` / `.into()` 혼용 → 메시지 변수 분리 후 일관 호출
+- S4 + G8 (Unit 4.5): `SWITCH_ABBREVIATIONS` (튜플) ↔ `COMMAND_TABLE` (struct) 형식 이원화 → 단일 `&[(&str, &str)]` source + `SWITCH_COMMANDS`는 iter로 유도
+- G9 + S8 (Unit 4.5): `switch-project` / `switch-cloud` arm 복붙 → `fn require_arg(arg, resolved, ctor) -> Command` 헬퍼
+- **Step 2/3 리뷰 추가 항목**:
+  - S3 (Step 2/3): `ContextIndicator::new(std::time::Duration::from_secs(2))` 매직 2초 두 생성자 반복 → 모듈 상수 추출 또는 `with_default_highlight()` 팩토리
+  - S4 (Step 2/3): `ContextIndicator::display_text()` accessor로 포맷 책임 이전 (StatusBar에서 target 내부 필드 직접 접근 제거)
+  - S5 (Step 2/3): `status_bar.rs` `ctx_text` `Option::map` 패턴으로 이중 분기 제거
+  - S6 + G9 (Step 2/3): `input_bar.rs` `_` wildcard → `InputMode::Normal \| Form \| Confirm =>` 명시적 매치 (variant 추가 시 drift 방지)
+  - S7 (Step 2/3): `ContextIndicator::set_last_switch_at_for_test` — `pub(super)` 또는 private로 가시성 축소
+  - S8 + G7 (Step 2/3): `ContextIndicator::set_target(_, bool)` boolean param → 메서드 분리 또는 enum
+  - S9 (Step 2/3): `status_bar.rs` `use super::theme; use super::theme::Theme;` → `use super::theme::{self, Theme};` 합치기
+  - S10 (Step 2/3): `set_input_mode` idempotent 가드 (`if self.input_mode == mode { return; }`) — C3
+  - Step 2/3 Search arm (C5): `set_input_mode(Search)`에서 `history_reset_cursor`/`reset_completion` 호출 불필요 — Command 전용 분리
+**Acceptance**: PR3 동일 동작 + 스타일 일관성 + 미래 variant 추가 시 컴파일러 감지.
+**Ref**: PR3 Unit 4.5 cargo-review S1/S3/S4/S8/G8/G9 + PR3 Step 2/3 cargo-review S3~S10/C3/C5/G7/G9
+
+### BL-P2-077: PR3 cargo-review 잔여 MED finding (unicode-width + NO_COLOR + event test)
+**Priority**: Medium
+**Category**: UX correctness / Test robustness
+**Status**: **Step 4/5 진행 중 병행 처리 예정** (신규 세션 시작 시 반드시 확인)
+**Description**: PR3 Step 2/3 cargo-review에서 식별된 MED finding 3건. APPROVE verdict였으나 Step 4 (ConfirmDialog — 한글 메시지 다수) 이전/병행 처리가 자연스러움.
+
+**C1 + G4 — `unicode-width` 전환** (우선순위 최고):
+- `src/ui/status_bar.rs`의 `hint_plain_len`은 `content.len()` (byte) 기반 → 한글 hint("이동", "패널", "상세")는 3 byte/글자로 과대 계산
+- `ctx_len`은 `.chars().count()` → 단위 혼용
+- 좁은 터미널에서 `saturating_sub`가 padding_len을 0으로 만들어 hint 가림 가능
+- 해결: `unicode-width::UnicodeWidthStr::width()`로 통일 (ratatui가 이미 의존성으로 가지고 있어 추가 비용 0)
+- Step 4: ConfirmDialog fingerprint가 `cloud • project` 한글 project 이름 포함 시 동일 이슈 반복 → 같이 전환
+- **타이밍**: Step 4 착수 직후 (before 콜사이트 확장)
+
+**C5 — `ctx_style.bg(Color::DarkGray)` NO_COLOR 침범**:
+- `Theme::disabled()`가 NO_COLOR 시 fg=None으로 색 strip 기획
+- `.bg(Color::DarkGray)` 하류 패치가 NO_COLOR 의도를 우회
+- 컨테이너 Paragraph가 이미 `bg(DarkGray)` → span 단위 재설정 불필요
+- 해결: `.bg()` 제거, 컨테이너 bg에 위임
+- **타이밍**: Step 4 스타일 정리 시 함께
+
+**G6 — ContextChanged channel round-trip 통합 테스트**:
+- 현재 `test_context_changed_updates_indicator`는 `app.handle_event(AppEvent::ContextChanged{..})` 직접 호출
+- 프로덕션 경로: `event_tx.send → drain → handle_versioned_event (epoch gate) → handle_event`
+- epoch stale drop 경로가 indicator 갱신까지 막는지 미검증
+- 해결: `VersionedEvent::new(ContextChanged, current_epoch)` 통과 케이스 + `current_epoch+1` 드롭 케이스 테스트 추가
+- **타이밍**: BL-P2-052 Part B 착수 시 또는 Step 5 완료 후
+
+**Acceptance**: 세 항목 모두 해결 + 관련 테스트 추가.
+**Ref**: PR3 Step 2/3 cargo-review (Multi-Agent) 결과 Correctness C1/C5 + Suggestions G4/G6. Commit d316127의 "남은 MED 이슈" 섹션.
 
 ### BL-P2-050: LogPanel 텍스트 정제 (제어문자 필터링)
 **Priority**: Low
