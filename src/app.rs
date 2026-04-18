@@ -80,6 +80,11 @@ pub struct App {
     /// Active cloud/project identity rendered by the status bar. Updated from
     /// `AppEvent::ContextChanged` after a successful switch. (Unit 5 Step 3)
     pub(crate) context_indicator: ContextIndicator,
+    /// Prefix captured at the start of a Tab-completion cycle. Reused on
+    /// subsequent Tabs so the parser's cycling logic keeps seeing the same
+    /// prefix instead of the expanded value. Reset on any non-Tab input.
+    /// (Codex review 2차 P3)
+    tab_cycle_prefix: Option<String>,
 }
 
 impl App {
@@ -117,6 +122,7 @@ impl App {
             input_bar: InputBar::new(),
             command_parser,
             context_indicator: ContextIndicator::new(std::time::Duration::from_secs(2)),
+            tab_cycle_prefix: None,
         }
     }
 
@@ -160,6 +166,7 @@ impl App {
             input_bar: InputBar::new(),
             command_parser,
             context_indicator: ContextIndicator::new(std::time::Duration::from_secs(2)),
+            tab_cycle_prefix: None,
         };
         // Store sidebar items for number-key navigation
         app.sidebar.sync_active(&Route::Servers, false);
@@ -275,9 +282,16 @@ impl App {
         // back into app-level effects. Runs before the Esc-to-Normal block so
         // Esc cancels via InputBar (which clears the buffer).
         if self.input_mode == InputMode::Command {
+            // Codex review 2차 P3: any buffer-modifying key must reset the
+            // Tab-cycle prefix. In Command mode InputBar does not emit
+            // `SearchChanged` for Char/Backspace, so detect at the key level.
+            if matches!(key.code, KeyCode::Char(_) | KeyCode::Backspace) {
+                self.tab_cycle_prefix = None;
+            }
             let act = self.input_bar.handle_key(key);
             match act {
                 InputAction::Commit(buf) => {
+                    self.tab_cycle_prefix = None;
                     self.set_input_mode(InputMode::Normal);
                     if !buf.trim().is_empty() {
                         let cmd = self.command_parser.parse(&buf);
@@ -290,25 +304,42 @@ impl App {
                     }
                 }
                 InputAction::Cancel => {
+                    self.tab_cycle_prefix = None;
                     self.set_input_mode(InputMode::Normal);
                 }
                 InputAction::AutoComplete => {
-                    let current = self.input_bar.buffer().to_string();
-                    if let Some(expanded) = self.command_parser.auto_complete(&current) {
+                    // Codex review 2차 P3: reuse the pre-expansion prefix so
+                    // CommandParser's `last_prefix` gate stays matched and
+                    // cycling works. Without this, the expanded buffer
+                    // becomes the new prefix and subsequent Tabs only match
+                    // the already-expanded command.
+                    let prefix = self
+                        .tab_cycle_prefix
+                        .clone()
+                        .unwrap_or_else(|| self.input_bar.buffer().to_string());
+                    if let Some(expanded) = self.command_parser.auto_complete(&prefix) {
                         self.input_bar.set_buffer(expanded);
+                        if self.tab_cycle_prefix.is_none() {
+                            self.tab_cycle_prefix = Some(prefix);
+                        }
                     }
                 }
                 InputAction::HistoryUp => {
+                    self.tab_cycle_prefix = None;
                     if let Some(h) = self.command_parser.history_prev() {
                         self.input_bar.set_buffer(h.to_string());
                     }
                 }
                 InputAction::HistoryDown => {
+                    self.tab_cycle_prefix = None;
                     if let Some(h) = self.command_parser.history_next() {
                         self.input_bar.set_buffer(h.to_string());
                     }
                 }
-                InputAction::None | InputAction::SearchChanged(_) => {}
+                InputAction::SearchChanged(_) => {
+                    self.tab_cycle_prefix = None;
+                }
+                InputAction::None => {}
             }
             return true;
         }
@@ -1944,6 +1975,48 @@ mod tests {
         app.handle_key(make_key(KeyCode::Tab));
         // "srv" is an abbreviation for "servers" — Tab expands the buffer.
         assert_eq!(app.input_bar.buffer(), "servers");
+    }
+
+    #[test]
+    fn test_command_bar_tab_cycles_through_prefix_matches() {
+        // Codex review 2차 P3: subsequent Tabs with the same prefix must
+        // cycle through all matching commands, not get stuck on the first
+        // expansion. Prefix "s" matches servers/security-groups/snapshots
+        // (plus sb/sc/sp switch abbreviations).
+        let mut app = make_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        app.handle_key(make_key(KeyCode::Char('s')));
+        app.handle_key(make_key(KeyCode::Tab));
+        let first = app.input_bar.buffer().to_string();
+        app.handle_key(make_key(KeyCode::Tab));
+        let second = app.input_bar.buffer().to_string();
+        assert_ne!(
+            first, second,
+            "Tab+Tab must cycle through matches, not stick at {first:?}"
+        );
+    }
+
+    #[test]
+    fn test_command_bar_typing_after_tab_resets_cycle() {
+        // After typing, the next Tab must start cycling from the new buffer,
+        // not from the stored pre-expansion prefix.
+        let mut app = make_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        app.handle_key(make_key(KeyCode::Char('s')));
+        app.handle_key(make_key(KeyCode::Tab));
+        // Backspace to edit buffer → resets the stored prefix.
+        let mut backspaces = app.input_bar.buffer().chars().count();
+        while backspaces > 0 {
+            app.handle_key(make_key(KeyCode::Backspace));
+            backspaces -= 1;
+        }
+        app.handle_key(make_key(KeyCode::Char('v')));
+        app.handle_key(make_key(KeyCode::Tab));
+        assert_eq!(
+            app.input_bar.buffer(),
+            "volumes",
+            "after retyping prefix 'v', Tab should expand to 'volumes'"
+        );
     }
 
     #[test]
