@@ -621,6 +621,13 @@ impl App {
         // The remaining UX bits (router/selection reset + toast) are tracked
         // by BL-P2-052 Part B leftovers.
         if let AppEvent::ContextChanged { ref target } = event {
+            // Codex review 3차 P1: async `ContextChanged` can arrive while
+            // the user is in Form/Command mode. The module reset below
+            // leaves the form behind, but without normalizing `input_mode`
+            // here subsequent keys stay routed through the Form-only path
+            // (global shortcuts / command mode become unreachable) and the
+            // UI is effectively stuck until quit.
+            self.set_input_mode(InputMode::Normal);
             self.context_indicator.set_target(target, true);
             for component in self.components.values_mut() {
                 component.on_context_changed();
@@ -2058,6 +2065,31 @@ mod tests {
         assert_eq!(t.project_name, "admin");
         // The switch marks a highlight.
         assert!(app.context_indicator.is_highlighting());
+    }
+
+    #[test]
+    fn test_context_changed_resets_input_mode_to_normal() {
+        // Codex review 3차 P1: async `ContextChanged` can arrive while the
+        // user is in Form mode. Without normalizing `input_mode`, subsequent
+        // keys stay routed through the Form-only path and the UI is stuck
+        // (no `:` command mode, no global shortcuts) until quit.
+        use crate::context::types::ContextTarget;
+        let mut app = make_app();
+        app.set_input_mode(InputMode::Form);
+        assert_eq!(app.input_mode, InputMode::Form);
+        app.handle_event(AppEvent::ContextChanged {
+            target: ContextTarget {
+                cloud: "devstack".into(),
+                project_id: "p1".into(),
+                project_name: "admin".into(),
+                domain: "default".into(),
+            },
+        });
+        assert_eq!(
+            app.input_mode,
+            InputMode::Normal,
+            "ContextChanged must restore input_mode to Normal"
+        );
     }
 
     // Spy component that records the last (target, recently_switched) pair
