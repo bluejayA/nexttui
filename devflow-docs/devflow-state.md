@@ -7,7 +7,7 @@ complete
 B (PR pending)
 
 ## PR URL
-(to be filled after `gh pr create`)
+https://github.com/bluejayA/nexttui/pull/76
 
 ## Current Stage
 PR3 PR 생성 진행 — BL-P2-079 (P1/P2/P3) + Codex 3차 P1/P2 모두 해결 완료. `aidlc-finishing-a-development-branch` 옵션 B.
