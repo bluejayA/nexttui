@@ -628,6 +628,12 @@ impl Component for UsageModule {
         self.cached_projects.clear();
         self.loading = true;
         self.error_message = None;
+        // Codex review 2차 P2: hypervisors/projects are not covered by the
+        // single-valued `refresh_action` (which returns FetchUsage), so they
+        // must be re-fetched explicitly here or the screen stays blank until
+        // the user presses `r`.
+        let _ = self.action_tx.send(Action::FetchHypervisors);
+        let _ = self.action_tx.send(Action::FetchProjects);
     }
 
     fn handle_event(&mut self, event: &AppEvent) {
@@ -675,7 +681,14 @@ impl Component for UsageModule {
     }
 
     fn refresh_action(&self) -> Option<Action> {
-        None // Manual refresh only
+        // Codex review 2차 P2: returning the FetchUsage action lets App's
+        // ContextChanged arm dispatch it automatically after a project/cloud
+        // switch, so the usage screen does not stay empty until `r`.
+        let (start, end) = self.date_range.start_end();
+        Some(Action::FetchUsage {
+            start: start.to_rfc3339(),
+            end: end.to_rfc3339(),
+        })
     }
 }
 
@@ -1052,9 +1065,39 @@ mod tests {
     // === refresh_action ===
 
     #[test]
-    fn test_refresh_action_is_none() {
+    fn test_refresh_action_returns_fetch_usage() {
+        // Codex review 2차 P2: after context switch, App drains
+        // refresh_action() so the new project's usage data starts loading
+        // immediately rather than leaving the screen empty until `r`.
         let m = make_module();
-        assert!(m.refresh_action().is_none());
+        match m.refresh_action() {
+            Some(Action::FetchUsage { .. }) => {}
+            other => panic!("expected Some(FetchUsage), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_on_context_changed_dispatches_hypervisors_and_projects() {
+        // Codex review 2차 P2: on_context_changed clears hypervisors and
+        // cached_projects, so it must also re-dispatch their fetches.
+        // (FetchUsage is handled by refresh_action via the App loop.)
+        let (tx, mut rx) = test_action_channel();
+        let mut m = UsageModule::new(tx);
+        while rx.try_recv().is_ok() {}
+
+        m.on_context_changed();
+
+        let mut saw_hv = false;
+        let mut saw_proj = false;
+        while let Ok(action) = rx.try_recv() {
+            match action {
+                Action::FetchHypervisors => saw_hv = true,
+                Action::FetchProjects => saw_proj = true,
+                _ => {}
+            }
+        }
+        assert!(saw_hv, "on_context_changed must dispatch FetchHypervisors");
+        assert!(saw_proj, "on_context_changed must dispatch FetchProjects");
     }
 
     // === resolve_project_name ===
