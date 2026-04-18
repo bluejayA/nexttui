@@ -323,10 +323,10 @@ AI 개발 맥락에서 이는 "preference" 수준이 아니라 **claude-code 세
 **Acceptance**: PR3 동일 동작 + 스타일 일관성 + 미래 variant 추가 시 컴파일러 감지.
 **Ref**: PR3 Unit 4.5 cargo-review S1/S3/S4/S8/G8/G9 + PR3 Step 2/3 cargo-review S3~S10/C3/C5/G7/G9
 
-### BL-P2-079: PR3 Codex 2차 review 잔여 finding (confirm reset + usage refetch + Tab cycling)
+### BL-P2-079: PR3 Codex 2차 review 잔여 finding (confirm reset + usage refetch + Tab cycling) ✅
 **Priority**: High (P1), Medium (P2), Low (P3)
 **Category**: Safety / UX regression
-**Status**: **PR3 안에서 처리 예정** — 현재 세션 완료 후 `/compact` 후 이어서 작업. 또는 새 세션 재개 시 이 BL과 `devflow-state.md`의 체크리스트 확인.
+**Status**: **Closed (2026-04-18)** — 3개 commit으로 분리 처리: `6d2e8e0`(P1) / `dcaab56`(P2) / `c7ddc08`(P3). Codex 3차 review에서 추가 발견된 P1+P2(input_mode/Network form)는 `b50be73`에서 추가 처리.
 
 **배경**: PR3 최종 `/codex:review --scope branch` (2026-04-18, commit `6975a01` 이후) 결과. P1 1건 + P2 1건 + P3 1건. 세부는 아래 Codex 원문 인용.
 
@@ -405,6 +405,22 @@ AI 개발 맥락에서 이는 "preference" 수준이 아니라 **claude-code 세
 - P3: Tab + Tab cycling 테스트 (app.rs 또는 command.rs에서)
 
 **Ref**: PR3 `/codex:review --scope branch` 2차 실행 결과 (2026-04-18, after commit 6975a01).
+
+---
+
+### Codex 3차 review (2026-04-18, PR3 직전) — 추가 P1+P2 (`b50be73`에서 해결)
+
+P1/P2/P3 3개 commit 완료 후 같은 날 한 번 더 돌린 `/codex:review --scope branch` 결과.
+
+**[P1] Reset input mode when handling ContextChanged** — src/app.rs:623-627
+> Because context switching is async, `ContextChanged` can arrive while the user is in `InputMode::Form`. This handler resets module state (often leaving create mode), but it never returns the app to `InputMode::Normal`, so subsequent keys stay routed through the Form-only path and no longer expose global shortcuts/command mode; in practice the UI can get stuck in a non-recoverable interaction state unless the user quits. Normalize the app input mode during context-change handling before continuing with module resets.
+
+수정: `handle_event`의 `AppEvent::ContextChanged` 분기 시작부에 `self.set_input_mode(InputMode::Normal)` 호출 추가 (모듈 리셋 및 broadcast 이전).
+
+**[P2] Clear NetworkModule form state on context change** — src/module/network/mod.rs:199-206
+> `on_context_changed` switches the network view back to `List` but leaves `self.form` populated. Since `is_modal()` is based on `form.is_some()`, the Networks screen remains modal after a switch, which suppresses global key handling and auto-refresh behavior while carrying stale form state across contexts.
+
+수정: `NetworkModule::on_context_changed`에 `self.form = None;` 추가. NetworkModule은 BL-P2-079 초기 9개 destructive 목록에는 없었으나 form만으로 modal 상태가 되는 모듈이라 누락이 드러남.
 
 ### BL-P2-078: destructive ConfirmDialog API 강제력 보완 (Codex adversarial HIGH #2 후속)
 **Priority**: Medium
