@@ -238,18 +238,6 @@ AI 개발 맥락에서 이는 "preference" 수준이 아니라 **claude-code 세
 각 항목은 독립적으로 실행 가능. 기능 변경 없이 순수 리팩토링.
 **Ref**: BL-P2-031 T3 PR #75 cargo-review (Suggestions S4/S5/S6)
 
-### BL-P2-071: Command history persist (`save_history()` Quit/shutdown hook) ✅
-**Priority**: High
-**Category**: UX / Functional gap
-**Status**: Done (PR3 안에서 닫음)
-**Description**: PR3 cargo-review C1 (HIGH) + Codex review P2. `init_command_parser`가 `load_history()`만 호출하고 `save_history()`는 어디서도 호출되지 않던 문제.
-**해결**:
-- `App::shutdown(&self)` 메서드 도입 — best-effort `command_parser.save_history()` 호출, 에러는 tracing::warn로 로깅 후 무시
-- main.rs `run_event_loop` 종료 직후 `app.shutdown()` 호출 — 모든 정상 종료 경로(`:quit`, `q`, Ctrl+C 모두 should_quit=true → loop 종료) cover
-- 신규 테스트 2건: `test_shutdown_persists_command_history` (라운드트립), `test_shutdown_with_no_commands_does_not_error` (no-op 안전성)
-- test-only `set_command_history_path()` setter 추가 (사용자 ~/.config 오염 방지)
-**Acceptance**: 앱 종료 후 재시작 시 `Up` 키로 직전 세션 명령 복원. ✅
-
 ### BL-P2-072: Unknown command 토스트 페이로드 일관성 + truncation/sanitize
 **Priority**: Medium
 **Category**: UX / Defensive UI
@@ -261,20 +249,6 @@ AI 개발 맥락에서 이는 "preference" 수준이 아니라 **claude-code 세
 - `safe_display(&str, max_len)` 유틸로 추출 (다른 사용자 입력 표시 지점에서 재사용 가능)
 - BL-P2-050 (LogPanel 제어문자 필터링) 과 정책 정렬 검토
 **Ref**: PR3 Unit 4.5 cargo-review C4 + G3
-
-### BL-P2-073: InputMode 단일화 (`component::InputMode` ↔ `ui::input_bar::InputMode`) ✅
-**Priority**: Medium
-**Category**: Architecture / Tech debt
-**Status**: Done (Unit 5 Step 3 직전 처리)
-**Description**: PR3 cargo-review C5 + C6 + G4.
-**해결**:
-- `ui::input_bar::InputMode` enum 삭제 → `crate::component::InputMode` 사용으로 통일
-- `InputBar::handle_key` early return 조건: `!matches!(mode, Command | Search)`로 Form/Confirm 상태에서 inert 보장
-- `InputBar::render`도 Command/Search 외 모든 variant를 hint 표시로 fallthrough
-- `App::set_input_mode(mode)` 헬퍼 도입 — `input_mode` + `input_bar.activate/deactivate` 동시 설정. 모든 `self.input_mode = ...` 직접 대입 6곳을 이 헬퍼로 교체
-- 신규 테스트 4건: Command 활성화 / Normal 버퍼 clear / Form 비활성 / Confirm 비활성
-**Acceptance**: App 내부에서 `input_mode`를 바꿀 때 InputBar가 항상 싱크. ✅
-**Ref**: PR3 Unit 4.5 cargo-review C5 + C6 + G4
 
 ### BL-P2-074: SwitchCloud wire 전략 (`CloudOnly` variant or picker 두 단계 플로우)
 **Priority**: Medium
@@ -323,105 +297,6 @@ AI 개발 맥락에서 이는 "preference" 수준이 아니라 **claude-code 세
 **Acceptance**: PR3 동일 동작 + 스타일 일관성 + 미래 variant 추가 시 컴파일러 감지.
 **Ref**: PR3 Unit 4.5 cargo-review S1/S3/S4/S8/G8/G9 + PR3 Step 2/3 cargo-review S3~S10/C3/C5/G7/G9
 
-### BL-P2-079: PR3 Codex 2차 review 잔여 finding (confirm reset + usage refetch + Tab cycling) ✅
-**Priority**: High (P1), Medium (P2), Low (P3)
-**Category**: Safety / UX regression
-**Status**: **Closed (2026-04-18)** — 3개 commit으로 분리 처리: `6d2e8e0`(P1) / `dcaab56`(P2) / `c7ddc08`(P3). Codex 3차 review에서 추가 발견된 P1+P2(input_mode/Network form)는 `b50be73`에서 추가 처리.
-
-**배경**: PR3 최종 `/codex:review --scope branch` (2026-04-18, commit `6975a01` 이후) 결과. P1 1건 + P2 1건 + P3 1건. 세부는 아래 Codex 원문 인용.
-
----
-
-#### [P1] Confirm dialog reset in context-change path (Critical)
-
-**원문 (Codex verbatim)**:
-> Reset pending destructive dialogs during context switch — src/module/server/mod.rs:965-972
-> This context-change reset clears list data but leaves `self.confirm` untouched, so a confirmation opened before the switch can still be accepted after `AppEvent::ContextChanged` and dispatch an action using stale resource IDs from the previous project. This is reachable when a switch is in flight (async) and the user opens a confirm dialog before the event arrives; after the switch completes, pressing `y` still resolves the old `PendingAction`. Resetting confirm/modal state in `on_context_changed` is needed to fully prevent cross-context destructive actions.
-
-**Race scenario**:
-1. 사용자가 server delete confirm 연 상태 (confirm 내부: PendingAction::Delete { id: "prev-project-server-1", .. })
-2. 그 직후 `:switch-project other` 실행 → async switch 진행
-3. `AppEvent::ContextChanged` 도착 → `on_context_changed()` 호출 → Vec clear + view_state=List
-4. 하지만 `self.confirm`은 active 유지 + PendingAction은 이전 project의 server ID 참조
-5. 사용자가 `y` 누르면 이전 project의 server를 새 project context로 delete 시도 — wrong-context destructive
-
-**수정 방향**:
-- 10개 destructive 모듈의 `on_context_changed`에 `self.confirm = ConfirmHandler::new();` 추가 (또는 reset 헬퍼)
-- 모달 상태도 함께 초기화: `self.select_popup = None;` (해당 모듈), `self.popup_kind = None;` (server), `self.form = None;` (일부)
-- 통합 테스트: confirm 연 상태에서 on_context_changed 호출 → confirm 비활성 확인
-
-**영향 모듈**: server, volume, floating_ip, security_group, image, flavor, snapshot, user, project (9개 + 이미 cache clear는 한 모듈들)
-
----
-
-#### [P2] Usage module re-fetch after context switch
-
-**원문 (Codex verbatim)**:
-> Re-trigger usage fetch after clearing state on context change — src/module/usage/mod.rs:625-630
-> After a context switch this handler clears usage data and sets `loading = true`, but it does not fetch new usage data and `refresh_action()` for this module is `None`; if the module was already mounted (`mounted == true`), no automatic fetch will run on the next keypress either. The result is the Usage screen staying empty/loading until the user manually presses `r`, which is a regression from expected automatic refresh after context changes.
-
-**수정 방향**:
-- 옵션 A: `UsageModule::refresh_action()`이 `Some(FetchUsage)` (또는 동등 Action) 반환. App의 ContextChanged arm이 일괄 dispatch에 포함.
-- 옵션 B: `on_context_changed` 내부에서 `action_tx.send(Action::FetchUsage)` 직접 dispatch.
-- 옵션 A 권장 (다른 모듈 패턴과 일관성).
-- `mounted` 플래그 리셋 여부도 검토.
-
----
-
-#### [P3] Tab completion cycling broken
-
-**원문 (Codex verbatim)**:
-> Preserve completion prefix when cycling Tab suggestions — src/app.rs:296-299
-> Auto-complete uses the current buffer as the next prefix, so after the first Tab expands (e.g. `s` -> `security-groups`), subsequent Tabs query with the expanded value and never cycle through other same-prefix commands. This breaks the parser's intended cycling behavior for shared prefixes and makes Tab completion effectively single-choice in those cases.
-
-**원인 분석**:
-- `src/app.rs` `InputAction::AutoComplete` 분기:
-  ```rust
-  let current = self.input_bar.buffer().to_string();
-  if let Some(expanded) = self.command_parser.auto_complete(&current) {
-      self.input_bar.set_buffer(expanded);
-  }
-  ```
-- `CommandParser::auto_complete`는 `last_prefix`를 추적해 cycling (첫 Tab: 매치 수집 + 첫 결과 반환, 두번째 Tab: 같은 prefix면 cycle)
-- 하지만 App이 첫 Tab 후 buffer를 `"security-groups"`로 set → 두번째 Tab에서 다시 `auto_complete("security-groups")` 호출 → `last_prefix`가 다름 → 새 검색 (매치 0) → None 반환 → buffer 그대로
-
-**수정 방향**:
-- 옵션 A: App이 "Tab cycle 시작 시점의 prefix"를 자체 저장. 다음 Tab에서 같은 prefix로 호출. buffer 타이핑 변경 시 Tab prefix도 리셋.
-- 옵션 B: CommandParser가 마지막 expanded 값을 알고 있고, buffer 같으면 cycle로 판단.
-- 옵션 A 단순 (상태가 App 쪽). `tab_cycle_prefix: Option<String>` 필드 + 타이핑 시 None 리셋.
-- 테스트: `:s` + Tab + Tab 시 첫 결과 → 두번째 결과 cycling.
-
----
-
-### 수정 순서 (A 경로 — 모두 PR3 안에서)
-
-1. **P1 먼저** (Critical, 10 모듈): confirm reset 추가 + 테스트 1건 이상
-2. **P2** (Usage): refresh_action 추가
-3. **P3** (Tab cycling): App tab_cycle_prefix 상태 + 테스트
-
-**Acceptance**:
-- P1: confirm 열린 상태에서 on_context_changed → confirm 비활성 테스트 통과 (integration)
-- P2: Usage 모듈 register 후 ContextChanged 발행 → FetchUsage action이 channel에 dispatch되는 테스트
-- P3: Tab + Tab cycling 테스트 (app.rs 또는 command.rs에서)
-
-**Ref**: PR3 `/codex:review --scope branch` 2차 실행 결과 (2026-04-18, after commit 6975a01).
-
----
-
-### Codex 3차 review (2026-04-18, PR3 직전) — 추가 P1+P2 (`b50be73`에서 해결)
-
-P1/P2/P3 3개 commit 완료 후 같은 날 한 번 더 돌린 `/codex:review --scope branch` 결과.
-
-**[P1] Reset input mode when handling ContextChanged** — src/app.rs:623-627
-> Because context switching is async, `ContextChanged` can arrive while the user is in `InputMode::Form`. This handler resets module state (often leaving create mode), but it never returns the app to `InputMode::Normal`, so subsequent keys stay routed through the Form-only path and no longer expose global shortcuts/command mode; in practice the UI can get stuck in a non-recoverable interaction state unless the user quits. Normalize the app input mode during context-change handling before continuing with module resets.
-
-수정: `handle_event`의 `AppEvent::ContextChanged` 분기 시작부에 `self.set_input_mode(InputMode::Normal)` 호출 추가 (모듈 리셋 및 broadcast 이전).
-
-**[P2] Clear NetworkModule form state on context change** — src/module/network/mod.rs:199-206
-> `on_context_changed` switches the network view back to `List` but leaves `self.form` populated. Since `is_modal()` is based on `form.is_some()`, the Networks screen remains modal after a switch, which suppresses global key handling and auto-refresh behavior while carrying stale form state across contexts.
-
-수정: `NetworkModule::on_context_changed`에 `self.form = None;` 추가. NetworkModule은 BL-P2-079 초기 9개 destructive 목록에는 없었으나 form만으로 modal 상태가 되는 모듈이라 누락이 드러남.
-
 ### BL-P2-078: destructive ConfirmDialog API 강제력 보완 (Codex adversarial HIGH #2 후속)
 **Priority**: Medium
 **Category**: Safety / Release enforcement
@@ -446,32 +321,6 @@ P1/P2/P3 3개 commit 완료 후 같은 날 한 번 더 돌린 `/codex:review --s
 **타이밍**: PR3 Step 5 완료 후. Step 5가 실제 콜사이트 패턴을 드러내므로 그 이후가 강제력 설계 비용 최저.
 
 **Ref**: Codex adversarial review HIGH #2 (verbatim 원문은 PR3 feat/bl-p2-031-pr3-commands-ui 브랜치 세션 기록).
-
-### BL-P2-077: PR3 cargo-review 잔여 MED finding (unicode-width + NO_COLOR + event test) ✅
-**Priority**: Medium
-**Category**: UX correctness / Test robustness
-**Status**: **Closed (2026-04-18)**. C1 + G4 + C5 = 0ca88d3에서 처리. G6 = BL-P2-052 Part C로 이관 (코드 터치 범위가 Part B와 동일해 같은 PR에서 테스트+구현 쌍으로 처리).
-**Description**: PR3 Step 2/3 cargo-review에서 식별된 MED finding 3건. APPROVE verdict였으나 Step 4 (ConfirmDialog — 한글 메시지 다수) 이전/병행 처리가 자연스러움.
-
-**C1 + G4 — `unicode-width` 전환** ✅ Done:
-- `src/ui/status_bar.rs`의 `hint_plain_len`이 `content.len()` (byte) → `UnicodeWidthStr::width()` (column)로 통일
-- `ctx_len` / `badge_len` / `left_text` 모두 동일 유틸 사용
-- 한글 hint(3 byte/글자)가 ~2 column으로 정확히 계산됨
-- Cargo.toml에 `unicode-width = "0.2"` 추가 (ratatui transitive 유무와 무관하게 명시)
-
-**C5 — `ctx_style.bg(Color::DarkGray)` NO_COLOR 침범** ✅ Done:
-- `ctx_style`에서 `.bg(Color::DarkGray)` 제거. 컨테이너 Paragraph bg가 이미 DarkGray이므로 span-level 재설정 불필요
-- `Theme::disabled()`의 NO_COLOR 동작 보존
-
-**G6 — ContextChanged channel round-trip 통합 테스트**:
-- 현재 `test_context_changed_updates_indicator`는 `app.handle_event(AppEvent::ContextChanged{..})` 직접 호출
-- 프로덕션 경로: `event_tx.send → drain → handle_versioned_event (epoch gate) → handle_event`
-- epoch stale drop 경로가 indicator 갱신까지 막는지 미검증
-- 해결: `VersionedEvent::new(ContextChanged, current_epoch)` 통과 케이스 + `current_epoch+1` 드롭 케이스 테스트 추가
-- **타이밍**: BL-P2-052 Part B 착수 시 또는 Step 5 완료 후
-
-**Acceptance**: 세 항목 모두 해결 + 관련 테스트 추가.
-**Ref**: PR3 Step 2/3 cargo-review (Multi-Agent) 결과 Correctness C1/C5 + Suggestions G4/G6. Commit d316127의 "남은 MED 이슈" 섹션.
 
 ### BL-P2-050: LogPanel 텍스트 정제 (제어문자 필터링)
 **Priority**: Low
@@ -788,3 +637,8 @@ P1/P2/P3 3개 commit 완료 후 같은 날 한 번 더 돌린 `/codex:review --s
 - **BL-P2-013**: UsageModule — btop 스타일 사용량 대시보드 (PR #64, 2026-04-10)
 - **BL-P2-005**: ViewModel 분리 — ViewContext 패턴 도입 (PR #65, 2026-04-10)
 - **BL-P2-064**: cargo audit CI gate + rustls-webpki CVE fix (PR #73, 2026-04-15)
+- **BL-P2-031**: PR3 Commands & Safety UI — Unit 4.5 Command Bar 통합 + Unit 5 ConfirmDialog fingerprint/TypeToConfirm (PR #76, 2026-04-18)
+- **BL-P2-071**: Command history persist — App::shutdown() + save_history hook (PR #76, 2026-04-18)
+- **BL-P2-073**: InputMode 단일화 — component::InputMode 단일 소스 + set_input_mode 헬퍼 (PR #76, 2026-04-18)
+- **BL-P2-077**: PR3 cargo-review 잔여 MED — unicode-width 전환 + NO_COLOR bg 제거 (PR #76, 2026-04-18)
+- **BL-P2-079**: PR3 Codex 2차/3차 review 잔여 finding — confirm reset + Usage refetch + Tab cycling + input_mode/Network form reset (PR #76, 2026-04-18)
