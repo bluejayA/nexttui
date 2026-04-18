@@ -4,7 +4,6 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 
-use super::context_indicator::ContextIndicator;
 use super::theme::Theme;
 use crate::context::types::ContextTarget;
 use ratatui::Frame;
@@ -116,30 +115,38 @@ impl ConfirmDialog {
     }
 
     /// Destructive-action factory. Attaches the target fingerprint and, if the
-    /// user just switched context (indicator still highlighting), escalates a
+    /// user just switched context (`recently_switched` is true), escalates a
     /// plain YesNo into a TypeToConfirm that demands the project name.
     ///
     /// Use this at every destructive call site (`Delete*`, `ForceDelete*`,
     /// `Evacuate`, `Detach`, etc.) instead of calling `yes_no` +
     /// `with_context_fingerprint` + `require_recontext_confirm` separately.
+    /// Prefer [`Self::for_destructive_opt`] when the target may be absent
+    /// (e.g. before the first `ContextChanged`).
     /// Follow-up BL-P2-078 will enforce this at compile/CI level.
-    ///
-    /// Example:
-    /// ```ignore
-    /// ConfirmDialog::for_destructive(
-    ///     format!("Delete server '{name}'?"),
-    ///     app.context_indicator.target().unwrap_or(&fallback_target),
-    ///     &app.context_indicator,
-    /// )
-    /// ```
     pub fn for_destructive(
         message: impl Into<String>,
         target: &ContextTarget,
-        indicator: &ContextIndicator,
+        recently_switched: bool,
     ) -> Self {
         Self::yes_no(message)
             .with_context_fingerprint(target)
-            .require_recontext_confirm(indicator.is_highlighting())
+            .require_recontext_confirm(recently_switched)
+    }
+
+    /// Optional-target variant — falls back to a plain [`Self::yes_no`] when no
+    /// target has been broadcast yet (module hasn't seen a `ContextChanged`
+    /// event). Intended for destructive call sites inside modules that keep a
+    /// cached `Option<ContextTarget>` set by [`Component::set_context_state`].
+    pub fn for_destructive_opt(
+        message: impl Into<String>,
+        target: Option<&ContextTarget>,
+        recently_switched: bool,
+    ) -> Self {
+        match target {
+            Some(t) => Self::for_destructive(message, t, recently_switched),
+            None => Self::yes_no(message),
+        }
     }
 
     /// TypeToConfirm variant of [`Self::for_destructive`] — retains the typed
@@ -153,9 +160,31 @@ impl ConfirmDialog {
         Self::type_to_confirm(message, expected).with_context_fingerprint(target)
     }
 
+    /// Optional-target variant of [`Self::for_destructive_typed`]. Falls back
+    /// to a plain [`Self::type_to_confirm`] when no target has been broadcast.
+    pub fn for_destructive_typed_opt(
+        message: impl Into<String>,
+        expected: impl Into<String>,
+        target: Option<&ContextTarget>,
+    ) -> Self {
+        match target {
+            Some(t) => Self::for_destructive_typed(message, expected, t),
+            None => Self::type_to_confirm(message, expected),
+        }
+    }
+
     /// Read-only accessor for tests / introspection.
     pub fn context_fingerprint(&self) -> Option<&str> {
         self.context_fingerprint.as_deref()
+    }
+
+    /// Attach supplemental detail lines (shown dimmed below the message).
+    /// Lets callers keep the fluent chain started by
+    /// [`Self::for_destructive`] / [`Self::for_destructive_opt`] instead of
+    /// branching to the `_with_details` factory.
+    pub fn with_details(mut self, details: Vec<String>) -> Self {
+        self.detail_lines = details;
+        self
     }
 
     /// When `recently_switched` is true and a fingerprint has been attached,
@@ -551,27 +580,21 @@ mod tests {
     }
 
     #[test]
-    fn test_for_destructive_with_unhighlighted_indicator_keeps_yes_no() {
-        // indicator has target but is not highlighting (no recent switch)
-        // → for_destructive must attach fingerprint but keep a YesNo dialog.
-        let mut indicator = ContextIndicator::new(std::time::Duration::from_secs(2));
-        indicator.set_target(&sample_target(), false); // mark_highlight=false
+    fn test_for_destructive_not_recently_switched_keeps_yes_no() {
+        // recently_switched=false → fingerprint attached but dialog stays YesNo.
         let target = sample_target();
-        let mut dialog = ConfirmDialog::for_destructive("Delete server?", &target, &indicator);
+        let mut dialog = ConfirmDialog::for_destructive("Delete server?", &target, false);
         assert!(dialog.context_fingerprint().is_some());
         let r = dialog.handle_key(key(KeyCode::Char('y')));
         assert!(matches!(r, ConfirmResult::Confirmed));
     }
 
     #[test]
-    fn test_for_destructive_with_highlighted_indicator_escalates() {
-        // indicator is highlighting (recent switch) → for_destructive escalates
-        // the YesNo into a TypeToConfirm demanding the project name.
-        let mut indicator = ContextIndicator::new(std::time::Duration::from_secs(10));
-        indicator.set_target(&sample_target(), true);
-        assert!(indicator.is_highlighting());
+    fn test_for_destructive_recently_switched_escalates() {
+        // recently_switched=true → escalate YesNo into TypeToConfirm demanding
+        // the project name.
         let target = sample_target();
-        let mut dialog = ConfirmDialog::for_destructive("Delete server?", &target, &indicator);
+        let mut dialog = ConfirmDialog::for_destructive("Delete server?", &target, true);
         // `y` alone must not confirm — escalation active.
         let r = dialog.handle_key(key(KeyCode::Char('y')));
         assert!(matches!(r, ConfirmResult::Pending));
@@ -582,6 +605,22 @@ mod tests {
         }
         let r = dialog.handle_key(key(KeyCode::Enter));
         assert!(matches!(r, ConfirmResult::Confirmed));
+    }
+
+    #[test]
+    fn test_for_destructive_opt_none_falls_back_to_plain_yes_no() {
+        // Module that hasn't seen a ContextChanged yet — plain YesNo, no escalation.
+        let mut dialog = ConfirmDialog::for_destructive_opt("Delete server?", None, true);
+        assert!(dialog.context_fingerprint().is_none());
+        let r = dialog.handle_key(key(KeyCode::Char('y')));
+        assert!(matches!(r, ConfirmResult::Confirmed));
+    }
+
+    #[test]
+    fn test_for_destructive_opt_some_attaches_fingerprint() {
+        let target = sample_target();
+        let dialog = ConfirmDialog::for_destructive_opt("Delete server?", Some(&target), false);
+        assert!(dialog.context_fingerprint().is_some());
     }
 
     #[test]

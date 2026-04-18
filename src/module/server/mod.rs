@@ -67,6 +67,12 @@ pub struct ServerModule {
     cached_network_opts: Vec<SelectOption>,
     cached_sg_opts: Vec<SelectOption>,
     action_tx: ActionSender,
+    /// Active cloud/project from the most recent `ContextChanged`. Used by
+    /// destructive confirm sites so a post-switch Delete surfaces the target
+    /// fingerprint and, during the highlight window, demands the project name
+    /// (Unit 5 Step 5 / Codex adversarial HIGH #2).
+    context_target: Option<crate::context::types::ContextTarget>,
+    context_recently_switched: bool,
 }
 
 impl ServerModule {
@@ -98,7 +104,33 @@ impl ServerModule {
             cached_network_opts: Vec::new(),
             cached_sg_opts: Vec::new(),
             action_tx,
+            context_target: None,
+            context_recently_switched: false,
         }
+    }
+
+    /// Build a YesNo destructive confirm dialog that auto-attaches the active
+    /// target fingerprint and escalates to TypeToConfirm(project_name) during
+    /// the post-switch highlight window. Wraps
+    /// [`ConfirmDialog::for_destructive_opt`] so this module's 12+ call sites
+    /// share a single factory — see BL-P2-078 for the plan to enforce this
+    /// factory at compile time.
+    fn destructive_confirm(&self, message: impl Into<String>) -> ConfirmDialog {
+        ConfirmDialog::for_destructive_opt(
+            message,
+            self.context_target.as_ref(),
+            self.context_recently_switched,
+        )
+    }
+
+    /// TypeToConfirm counterpart of [`Self::destructive_confirm`]. Retains the
+    /// existing "type resource name" prompt while attaching the fingerprint.
+    fn destructive_confirm_typed(
+        &self,
+        message: impl Into<String>,
+        expected: impl Into<String>,
+    ) -> ConfirmDialog {
+        ConfirmDialog::for_destructive_typed_opt(message, expected, self.context_target.as_ref())
     }
 
     pub fn view_state(&self) -> &ViewState {
@@ -233,7 +265,7 @@ impl ServerModule {
                     let name = server.name.clone();
                     let id = server.id.clone();
                     self.confirm.open(
-                        ConfirmDialog::type_to_confirm(
+                        self.destructive_confirm_typed(
                             format!("Delete server '{name}'?"),
                             name.clone(),
                         ),
@@ -359,10 +391,8 @@ impl ServerModule {
             format!("  Type: {vol_type}"),
         ];
         self.confirm.open(
-            ConfirmDialog::yes_no_with_details(
-                format!("Attach {name} to '{server_name}'?"),
-                details,
-            ),
+            self.destructive_confirm(format!("Attach {name} to '{server_name}'?"))
+                .with_details(details),
             PendingAction::AttachVolume {
                 volume_id,
                 server_id,
@@ -410,11 +440,11 @@ impl ServerModule {
             let mut boot_details = details;
             boot_details.push("  ⚠ BOOT VOLUME — server will become unbootable!".into());
             self.confirm.open(
-                ConfirmDialog::type_to_confirm_with_details(
+                self.destructive_confirm_typed(
                     format!("Detach BOOT volume '{name}'? Type name to confirm:"),
                     name.to_string(),
-                    boot_details,
-                ),
+                )
+                .with_details(boot_details),
                 PendingAction::DetachVolume {
                     volume_id,
                     server_id: att.server_id.clone(),
@@ -425,10 +455,11 @@ impl ServerModule {
         }
 
         self.confirm.open(
-            ConfirmDialog::yes_no_with_details(
-                format!("Detach {name} from '{server_name}'? Device: {}", att.device),
-                details,
-            ),
+            self.destructive_confirm(format!(
+                "Detach {name} from '{server_name}'? Device: {}",
+                att.device
+            ))
+            .with_details(details),
             PendingAction::DetachVolume {
                 volume_id,
                 server_id: att.server_id.clone(),
@@ -487,13 +518,11 @@ impl ServerModule {
                 format!("  Port: {port_label}"),
             ];
             self.confirm.open(
-                ConfirmDialog::yes_no_with_details(
-                    format!(
-                        "Associate {} to port {}?",
-                        fip.floating_ip_address, port_label
-                    ),
-                    details,
-                ),
+                self.destructive_confirm(format!(
+                    "Associate {} to port {}?",
+                    fip.floating_ip_address, port_label
+                ))
+                .with_details(details),
                 PendingAction::AssociateFloatingIp {
                     fip_id,
                     port_id: port.id.clone(),
@@ -569,7 +598,7 @@ impl ServerModule {
                             if let ViewState::Detail(ref id) = self.view_state {
                                 let id = id.clone();
                                 self.confirm.open(
-                                    ConfirmDialog::yes_no(msg),
+                                    self.destructive_confirm(msg),
                                     PendingAction::Resize {
                                         id,
                                         flavor_id: selected_id,
@@ -611,7 +640,7 @@ impl ServerModule {
                 if let ViewState::Detail(ref id) = self.view_state {
                     let id = id.clone();
                     self.confirm.open(
-                        ConfirmDialog::yes_no("Hard reboot this server?"),
+                        self.destructive_confirm("Hard reboot this server?"),
                         PendingAction::Reboot { id, hard: true },
                     );
                 }
@@ -627,7 +656,7 @@ impl ServerModule {
                 if let ViewState::Detail(ref id) = self.view_state {
                     let id = id.clone();
                     self.confirm.open(
-                        ConfirmDialog::yes_no("Stop this server?"),
+                        self.destructive_confirm("Stop this server?"),
                         PendingAction::Stop { id },
                     );
                 }
@@ -657,7 +686,7 @@ impl ServerModule {
                 if let ViewState::Detail(ref id) = self.view_state {
                     let id = id.clone();
                     self.confirm.open(
-                        ConfirmDialog::yes_no("Live migrate this server?"),
+                        self.destructive_confirm("Live migrate this server?"),
                         PendingAction::LiveMigrate { id },
                     );
                 }
@@ -667,7 +696,7 @@ impl ServerModule {
                 if let ViewState::Detail(ref id) = self.view_state {
                     let id = id.clone();
                     self.confirm.open(
-                        ConfirmDialog::yes_no("Cold migrate this server?"),
+                        self.destructive_confirm("Cold migrate this server?"),
                         PendingAction::ColdMigrate { id },
                     );
                 }
@@ -685,12 +714,12 @@ impl ServerModule {
                             .is_some_and(|rp| rp.server_id == id);
                         if is_resize {
                             self.confirm.open(
-                                ConfirmDialog::yes_no("Confirm resize?"),
+                                self.destructive_confirm("Confirm resize?"),
                                 PendingAction::ConfirmResize { id },
                             );
                         } else {
                             self.confirm.open(
-                                ConfirmDialog::yes_no("Confirm migration?"),
+                                self.destructive_confirm("Confirm migration?"),
                                 PendingAction::ConfirmMigrate { id },
                             );
                         }
@@ -709,12 +738,12 @@ impl ServerModule {
                             .is_some_and(|rp| rp.server_id == id);
                         if is_resize {
                             self.confirm.open(
-                                ConfirmDialog::yes_no("Revert resize?"),
+                                self.destructive_confirm("Revert resize?"),
                                 PendingAction::RevertResize { id },
                             );
                         } else {
                             self.confirm.open(
-                                ConfirmDialog::yes_no("Revert migration?"),
+                                self.destructive_confirm("Revert migration?"),
                                 PendingAction::RevertMigrate { id },
                             );
                         }
@@ -729,7 +758,7 @@ impl ServerModule {
                     if server.is_some_and(|s| s.status == "ERROR") {
                         let id = id.clone();
                         self.confirm.open(
-                            ConfirmDialog::yes_no("Evacuate this server? Data on non-volume-backed instances may be lost."),
+                            self.destructive_confirm("Evacuate this server? Data on non-volume-backed instances may be lost."),
                             PendingAction::Evacuate { id },
                         );
                     }
@@ -940,6 +969,15 @@ impl Component for ServerModule {
         self.resize_pending = None;
         self.migration_progress = None;
         self.view_state = ViewState::List;
+    }
+
+    fn set_context_state(
+        &mut self,
+        target: Option<crate::context::types::ContextTarget>,
+        recently_switched: bool,
+    ) {
+        self.context_target = target;
+        self.context_recently_switched = recently_switched;
     }
 
     fn handle_event(&mut self, event: &AppEvent) {
@@ -1199,6 +1237,31 @@ mod tests {
         ];
         module.handle_event(&AppEvent::ServersLoaded(servers));
         (module, rx)
+    }
+
+    #[test]
+    fn test_set_context_state_propagates_to_destructive_confirm() {
+        // Codex adversarial HIGH #2 enforcement: after App broadcasts
+        // set_context_state, the module's destructive_confirm factory must
+        // attach the fingerprint so any subsequent delete prompt surfaces
+        // the active target.
+        let (tx, _rx) = crate::context::test_action_channel();
+        let module = ServerModule::new(tx);
+        let mut module = module;
+        module.set_context_state(
+            Some(crate::context::types::ContextTarget {
+                cloud: "devstack".into(),
+                project_id: "p1".into(),
+                project_name: "admin".into(),
+                domain: "default".into(),
+            }),
+            true,
+        );
+        let dialog = module.destructive_confirm("Delete server 'web-01'?");
+        assert!(
+            dialog.context_fingerprint().is_some(),
+            "fingerprint must be attached after set_context_state"
+        );
     }
 
     #[test]

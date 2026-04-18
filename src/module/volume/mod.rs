@@ -39,6 +39,8 @@ pub struct VolumeModule {
     select_popup: Option<SelectPopup>,
     keymap_hints_shown: HashSet<char>,
     action_tx: ActionSender,
+    context_target: Option<crate::context::types::ContextTarget>,
+    context_recently_switched: bool,
 }
 
 impl VolumeModule {
@@ -57,7 +59,43 @@ impl VolumeModule {
             select_popup: None,
             keymap_hints_shown: HashSet::new(),
             action_tx,
+            context_target: None,
+            context_recently_switched: false,
         }
+    }
+
+    fn destructive_confirm(&self, message: impl Into<String>) -> ConfirmDialog {
+        ConfirmDialog::for_destructive_opt(
+            message,
+            self.context_target.as_ref(),
+            self.context_recently_switched,
+        )
+    }
+
+    fn destructive_confirm_typed(
+        &self,
+        message: impl Into<String>,
+        expected: impl Into<String>,
+    ) -> ConfirmDialog {
+        ConfirmDialog::for_destructive_typed_opt(message, expected, self.context_target.as_ref())
+    }
+
+    fn destructive_confirm_with_details(
+        &self,
+        message: impl Into<String>,
+        details: Vec<String>,
+    ) -> ConfirmDialog {
+        self.destructive_confirm(message).with_details(details)
+    }
+
+    fn destructive_confirm_typed_with_details(
+        &self,
+        message: impl Into<String>,
+        expected: impl Into<String>,
+        details: Vec<String>,
+    ) -> ConfirmDialog {
+        self.destructive_confirm_typed(message, expected)
+            .with_details(details)
     }
 
     pub fn view_state(&self) -> &ViewState {
@@ -255,7 +293,7 @@ impl VolumeModule {
                         .clone()
                         .unwrap_or_else(|| id.chars().take(8).collect());
                     self.confirm.open(
-                        ConfirmDialog::type_to_confirm(
+                        self.destructive_confirm_typed(
                             format!("Delete volume '{name}'?"),
                             name.clone(),
                         ),
@@ -334,7 +372,7 @@ impl VolumeModule {
             let details = Self::volume_attach_detail_lines(vol, server_name);
             let vol_id = vol.id.clone();
             self.confirm.open(
-                ConfirmDialog::yes_no_with_details(
+                self.destructive_confirm_with_details(
                     format!("Attach volume to '{server_name}'?"),
                     details,
                 ),
@@ -411,7 +449,7 @@ impl VolumeModule {
             let name = vol.name.as_deref().unwrap_or("-");
             let details = Self::volume_detach_detail_lines(vol, server_name, &att.device);
             self.confirm.open(
-                ConfirmDialog::type_to_confirm_with_details(
+                self.destructive_confirm_typed_with_details(
                     format!("Detach BOOT volume '{name}'? Type name to confirm:"),
                     name.to_string(),
                     details,
@@ -428,7 +466,7 @@ impl VolumeModule {
         // Normal detach: Y/N with details
         let details = Self::volume_detach_detail_lines(vol, server_name, &att.device);
         self.confirm.open(
-            ConfirmDialog::yes_no_with_details(
+            self.destructive_confirm_with_details(
                 format!("Detach volume from '{server_name}'?"),
                 details,
             ),
@@ -463,7 +501,7 @@ impl VolumeModule {
                 let mut details_with_warn = details;
                 details_with_warn.push("  WARNING: May cause data corruption!".into());
                 self.confirm.open(
-                    ConfirmDialog::type_to_confirm_with_details(
+                    self.destructive_confirm_typed_with_details(
                         format!("Force detach volume '{name}'?"),
                         name.to_string(),
                         details_with_warn,
@@ -494,7 +532,7 @@ impl VolumeModule {
                 let name = vol.name.as_deref().unwrap_or("-");
                 let details = Self::volume_detail_lines(vol);
                 self.confirm.open(
-                    ConfirmDialog::type_to_confirm_with_details(
+                    self.destructive_confirm_typed_with_details(
                         format!("Reset volume '{name}' state to available?"),
                         name.to_string(),
                         details,
@@ -617,6 +655,15 @@ impl Component for VolumeModule {
         self.error_message = None;
         self.resource_list.set_rows(Vec::new());
         self.view_state = ViewState::List;
+    }
+
+    fn set_context_state(
+        &mut self,
+        target: Option<crate::context::types::ContextTarget>,
+        recently_switched: bool,
+    ) {
+        self.context_target = target;
+        self.context_recently_switched = recently_switched;
     }
 
     fn handle_event(&mut self, event: &AppEvent) {

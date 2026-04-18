@@ -594,6 +594,14 @@ impl App {
             for component in self.components.values_mut() {
                 component.on_context_changed();
             }
+            // Broadcast the target + highlight state so destructive dialogs
+            // can attach a fingerprint and escalate to TypeToConfirm while the
+            // switch is still visually fresh.
+            let t = self.context_indicator.target().cloned();
+            let recently = self.context_indicator.is_highlighting();
+            for component in self.components.values_mut() {
+                component.set_context_state(t.clone(), recently);
+            }
             let refreshes: Vec<Action> = self
                 .components
                 .values()

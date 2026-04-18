@@ -41,6 +41,8 @@ pub struct FloatingIpModule {
     loading_ports: bool,
     keymap_hints_shown: HashSet<char>,
     action_tx: ActionSender,
+    context_target: Option<crate::context::types::ContextTarget>,
+    context_recently_switched: bool,
 }
 
 impl FloatingIpModule {
@@ -65,7 +67,43 @@ impl FloatingIpModule {
             loading_ports: false,
             keymap_hints_shown: HashSet::new(),
             action_tx,
+            context_target: None,
+            context_recently_switched: false,
         }
+    }
+
+    fn destructive_confirm(&self, message: impl Into<String>) -> ConfirmDialog {
+        ConfirmDialog::for_destructive_opt(
+            message,
+            self.context_target.as_ref(),
+            self.context_recently_switched,
+        )
+    }
+
+    fn destructive_confirm_typed(
+        &self,
+        message: impl Into<String>,
+        expected: impl Into<String>,
+    ) -> ConfirmDialog {
+        ConfirmDialog::for_destructive_typed_opt(message, expected, self.context_target.as_ref())
+    }
+
+    fn destructive_confirm_with_details(
+        &self,
+        message: impl Into<String>,
+        details: Vec<String>,
+    ) -> ConfirmDialog {
+        self.destructive_confirm(message).with_details(details)
+    }
+
+    fn destructive_confirm_typed_with_details(
+        &self,
+        message: impl Into<String>,
+        expected: impl Into<String>,
+        details: Vec<String>,
+    ) -> ConfirmDialog {
+        self.destructive_confirm_typed(message, expected)
+            .with_details(details)
     }
 
     pub fn view_state(&self) -> &ViewState {
@@ -198,7 +236,7 @@ impl FloatingIpModule {
                 .unwrap_or("unknown");
             let details = Self::fip_associate_detail_lines(fip, server_name, &port_label);
             self.confirm.open(
-                ConfirmDialog::yes_no_with_details(
+                self.destructive_confirm_with_details(
                     format!(
                         "Associate {} to port {}?",
                         fip.floating_ip_address, port_label
@@ -238,7 +276,7 @@ impl FloatingIpModule {
             .unwrap_or("unknown");
         let details = Self::fip_associate_detail_lines(fip, server_name, &port_label);
         self.confirm.open(
-            ConfirmDialog::yes_no_with_details(
+            self.destructive_confirm_with_details(
                 format!(
                     "Associate {} to port {}?",
                     fip.floating_ip_address, port_label
@@ -306,7 +344,7 @@ impl FloatingIpModule {
                     let id = fip.id.clone();
                     let ip = fip.floating_ip_address.clone();
                     self.confirm.open(
-                        ConfirmDialog::yes_no(format!("Delete floating IP '{ip}'?")),
+                        self.destructive_confirm(format!("Delete floating IP '{ip}'?")),
                         PendingAction::DeleteFloatingIp { id, ip },
                     );
                 }
@@ -338,7 +376,7 @@ impl FloatingIpModule {
                     let ip = fip.floating_ip_address.clone();
                     let details = Self::fip_disassociate_detail_lines(fip);
                     self.confirm.open(
-                        ConfirmDialog::type_to_confirm_with_details(
+                        self.destructive_confirm_typed_with_details(
                             format!("Disassociate {ip}? External access will be lost immediately."),
                             ip,
                             details,
@@ -430,6 +468,15 @@ impl Component for FloatingIpModule {
         self.view_state = ViewState::List;
         self.pending_fip_id = None;
         self.select_popup = None;
+    }
+
+    fn set_context_state(
+        &mut self,
+        target: Option<crate::context::types::ContextTarget>,
+        recently_switched: bool,
+    ) {
+        self.context_target = target;
+        self.context_recently_switched = recently_switched;
     }
 
     fn handle_event(&mut self, event: &AppEvent) {

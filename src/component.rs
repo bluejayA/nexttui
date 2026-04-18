@@ -48,6 +48,20 @@ pub trait Component {
     /// next fetch lands. Default is no-op for read-only/leaf modules.
     /// (Codex adversarial HIGH #1 / BL-P2-052 Part B safety portion.)
     fn on_context_changed(&mut self) {}
+
+    /// Broadcast by `App` whenever the active context target or the
+    /// "recently switched" highlight window changes. Modules with destructive
+    /// confirm dialogs (`Delete*`, `ForceDelete*`, `Evacuate`, `Detach`, …)
+    /// should store these two values and pass them to
+    /// [`ConfirmDialog::for_destructive_opt`] when building a confirmation
+    /// prompt. Default is no-op for read-only modules.
+    /// (Unit 5 Step 5 / Codex adversarial HIGH #2.)
+    fn set_context_state(
+        &mut self,
+        _target: Option<crate::context::types::ContextTarget>,
+        _recently_switched: bool,
+    ) {
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

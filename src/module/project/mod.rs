@@ -28,6 +28,8 @@ pub struct ProjectModule {
     form: Option<FormWidget>,
     cached_domain_opts: Vec<SelectOption>,
     action_tx: ActionSender,
+    context_target: Option<crate::context::types::ContextTarget>,
+    context_recently_switched: bool,
 }
 
 impl ProjectModule {
@@ -42,7 +44,17 @@ impl ProjectModule {
             form: None,
             cached_domain_opts: Vec::new(),
             action_tx,
+            context_target: None,
+            context_recently_switched: false,
         }
+    }
+
+    fn destructive_confirm_typed(
+        &self,
+        message: impl Into<String>,
+        expected: impl Into<String>,
+    ) -> ConfirmDialog {
+        ConfirmDialog::for_destructive_typed_opt(message, expected, self.context_target.as_ref())
     }
 
     pub fn view_state(&self) -> &ViewState {
@@ -108,7 +120,7 @@ impl ProjectModule {
                     let id = proj.id.clone();
                     let name = proj.name.clone();
                     self.confirm.open(
-                        ConfirmDialog::type_to_confirm(
+                        self.destructive_confirm_typed(
                             format!("Delete project '{name}'?"),
                             name.clone(),
                         ),
@@ -216,6 +228,15 @@ impl Component for ProjectModule {
         self.error_message = None;
         self.resource_list.set_rows(Vec::new());
         self.view_state = ViewState::List;
+    }
+
+    fn set_context_state(
+        &mut self,
+        target: Option<crate::context::types::ContextTarget>,
+        recently_switched: bool,
+    ) {
+        self.context_target = target;
+        self.context_recently_switched = recently_switched;
     }
 
     fn handle_event(&mut self, event: &AppEvent) {
