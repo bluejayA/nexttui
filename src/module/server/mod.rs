@@ -929,6 +929,19 @@ impl Component for ServerModule {
         }
     }
 
+    fn on_context_changed(&mut self) {
+        // Drop the pre-switch list so the user can't pick a server that
+        // belongs to the previous project. App will dispatch our
+        // `refresh_action` to refill from the new project.
+        self.servers.clear();
+        self.loading = true;
+        self.error_message = None;
+        self.resource_list.set_rows(Vec::new());
+        self.resize_pending = None;
+        self.migration_progress = None;
+        self.view_state = ViewState::List;
+    }
+
     fn handle_event(&mut self, event: &AppEvent) {
         match event {
             AppEvent::ServersLoaded(servers) => {
@@ -1186,6 +1199,25 @@ mod tests {
         ];
         module.handle_event(&AppEvent::ServersLoaded(servers));
         (module, rx)
+    }
+
+    #[test]
+    fn test_on_context_changed_drops_stale_state() {
+        // Codex adversarial HIGH #1: after `:switch-project`, the previous
+        // project's server list must not remain selectable / actionable.
+        let (mut module, _rx) = setup();
+        module.loading = false;
+        module.error_message = Some("boom".into());
+        module.view_state = ViewState::Detail("s1".into());
+
+        module.on_context_changed();
+
+        assert!(module.servers.is_empty());
+        assert!(module.loading);
+        assert!(module.error_message.is_none());
+        assert_eq!(module.view_state, ViewState::List);
+        assert!(module.resize_pending.is_none());
+        assert!(module.migration_progress.is_none());
     }
 
     #[test]

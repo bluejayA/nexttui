@@ -200,6 +200,17 @@ impl Component for UserModule {
         }
     }
 
+    fn on_context_changed(&mut self) {
+        // Identity (users/projects) is cloud-scoped rather than project-scoped,
+        // but we still drop the list so the indicator highlight period is
+        // backed by a visible "Loading…" state rather than stale entries.
+        self.users.clear();
+        self.loading = true;
+        self.error_message = None;
+        self.resource_list.set_rows(Vec::new());
+        self.view_state = ViewState::List;
+    }
+
     fn handle_event(&mut self, event: &AppEvent) {
         match event {
             AppEvent::UsersLoaded(users) => {

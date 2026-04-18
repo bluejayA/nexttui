@@ -422,6 +422,16 @@ impl Component for FloatingIpModule {
         }
     }
 
+    fn on_context_changed(&mut self) {
+        self.floating_ips.clear();
+        self.loading = true;
+        self.error_message = None;
+        self.resource_list.set_rows(Vec::new());
+        self.view_state = ViewState::List;
+        self.pending_fip_id = None;
+        self.select_popup = None;
+    }
+
     fn handle_event(&mut self, event: &AppEvent) {
         match event {
             AppEvent::FloatingIpsLoaded(fips) => {

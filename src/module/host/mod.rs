@@ -227,6 +227,14 @@ impl Component for HostModule {
         None
     }
 
+    fn on_context_changed(&mut self) {
+        self.host_list.set_hypervisors(Vec::new());
+        self.all_servers.clear();
+        self.sync_instance_list();
+        self.evac_task = None;
+        self.evac_confirm_pending = false;
+    }
+
     fn handle_event(&mut self, event: &AppEvent) {
         match event {
             AppEvent::HypervisorsLoaded(hvs) => {

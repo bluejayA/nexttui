@@ -40,6 +40,14 @@ pub trait Component {
     fn content_title(&self) -> Option<String> {
         None
     }
+
+    /// Called by `App` when `AppEvent::ContextChanged` fires — the active
+    /// cloud/project just switched. Implementations should drop cached
+    /// resource lists, reset transient selection/detail state, and set
+    /// `is_loading = true` so stale entries can't be acted upon before the
+    /// next fetch lands. Default is no-op for read-only/leaf modules.
+    /// (Codex adversarial HIGH #1 / BL-P2-052 Part B safety portion.)
+    fn on_context_changed(&mut self) {}
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

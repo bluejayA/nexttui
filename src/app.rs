@@ -580,11 +580,28 @@ impl App {
             self.rbac.update_roles(roles.clone(), None);
             self.broadcast_admin();
         }
-        // Unit 5 Step 3: update the status-bar indicator on switch completion.
-        // Cache invalidation / Fetch-all / toast on ContextChanged is tracked
-        // by BL-P2-052 (Part B).
+        // Context switch completion (Codex adversarial HIGH #1 / BL-P2-052
+        // Part B safety portion). On `ContextChanged`:
+        //   1. Refresh the status-bar indicator (Step 3).
+        //   2. Broadcast `on_context_changed` to every module so they drop
+        //      stale caches — blocks "wrong-context destructive action".
+        //   3. Dispatch each module's `refresh_action` so the new project's
+        //      data starts loading immediately.
+        // The remaining UX bits (router/selection reset + toast) are tracked
+        // by BL-P2-052 Part B leftovers.
         if let AppEvent::ContextChanged { ref target } = event {
             self.context_indicator.set_target(target, true);
+            for component in self.components.values_mut() {
+                component.on_context_changed();
+            }
+            let refreshes: Vec<Action> = self
+                .components
+                .values()
+                .filter_map(|c| c.refresh_action())
+                .collect();
+            for action in refreshes {
+                let _ = self.action_tx.send(action);
+            }
         }
         // Migration complete → refresh server list to reflect status change
         let refresh_servers = matches!(
@@ -1947,6 +1964,48 @@ mod tests {
         assert_eq!(t.project_name, "admin");
         // The switch marks a highlight.
         assert!(app.context_indicator.is_highlighting());
+    }
+
+    #[test]
+    fn test_context_changed_dispatches_refresh_for_each_module() {
+        // Codex adversarial HIGH #1: after switch, every registered module's
+        // `refresh_action` must be dispatched so stale caches reload from the
+        // new project. Combined with `on_context_changed` broadcast (module
+        // tests), this closes the "wrong-context destructive action" gap.
+        use crate::context::types::ContextTarget;
+        let (tx, mut rx) = crate::context::test_action_channel();
+        let config = test_config();
+        let mut app = App::new(config, tx);
+        app.register_component(
+            Route::Servers,
+            Box::new(RefreshMock::new(Action::FetchServers)),
+        );
+        app.register_component(
+            Route::Networks,
+            Box::new(RefreshMock::new(Action::FetchNetworks)),
+        );
+
+        app.handle_event(AppEvent::ContextChanged {
+            target: ContextTarget {
+                cloud: "devstack".into(),
+                project_id: "p1".into(),
+                project_name: "admin".into(),
+                domain: "default".into(),
+            },
+        });
+
+        let mut received: Vec<Action> = Vec::new();
+        while let Ok(action) = rx.try_recv() {
+            received.push(action);
+        }
+        assert!(
+            received.iter().any(|a| matches!(a, Action::FetchServers)),
+            "expected FetchServers among: {received:?}"
+        );
+        assert!(
+            received.iter().any(|a| matches!(a, Action::FetchNetworks)),
+            "expected FetchNetworks among: {received:?}"
+        );
     }
 
     // --- BL-P2-073: InputMode sync invariants ---

@@ -210,6 +210,14 @@ impl Component for ProjectModule {
         }
     }
 
+    fn on_context_changed(&mut self) {
+        self.projects.clear();
+        self.loading = true;
+        self.error_message = None;
+        self.resource_list.set_rows(Vec::new());
+        self.view_state = ViewState::List;
+    }
+
     fn handle_event(&mut self, event: &AppEvent) {
         match event {
             AppEvent::ProjectsLoaded(projects) => {

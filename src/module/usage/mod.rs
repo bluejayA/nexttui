@@ -622,6 +622,14 @@ impl Component for UsageModule {
         }
     }
 
+    fn on_context_changed(&mut self) {
+        self.tenant_usages.clear();
+        self.hypervisors.clear();
+        self.cached_projects.clear();
+        self.loading = true;
+        self.error_message = None;
+    }
+
     fn handle_event(&mut self, event: &AppEvent) {
         match event {
             AppEvent::UsageLoaded(usages) => {

@@ -60,6 +60,12 @@ impl Component for AgentModule {
             _ => None,
         }
     }
+    fn on_context_changed(&mut self) {
+        self.agents.clear();
+        self.loading = true;
+        self.resource_list.set_rows(Vec::new());
+    }
+
     fn handle_event(&mut self, event: &AppEvent) {
         if let AppEvent::AgentsLoaded(agents) = event {
             self.agents = agents.clone();

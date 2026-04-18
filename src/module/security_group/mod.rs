@@ -351,6 +351,15 @@ impl Component for SecurityGroupModule {
         }
     }
 
+    fn on_context_changed(&mut self) {
+        self.security_groups.clear();
+        self.detail_sg_id = None;
+        self.loading = true;
+        self.error_message = None;
+        self.resource_list.set_rows(Vec::new());
+        self.view_state = ViewState::List;
+    }
+
     fn handle_event(&mut self, event: &AppEvent) {
         match event {
             AppEvent::SecurityGroupsLoaded(sgs) => {
