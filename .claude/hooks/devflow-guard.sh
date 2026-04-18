@@ -1,7 +1,9 @@
 #!/bin/bash
 # devflow-guard.sh — PreToolUse hook for Bash commands
-# Blocks git commit / gh pr create when devflow-state.md exists
+# Blocks git commit / gh pr merge when devflow-state.md exists
 # and the current stage doesn't allow these operations.
+# Note: `gh pr create` is always allowed (incremental/draft PRs are fine);
+# only `gh pr merge` is gated on Phase=complete.
 
 set -euo pipefail
 
@@ -11,18 +13,18 @@ COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // ""')
 
 # Determine which operation is attempted
 IS_GIT_COMMIT=false
-IS_GH_PR_CREATE=false
+IS_GH_PR_MERGE=false
 
 if echo "$COMMAND" | grep -qE '(^|\s|&&|\|)git\s+(commit|add\s+.*&&\s*git\s+commit)'; then
   IS_GIT_COMMIT=true
 fi
 
-if echo "$COMMAND" | grep -qE '(^|\s|&&|\|)gh\s+pr\s+(create|merge)'; then
-  IS_GH_PR_CREATE=true
+if echo "$COMMAND" | grep -qE '(^|\s|&&|\|)gh\s+pr\s+merge'; then
+  IS_GH_PR_MERGE=true
 fi
 
 # If neither, pass through
-if [ "$IS_GIT_COMMIT" = false ] && [ "$IS_GH_PR_CREATE" = false ]; then
+if [ "$IS_GIT_COMMIT" = false ] && [ "$IS_GH_PR_MERGE" = false ]; then
   exit 0
 fi
 
@@ -72,11 +74,12 @@ if [ "$IS_GIT_COMMIT" = true ]; then
   exit 0
 fi
 
-# Rule 2: gh pr create/merge allowed only when phase is complete
-if [ "$IS_GH_PR_CREATE" = true ]; then
+# Rule 2: gh pr merge allowed only when phase is complete
+# (gh pr create is unrestricted — use --draft for incremental PRs)
+if [ "$IS_GH_PR_MERGE" = true ]; then
   if [ "$PHASE" = "complete" ] || [ "$PHASE" = "finished" ]; then
     exit 0
   fi
-  echo '{"decision":"block","reason":"devflow 위반: gh pr create/merge는 Phase=complete일 때만 허용됩니다. 현재: Phase='"$PHASE"', Stage='"$STAGE"'. aidlc-finishing-a-development-branch 스킬을 먼저 실행하세요."}'
+  echo '{"decision":"block","reason":"devflow 위반: gh pr merge는 Phase=complete일 때만 허용됩니다. 현재: Phase='"$PHASE"', Stage='"$STAGE"'. aidlc-finishing-a-development-branch 스킬을 먼저 실행해 머지 준비를 완료하세요. (gh pr create는 중간 단계에서도 가능합니다.)"}'
   exit 0
 fi
