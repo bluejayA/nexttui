@@ -1397,6 +1397,19 @@ impl App {
         self.background_tracker.expire_toasts();
         self.background_tracker.gc_old_entries();
 
+        // Re-broadcast the context state each tick so modules flip back to
+        // `recently_switched = false` once the indicator's highlight window
+        // expires. Runs before the input-mode early-return so destructive
+        // dialogs inside confirm/command mode also see the transition.
+        // (Codex review P2 — without this, recently_switched stays true
+        // forever after the first `ContextChanged` and every destructive
+        // dialog escalates to type-to-confirm.)
+        let ctx_target = self.context_indicator.target().cloned();
+        let ctx_recently = self.context_indicator.is_highlighting();
+        for component in self.components.values_mut() {
+            component.set_context_state(ctx_target.clone(), ctx_recently);
+        }
+
         // Auto-refresh: skip when user is interacting
         if self.input_mode != InputMode::Normal {
             return;
@@ -1972,6 +1985,102 @@ mod tests {
         assert_eq!(t.project_name, "admin");
         // The switch marks a highlight.
         assert!(app.context_indicator.is_highlighting());
+    }
+
+    // Spy component that records the last (target, recently_switched) pair
+    // delivered via `Component::set_context_state`. Used to verify the
+    // `on_tick` re-broadcast flips `recently_switched` back to false once the
+    // indicator's highlight window expires (Codex review P2).
+    #[derive(Default)]
+    struct ContextSpyState {
+        last_target: Option<crate::context::types::ContextTarget>,
+        last_recently: bool,
+        calls: usize,
+    }
+
+    struct ContextStateSpy {
+        state: std::rc::Rc<std::cell::RefCell<ContextSpyState>>,
+    }
+
+    impl ContextStateSpy {
+        fn new() -> (Self, std::rc::Rc<std::cell::RefCell<ContextSpyState>>) {
+            let state = std::rc::Rc::new(std::cell::RefCell::new(ContextSpyState::default()));
+            (
+                Self {
+                    state: state.clone(),
+                },
+                state,
+            )
+        }
+    }
+
+    impl Component for ContextStateSpy {
+        fn handle_key(&mut self, _key: KeyEvent) -> Option<Action> {
+            None
+        }
+        fn handle_event(&mut self, _event: &AppEvent) {}
+        fn render(&self, _frame: &mut Frame, _area: Rect) {}
+        fn set_context_state(
+            &mut self,
+            target: Option<crate::context::types::ContextTarget>,
+            recently_switched: bool,
+        ) {
+            let mut s = self.state.borrow_mut();
+            s.last_target = target;
+            s.last_recently = recently_switched;
+            s.calls += 1;
+        }
+    }
+
+    #[test]
+    fn test_on_tick_rebroadcasts_recently_switched_when_highlight_expires() {
+        use crate::context::types::ContextTarget;
+        // Codex review P2: after the highlight window elapses, the next
+        // `on_tick` must push `recently_switched = false` to every module,
+        // otherwise destructive dialogs keep demanding the project name.
+        let mut app = make_app();
+        let (spy, state) = ContextStateSpy::new();
+        app.register_component(Route::Servers, Box::new(spy));
+
+        // Simulate a context switch — indicator goes hot, broadcast marks
+        // recently=true on registered modules.
+        app.handle_event(AppEvent::ContextChanged {
+            target: ContextTarget {
+                cloud: "devstack".into(),
+                project_id: "p1".into(),
+                project_name: "admin".into(),
+                domain: "default".into(),
+            },
+        });
+        assert!(
+            state.borrow().last_recently,
+            "recently=true right after switch"
+        );
+        let calls_after_switch = state.borrow().calls;
+        assert!(calls_after_switch >= 1);
+
+        // Rewind the indicator's last switch instant to simulate the
+        // highlight window elapsing without sleeping.
+        app.context_indicator.set_last_switch_at_for_test(
+            std::time::Instant::now() - std::time::Duration::from_secs(10),
+        );
+        assert!(!app.context_indicator.is_highlighting());
+
+        // on_tick must propagate the transition.
+        app.on_tick();
+        let s = state.borrow();
+        assert!(
+            !s.last_recently,
+            "on_tick should flip recently back to false once highlight expires"
+        );
+        assert_eq!(
+            s.last_target.as_ref().map(|t| t.project_name.as_str()),
+            Some("admin")
+        );
+        assert!(
+            s.calls > calls_after_switch,
+            "on_tick should add a broadcast call"
+        );
     }
 
     #[test]
