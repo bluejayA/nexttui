@@ -42,13 +42,16 @@ feat/bl-p2-031-pr3-commands-ui (from a00c044, HEAD: fa85900)
 - **Step 5 완료 후 BL-P2-078**: grep/CI test 또는 타입 강제로 destructive 콜사이트 enforcement
 - Step 5는 32 콜사이트를 `for_destructive`로 일괄 적용 — 이 패턴이 확정되어야 강제력 설계 비용 최저
 
-### 기존 항목 유지
-자세한 내용: `devflow-docs/backlog.md` → **BL-P2-077** (PR3 cargo-review 잔여 MED finding)
+### 잔여 BL 현황 (2026-04-18 업데이트)
 
-- **G6**: ContextChanged channel round-trip 통합 테스트 — BL-P2-052 Part B 착수 또는 Step 5 완료 후
-- **BL-P2-052 Part B 전체** — full invalidation + Fetch* + toast. PR3는 Codex HIGH #1에 대해 "module Vec clear + is_loading" 최소 안전만 포함 예정.
+- **BL-P2-077**: ✅ Closed. C1/C5 = 0ca88d3 처리, G6 = BL-P2-052 Part C로 이관.
+- **BL-P2-052**:
+  - Part A (Rescoped 토큰 auto refresh) — High 유지, PR3 무관.
+  - Part B (ContextChanged UX 완결성) — PR3에서 Vec clear + Fetch* + indicator 선처리됨. **남은 항목은 router/selection reset + "Switched to project X" toast + on_context_changed 메서드 추출**. Medium.
+  - Part C (channel round-trip 테스트) — Part B와 같은 diff에서 처리. epoch gate 통과/드롭 양쪽 검증.
 
 Low-priority 스타일 항목: BL-P2-076 (필수 아님).
+Destructive API 타입 강제: BL-P2-078 (Step 5 이후).
 
 ## Completed Commits (main 위 10 commits)
 - 9e1fdb7 INCEPTION UPDATE (Unit 4.5)

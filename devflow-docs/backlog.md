@@ -10,14 +10,28 @@
 **Part A — Rescoped 토큰 자동 refresh**: C1 가드 도입으로 KeystoneAuthAdapter는 initial scope 토큰만 자동 refresh. set_active(demo) 후 demo 토큰이 expire되면 `get_token`이 영구 실패 (`refresh_token` 가드가 AuthFailed 반환). 사용자 영향: ~55분 후 demo 세션이 모든 API 호출 실패.
 필요 작업: ScopedAuthSession 또는 신규 RescopeRefresher가 active scope 토큰의 near-expiry를 감지 → KeystoneRescopePort로 새 토큰 발급 → set_active로 갱신. 또는 최소한 get_token 에러 메시지를 "session expired, please switch context again"으로 명확화.
 
-**Part B — `AppEvent::ContextChanged` handler 구현**: 현재 ContextChanged는 fire-and-forget. handle_event에 arm이 없어 switch 성공 후 16개 모듈 캐시(Vec<Server> 등)가 이전 project 데이터 유지. T3 wire 이후에도 동일 문제. 필요 작업:
-- ~~`App.handle_event::ContextChanged` arm 구현~~ — **PR3 Unit 5 Step 3에서 부분 선처리** (ContextIndicator 갱신만). 나머지는 아래.
-- 16개 Resource Module 캐시 invalidate (Vec 비움 + is_loading=true) — **미구현**
-- `Fetch*` 일괄 dispatch — **미구현**
-- router reset (필요 시) + toast ("Switched to project X") — **미구현**
+**Part B — `AppEvent::ContextChanged` handler 구현** (PR3 진행 중 대폭 처리, 잔여만 여기 남음):
+- ✅ `App.handle_event::ContextChanged` arm (ContextIndicator 갱신) — PR3 Step 3 (f138af6)
+- ✅ 16개 Resource Module 캐시 invalidate (Vec 비움 + is_loading=true) — PR3 Codex HIGH #1 대응 (A+Fetch commit, 예정)
+- ✅ `Fetch*` 일괄 dispatch — PR3 Codex HIGH #1 대응 (A+Fetch commit, 예정)
+- ⬜ **router reset / selection reset** (필요 시) — 잔여
+- ⬜ **"Switched to project X" toast** — 잔여
+- ⬜ `on_context_changed(&target)` 메서드 추출 (거대 match 분할) — 잔여. Step 2/3 cargo-review Suggestions Future Work
 
-**Acceptance**: switch 성공 → UI 즉시 새 project 데이터로 전환 + token expiry 자동 처리.
-**Ref**: Security Reviewer S2 (P0 fix 리뷰), Cargo Review PR #68 통합 finding. Part B indicator 부분: PR3 Step 3 commit.
+**Part C — ContextChanged channel round-trip 통합 테스트** (BL-P2-077 G6에서 이관, 2026-04-18):
+- 현재 `test_context_changed_updates_indicator`는 `app.handle_event(...)` 직접 호출 — epoch gate 우회
+- 프로덕션 경로: `event_tx.send → drain → handle_versioned_event (epoch gate) → handle_event`
+- 통과 케이스(current epoch) + drop 케이스(stale epoch +1) 양쪽 검증 추가
+- Part B 수정과 같은 diff에서 처리해야 stale drop 경로까지 회귀 감지
+
+**Acceptance**:
+- Part A: token expire 자동 처리.
+- Part B: switch 성공 → router/selection reset + 사용자 toast. (Vec clear / Fetch* / indicator는 PR3에서 완료)
+- Part C: channel round-trip epoch gate 테스트 통과.
+
+**Priority**: High (Part A 기준). Part B/C는 UX 완결성 + 테스트 부채로 Medium 레벨.
+
+**Ref**: Security Reviewer S2 (P0 fix 리뷰), Cargo Review PR #68 통합 finding. PR3 Codex adversarial HIGH #1 대응으로 Part B의 안전 부분은 선처리됨. Part C는 BL-P2-077 G6(2026-04-17 등록)에서 이관.
 
 ### BL-P2-053: SwitchError NotAuthenticated variant + ApiError ScopeDrift variant
 **Priority**: Medium
@@ -334,10 +348,10 @@ AI 개발 맥락에서 이는 "preference" 수준이 아니라 **claude-code 세
 
 **Ref**: Codex adversarial review HIGH #2 (verbatim 원문은 PR3 feat/bl-p2-031-pr3-commands-ui 브랜치 세션 기록).
 
-### BL-P2-077: PR3 cargo-review 잔여 MED finding (unicode-width + NO_COLOR + event test)
+### BL-P2-077: PR3 cargo-review 잔여 MED finding (unicode-width + NO_COLOR + event test) ✅
 **Priority**: Medium
 **Category**: UX correctness / Test robustness
-**Status**: C1 + G4 + C5 = Done (PR3 Step 4 병행 처리, commit 준비 중). G6 남음.
+**Status**: **Closed (2026-04-18)**. C1 + G4 + C5 = 0ca88d3에서 처리. G6 = BL-P2-052 Part C로 이관 (코드 터치 범위가 Part B와 동일해 같은 PR에서 테스트+구현 쌍으로 처리).
 **Description**: PR3 Step 2/3 cargo-review에서 식별된 MED finding 3건. APPROVE verdict였으나 Step 4 (ConfirmDialog — 한글 메시지 다수) 이전/병행 처리가 자연스러움.
 
 **C1 + G4 — `unicode-width` 전환** ✅ Done:
