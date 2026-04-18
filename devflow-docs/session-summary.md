@@ -1,69 +1,60 @@
-# Session Summary — BL-P2-031 PR3 (CONSTRUCTION 완료)
+# Session Summary — BL-P2-031 PR3 (Codex 2차 review 응답 대기)
 
 ## Task
 BL-P2-031 PR3 — Unit 4.5 + Unit 5: Commands & Safety UI
-- `:switch-project` / `:switch-cloud` / `:switch-back` 명령 ✅
-- Command Bar wire (InputBar + CommandParser → App) ✅
-- ContextIndicator 위젯 + StatusBar 연결 + ContextChanged arm ✅
-- ConfirmDialog fingerprint + recontext 재확인 ✅
-- destructive 콜사이트 전반에 fingerprint 적용 ✅
-- Codex adversarial HIGH 3건 해결 ✅
+- 본 작업은 PR3 머지 전 최종 Codex review에서 지적된 P1/P2/P3 수정이 남은 상태.
 
 ## Current State
-- **Phase**: complete
-- **Branch**: feat/bl-p2-031-pr3-commands-ui (HEAD: 0847c66)
-- **Base**: main a00c044 (PR #75 머지)
-- **Tests**: 1307 passing (baseline 1247 + 60 신규)
-- **Lint/build**: clippy clean, fmt clean, bin compile clean
-- **Commits on branch**: 16
+- **Phase**: CONSTRUCTION (review follow-up 단계)
+- **Branch**: feat/bl-p2-031-pr3-commands-ui (HEAD: 6975a01)
+- **Base**: main a00c044
+- **Tests**: 1308 passing
+- **Lint/build**: clean (P1/P2/P3 수정 전)
+- **Commits on branch**: 18
 
-## Completed (16 commits)
+## Completed Commits (18 on main)
 1. 9e1fdb7 — INCEPTION UPDATE (Unit 4.5 stub blind spot)
-2. b628eb6 — backlog 등록 (BL-P2-071..076)
+2. b628eb6 — backlog BL-P2-071..076 등록
 3. 4cd32c5 — Unit 4.5 + Unit 5 Step 1 (Command Bar wire + switch parser)
 4. 113ddb3 — BL-P2-071 save_history on shutdown
 5. ff234d2 — Unit 5 Step 2 ContextIndicator
 6. d2fa95d — BL-P2-073 InputMode 단일화
 7. f138af6 — Unit 5 Step 3 StatusBar + ContextChanged arm
-8. d316127 — cargo-review C2/S1/S2 후속 (pub(crate) input_mode + doc)
-9. feaad06 — BL-P2-077 등록 + 세션 복구 안전장치
+8. d316127 — cargo-review C2/S1/S2 후속
+9. feaad06 — BL-P2-077 + state 안전장치
 10. e9f497e — Unit 5 Step 4 ConfirmDialog fingerprint
-11. 0ca88d3 — BL-P2-077 unicode-width + NO_COLOR bg
-12. fa85900 — Codex HIGH #3 InputBar UTF-8 cursor panic 수정
-13. 0e98f3f — BL-P2-078 등록 + Codex adversarial 반영 상태
-14. 6115ef1 — Codex HIGH #2 A+B (for_destructive + ContextTarget::fingerprint)
-15. ea97f3e — BL-P2-077 Closed + BL-P2-052 Part B/C 재정의
-16. 3e976e1 — Codex HIGH #1 ContextChanged 캐시 무효화 + Fetch*
-17. 0847c66 — Unit 5 Step 5 destructive 콜사이트 32개 fingerprint 적용
+11. 0ca88d3 — BL-P2-077 unicode-width + bg
+12. fa85900 — Codex HIGH #3 (UTF-8 cursor)
+13. 0e98f3f — BL-P2-078 + state
+14. 6115ef1 — Codex HIGH #2 A+B
+15. ea97f3e — BL-P2-077 Closed + Part B/C 재정의
+16. 3e976e1 — Codex HIGH #1 (ContextChanged 무효화 + Fetch*)
+17. 0847c66 — Unit 5 Step 5 (destructive 콜사이트 32개)
+18. 60c129b — state/summary (PR3 CONSTRUCTION 완료 기록 — 이후 P1/P2/P3 발견)
+19. 6975a01 — Codex review 1차 P2 fix (on_tick recently_switched re-broadcast)
 
 ## Review Cycles
 - Unit 4.5/Step 1 cargo-review + Codex → BL-P2-071
-- Step 2/3 cargo-review → BL-P2-077 등록 (C2/S1/S2는 즉시 반영)
-- Step 4 cargo-review + Codex adversarial → HIGH 3건 순차 반영 (UTF-8/for_destructive/ContextChanged)
-- **최종 Codex review**: 대기 (사용자 직접 실행 예정)
+- Step 2/3 cargo-review → BL-P2-077 (C1/C5/G6)
+- Step 4 cargo-review + Codex adversarial → HIGH 3건 순차 반영
+- **PR3 브랜치 Codex review 1차** (2026-04-18) → P2: recently_switched re-broadcast → 수정 완료 (6975a01)
+- **PR3 브랜치 Codex review 2차** (2026-04-18) → P1+P2+P3 → **BL-P2-079 기록, 수정 대기**
 
-## Remaining Follow-up BLs
-- **BL-P2-052** (High, PR3 이후):
-  - Part A — 토큰 자동 refresh
-  - Part B 잔여 — router/selection reset + toast + on_context_changed 메서드 추출
-  - Part C — ContextChanged channel round-trip 통합 테스트
-- **BL-P2-076** (Low): 스타일 cleanup 모음
-- **BL-P2-078** (Medium, Step 5 이후): destructive API 컴파일-레벨 강제 + 9 모듈 helper 중복 제거
+## ⚠️ 다음 작업 — BL-P2-079 A 경로 (`/compact` 후 또는 새 세션)
 
-## For Next Session (재개 체크리스트)
-```
-1. git branch --show-current  # feat/bl-p2-031-pr3-commands-ui
-2. git log --oneline main..HEAD  # 16 commits 확인
-3. 최종 Codex review 실행 여부 확인 (/codex:review --scope branch)
-4. 리뷰 결과 반영 필요 시 추가 commit
-5. 사용자 승인 후 PR 생성 (gh pr create)
-```
+`devflow-docs/backlog.md` → **BL-P2-079**에 원문 + 수정 방향 + 영향 모듈 전체 기록됨.
 
-## Ready for PR
-현재 브랜치는 PR 생성 가능 상태:
-- 1307 tests pass, lint clean
-- 모든 HIGH 이슈 해소 (Codex adversarial 3건 포함)
-- devflow-docs 최신화 완료
-- follow-up BL 등록 완료 (BL-P2-052/076/078)
+**순서**:
+1. **P1 (Critical)**: 10 destructive 모듈의 `on_context_changed`에 `self.confirm = ConfirmHandler::new()` + 모달 상태 리셋. 통합 테스트 1건.
+2. **P2 (Medium)**: Usage 모듈 `refresh_action` 추가 (또는 on_context_changed에서 직접 dispatch).
+3. **P3 (Low)**: App `tab_cycle_prefix` 필드 + AutoComplete 로직 수정 + Tab cycling 테스트.
+4. 최종 검증 → 한 번 더 `/codex:review` 고려 → PR 생성 (사용자 승인 후, 한+영 body).
 
-최종 Codex review + 사용자 승인 후 `gh pr create`.
+## Remaining Follow-up BLs (PR3 이후)
+- **BL-P2-052**: Part A (토큰 auto refresh) + Part B 잔여 + Part C
+- **BL-P2-076**: Low-priority 스타일 cleanup
+- **BL-P2-078**: destructive API 컴파일 강제
+
+## Session Continuity
+- `/compact` 후 이 세션에서 계속하는 경우: backlog/state 참조 그대로 유효. TaskList도 유지됨.
+- 새 세션 재개 시: `/aidlc:aidlc-using-devflow` → 재개 선택 → state 자동 로드 → BL-P2-079 따라 진행.

@@ -323,6 +323,89 @@ AI 개발 맥락에서 이는 "preference" 수준이 아니라 **claude-code 세
 **Acceptance**: PR3 동일 동작 + 스타일 일관성 + 미래 variant 추가 시 컴파일러 감지.
 **Ref**: PR3 Unit 4.5 cargo-review S1/S3/S4/S8/G8/G9 + PR3 Step 2/3 cargo-review S3~S10/C3/C5/G7/G9
 
+### BL-P2-079: PR3 Codex 2차 review 잔여 finding (confirm reset + usage refetch + Tab cycling)
+**Priority**: High (P1), Medium (P2), Low (P3)
+**Category**: Safety / UX regression
+**Status**: **PR3 안에서 처리 예정** — 현재 세션 완료 후 `/compact` 후 이어서 작업. 또는 새 세션 재개 시 이 BL과 `devflow-state.md`의 체크리스트 확인.
+
+**배경**: PR3 최종 `/codex:review --scope branch` (2026-04-18, commit `6975a01` 이후) 결과. P1 1건 + P2 1건 + P3 1건. 세부는 아래 Codex 원문 인용.
+
+---
+
+#### [P1] Confirm dialog reset in context-change path (Critical)
+
+**원문 (Codex verbatim)**:
+> Reset pending destructive dialogs during context switch — src/module/server/mod.rs:965-972
+> This context-change reset clears list data but leaves `self.confirm` untouched, so a confirmation opened before the switch can still be accepted after `AppEvent::ContextChanged` and dispatch an action using stale resource IDs from the previous project. This is reachable when a switch is in flight (async) and the user opens a confirm dialog before the event arrives; after the switch completes, pressing `y` still resolves the old `PendingAction`. Resetting confirm/modal state in `on_context_changed` is needed to fully prevent cross-context destructive actions.
+
+**Race scenario**:
+1. 사용자가 server delete confirm 연 상태 (confirm 내부: PendingAction::Delete { id: "prev-project-server-1", .. })
+2. 그 직후 `:switch-project other` 실행 → async switch 진행
+3. `AppEvent::ContextChanged` 도착 → `on_context_changed()` 호출 → Vec clear + view_state=List
+4. 하지만 `self.confirm`은 active 유지 + PendingAction은 이전 project의 server ID 참조
+5. 사용자가 `y` 누르면 이전 project의 server를 새 project context로 delete 시도 — wrong-context destructive
+
+**수정 방향**:
+- 10개 destructive 모듈의 `on_context_changed`에 `self.confirm = ConfirmHandler::new();` 추가 (또는 reset 헬퍼)
+- 모달 상태도 함께 초기화: `self.select_popup = None;` (해당 모듈), `self.popup_kind = None;` (server), `self.form = None;` (일부)
+- 통합 테스트: confirm 연 상태에서 on_context_changed 호출 → confirm 비활성 확인
+
+**영향 모듈**: server, volume, floating_ip, security_group, image, flavor, snapshot, user, project (9개 + 이미 cache clear는 한 모듈들)
+
+---
+
+#### [P2] Usage module re-fetch after context switch
+
+**원문 (Codex verbatim)**:
+> Re-trigger usage fetch after clearing state on context change — src/module/usage/mod.rs:625-630
+> After a context switch this handler clears usage data and sets `loading = true`, but it does not fetch new usage data and `refresh_action()` for this module is `None`; if the module was already mounted (`mounted == true`), no automatic fetch will run on the next keypress either. The result is the Usage screen staying empty/loading until the user manually presses `r`, which is a regression from expected automatic refresh after context changes.
+
+**수정 방향**:
+- 옵션 A: `UsageModule::refresh_action()`이 `Some(FetchUsage)` (또는 동등 Action) 반환. App의 ContextChanged arm이 일괄 dispatch에 포함.
+- 옵션 B: `on_context_changed` 내부에서 `action_tx.send(Action::FetchUsage)` 직접 dispatch.
+- 옵션 A 권장 (다른 모듈 패턴과 일관성).
+- `mounted` 플래그 리셋 여부도 검토.
+
+---
+
+#### [P3] Tab completion cycling broken
+
+**원문 (Codex verbatim)**:
+> Preserve completion prefix when cycling Tab suggestions — src/app.rs:296-299
+> Auto-complete uses the current buffer as the next prefix, so after the first Tab expands (e.g. `s` -> `security-groups`), subsequent Tabs query with the expanded value and never cycle through other same-prefix commands. This breaks the parser's intended cycling behavior for shared prefixes and makes Tab completion effectively single-choice in those cases.
+
+**원인 분석**:
+- `src/app.rs` `InputAction::AutoComplete` 분기:
+  ```rust
+  let current = self.input_bar.buffer().to_string();
+  if let Some(expanded) = self.command_parser.auto_complete(&current) {
+      self.input_bar.set_buffer(expanded);
+  }
+  ```
+- `CommandParser::auto_complete`는 `last_prefix`를 추적해 cycling (첫 Tab: 매치 수집 + 첫 결과 반환, 두번째 Tab: 같은 prefix면 cycle)
+- 하지만 App이 첫 Tab 후 buffer를 `"security-groups"`로 set → 두번째 Tab에서 다시 `auto_complete("security-groups")` 호출 → `last_prefix`가 다름 → 새 검색 (매치 0) → None 반환 → buffer 그대로
+
+**수정 방향**:
+- 옵션 A: App이 "Tab cycle 시작 시점의 prefix"를 자체 저장. 다음 Tab에서 같은 prefix로 호출. buffer 타이핑 변경 시 Tab prefix도 리셋.
+- 옵션 B: CommandParser가 마지막 expanded 값을 알고 있고, buffer 같으면 cycle로 판단.
+- 옵션 A 단순 (상태가 App 쪽). `tab_cycle_prefix: Option<String>` 필드 + 타이핑 시 None 리셋.
+- 테스트: `:s` + Tab + Tab 시 첫 결과 → 두번째 결과 cycling.
+
+---
+
+### 수정 순서 (A 경로 — 모두 PR3 안에서)
+
+1. **P1 먼저** (Critical, 10 모듈): confirm reset 추가 + 테스트 1건 이상
+2. **P2** (Usage): refresh_action 추가
+3. **P3** (Tab cycling): App tab_cycle_prefix 상태 + 테스트
+
+**Acceptance**:
+- P1: confirm 열린 상태에서 on_context_changed → confirm 비활성 테스트 통과 (integration)
+- P2: Usage 모듈 register 후 ContextChanged 발행 → FetchUsage action이 channel에 dispatch되는 테스트
+- P3: Tab + Tab cycling 테스트 (app.rs 또는 command.rs에서)
+
+**Ref**: PR3 `/codex:review --scope branch` 2차 실행 결과 (2026-04-18, after commit 6975a01).
+
 ### BL-P2-078: destructive ConfirmDialog API 강제력 보완 (Codex adversarial HIGH #2 후속)
 **Priority**: Medium
 **Category**: Safety / Release enforcement
