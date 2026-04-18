@@ -2,7 +2,9 @@
 
 **Timestamp**: 2026-04-13T00:00:00+09:00
 **Selected Approach**: A안 (안전 완전)
-**Updated**: 2026-04-16 — T3 Runtime Wire (FR-11, B3 축소 범위) UPDATE
+**Updated**:
+- 2026-04-16 — T3 Runtime Wire (FR-11, B3 축소 범위) UPDATE
+- 2026-04-17 — Unit 4.5 Command Bar Integration (stub blind spot 대응) UPDATE
 
 ## Approaches Considered
 - A안) 안전 완전 — 설계 + 유닛 분해 전체 (권장) — 단일 BL을 PR1~PR6에 정합
@@ -72,3 +74,19 @@ T3에서 추가/변경되는 컴포넌트:
 | demo 모드 가드 | 변경 (main.rs) | --demo 시 switcher=None, wire 스킵 |
 
 기존 application-design의 ContextTargetResolver 의존성이 ConfigCloudDirectory + StaticProjectDirectory로 구체화됨.
+
+## PR3 UPDATE 범위 요약 (2026-04-17)
+
+**Trigger**: Unit 5 Step 1 구현 중 발견 — `CommandParser` (`src/input/command.rs`) 및 `InputBar` (`src/ui/input_bar.rs`)가 외부 콜러 0건의 dead code. app.rs:256은 `:` 키를 누르면 `InputMode::Command`로 전환만 하고, 입력 수집·파싱·dispatch 경로 부재.
+
+**영향**: Unit 5의 switch 명령이 파서 단위로만 GREEN이 될 뿐 사용자에게 실제 동작하지 않는 상태로 PR될 위험. `feedback_stub_blind_spot` 패턴 회귀.
+
+**대응**: Unit 5 앞에 Unit 4.5 "Command Bar Integration" 신규 분해 삽입. PR3 = Unit 4.5 + Unit 5.
+
+| 컴포넌트 | 유형 | 설명 |
+|---------|------|------|
+| App (src/app.rs) | 변경 | `input_bar`, `command_parser` 필드 + `InputMode::Command` 위임 + `command_to_action` 매퍼 |
+| InputMode 타입 정합 | 변경 | `component::InputMode` ↔ `ui::input_bar::InputMode` 동기화 진입점 |
+| CommandParser (기존 확장 유지) | 변경 | switch-project/cloud/back 파싱 (Unit 5 Step 1에서 선구현) |
+
+CONSTRUCTION 흐름: INCEPTION UPDATE(units + application-design + workflow-plan) → CONSTRUCTION 재개 → Unit 4.5 → Unit 5.

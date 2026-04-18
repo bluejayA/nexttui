@@ -27,6 +27,8 @@ pub struct FlavorModule {
     resource_list: ResourceList,
     form: Option<FormWidget>,
     action_tx: ActionSender,
+    context_target: Option<crate::context::types::ContextTarget>,
+    context_recently_switched: bool,
 }
 
 impl FlavorModule {
@@ -41,7 +43,17 @@ impl FlavorModule {
             resource_list: ResourceList::new(flavor_columns()),
             form: None,
             action_tx,
+            context_target: None,
+            context_recently_switched: false,
         }
+    }
+
+    fn destructive_confirm(&self, message: impl Into<String>) -> ConfirmDialog {
+        ConfirmDialog::for_destructive_opt(
+            message,
+            self.context_target.as_ref(),
+            self.context_recently_switched,
+        )
     }
 
     pub fn view_state(&self) -> &ViewState {
@@ -97,7 +109,7 @@ impl FlavorModule {
                     let id = flavor.id.clone();
                     let name = flavor.name.clone();
                     self.confirm.open(
-                        ConfirmDialog::yes_no(format!("Delete flavor '{name}'?")),
+                        self.destructive_confirm(format!("Delete flavor '{name}'?")),
                         PendingAction::Delete {
                             id,
                             name: name.clone(),
@@ -200,6 +212,27 @@ impl Component for FlavorModule {
             ViewState::Create => self.handle_create_key(key),
             ViewState::Detail(_) => None,
         }
+    }
+
+    fn on_context_changed(&mut self) {
+        self.flavors.clear();
+        self.loading = true;
+        self.error_message = None;
+        self.resource_list.set_rows(Vec::new());
+        self.view_state = ViewState::List;
+        // Codex review 2차 P1: pending destructive confirm/form must not
+        // survive across a context switch.
+        self.confirm = ConfirmHandler::new();
+        self.form = None;
+    }
+
+    fn set_context_state(
+        &mut self,
+        target: Option<crate::context::types::ContextTarget>,
+        recently_switched: bool,
+    ) {
+        self.context_target = target;
+        self.context_recently_switched = recently_switched;
     }
 
     fn handle_event(&mut self, event: &AppEvent) {

@@ -1,5 +1,6 @@
 pub mod activity_log;
 pub mod confirm;
+pub mod context_indicator;
 pub mod detail_view;
 pub mod form;
 pub mod gauge_bar;

@@ -15,6 +15,12 @@ pub enum Command {
     Help,
     ContextSwitch(String),
     ContextList,
+    /// `:switch-project <name>` — switch active project within the current cloud.
+    SwitchProject(String),
+    /// `:switch-cloud <name>` — switch active cloud.
+    SwitchCloud(String),
+    /// `:switch-back` — return to the previous context.
+    SwitchBack,
     Unknown(String),
 }
 
@@ -114,11 +120,24 @@ const COMMAND_TABLE: &[CommandDef] = &[
     },
 ];
 
+/// Switch commands do not have a `Route` so they live outside `COMMAND_TABLE`.
+const SWITCH_ABBREVIATIONS: &[(&str, &str)] = &[
+    ("sp", "switch-project"),
+    ("sc", "switch-cloud"),
+    ("sb", "switch-back"),
+];
+
+const SWITCH_COMMANDS: &[&str] = &["switch-project", "switch-cloud", "switch-back"];
+
 fn build_abbreviations() -> HashMap<String, String> {
-    COMMAND_TABLE
+    let mut map: HashMap<String, String> = COMMAND_TABLE
         .iter()
         .map(|def| (def.abbreviation.to_string(), def.name.to_string()))
-        .collect()
+        .collect();
+    for (abbr, full) in SWITCH_ABBREVIATIONS {
+        map.insert((*abbr).to_string(), (*full).to_string());
+    }
+    map
 }
 
 fn build_route_map() -> HashMap<String, Route> {
@@ -150,8 +169,11 @@ impl CommandParser {
     }
 
     /// Parse a command string. Resolves abbreviations first.
+    /// Tolerates a leading `:` and any whitespace between the colon and the
+    /// command (e.g. `": quit"` parses the same as `"quit"`).
     pub fn parse(&mut self, input: &str) -> Command {
-        let trimmed = input.trim();
+        let t = input.trim();
+        let trimmed = t.strip_prefix(':').map(str::trim).unwrap_or(t);
         if trimmed.is_empty() {
             return Command::Unknown(String::new());
         }
@@ -178,6 +200,19 @@ impl CommandParser {
                     _ => Command::ContextList,
                 };
             }
+            "switch-project" => {
+                return match arg {
+                    Some(name) if !name.is_empty() => Command::SwitchProject(name),
+                    _ => Command::Unknown(resolved),
+                };
+            }
+            "switch-cloud" => {
+                return match arg {
+                    Some(name) if !name.is_empty() => Command::SwitchCloud(name),
+                    _ => Command::Unknown(resolved),
+                };
+            }
+            "switch-back" => return Command::SwitchBack,
             _ => {}
         }
 
@@ -257,6 +292,7 @@ impl CommandParser {
                 .iter()
                 .map(|s| s.to_string()),
         );
+        cmds.extend(SWITCH_COMMANDS.iter().map(|s| s.to_string()));
         cmds.sort();
         cmds
     }
@@ -410,6 +446,111 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_switch_project() {
+        let mut p = parser();
+        assert_eq!(
+            p.parse("switch-project admin"),
+            Command::SwitchProject("admin".to_string())
+        );
+        // leading colon accepted
+        assert_eq!(
+            p.parse(":switch-project admin"),
+            Command::SwitchProject("admin".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_switch_cloud() {
+        let mut p = parser();
+        assert_eq!(
+            p.parse("switch-cloud prod"),
+            Command::SwitchCloud("prod".to_string())
+        );
+        assert_eq!(
+            p.parse(":switch-cloud staging"),
+            Command::SwitchCloud("staging".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_switch_back() {
+        let mut p = parser();
+        assert_eq!(p.parse("switch-back"), Command::SwitchBack);
+        assert_eq!(p.parse(":switch-back"), Command::SwitchBack);
+    }
+
+    #[test]
+    fn test_parse_colon_with_space() {
+        // PR3 cargo-review C3: `:` followed by whitespace must still parse.
+        let mut p = parser();
+        assert_eq!(p.parse(": quit"), Command::Quit);
+        assert_eq!(p.parse(":  switch-back"), Command::SwitchBack);
+        assert_eq!(
+            p.parse(":   switch-project admin"),
+            Command::SwitchProject("admin".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_switch_abbreviations() {
+        let mut p = parser();
+        assert_eq!(
+            p.parse("sp admin"),
+            Command::SwitchProject("admin".to_string())
+        );
+        assert_eq!(p.parse("sc prod"), Command::SwitchCloud("prod".to_string()));
+        assert_eq!(p.parse("sb"), Command::SwitchBack);
+    }
+
+    #[test]
+    fn test_parse_switch_requires_arg() {
+        let mut p = parser();
+        // No arg → Unknown so the UI can show usage
+        assert_eq!(
+            p.parse("switch-project"),
+            Command::Unknown("switch-project".to_string())
+        );
+        assert_eq!(
+            p.parse("switch-cloud"),
+            Command::Unknown("switch-cloud".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_switch_case_insensitive() {
+        let mut p = parser();
+        assert_eq!(
+            p.parse("SWITCH-PROJECT Admin"),
+            Command::SwitchProject("Admin".to_string())
+        );
+        assert_eq!(p.parse("SB"), Command::SwitchBack);
+    }
+
+    #[test]
+    fn test_auto_complete_switch_prefix() {
+        let mut p = parser();
+        let r = p.auto_complete("switch-");
+        // cycles through switch-back / switch-cloud / switch-project
+        assert!(r.is_some());
+        let expanded = r.unwrap();
+        assert!(
+            matches!(
+                expanded.as_str(),
+                "switch-back" | "switch-cloud" | "switch-project"
+            ),
+            "unexpected completion: {expanded}"
+        );
+    }
+
+    #[test]
+    fn test_auto_complete_switch_abbrev() {
+        let mut p = parser();
+        // `sp` is an abbreviation for switch-project — should expand
+        let r = p.auto_complete("sp");
+        assert_eq!(r, Some("switch-project".to_string()));
+    }
+
+    #[test]
     fn test_parse_case_insensitive() {
         let mut p = parser();
         assert_eq!(p.parse("SERVERS"), Command::Navigate(Route::Servers));
@@ -509,10 +650,16 @@ mod tests {
 
     #[test]
     fn test_command_table_sync() {
-        // Verify every abbreviation maps to a valid route
+        // Every route-mapped abbreviation must map to a valid route.
+        // Switch commands are non-Route and live in SWITCH_ABBREVIATIONS.
         let abbr = build_abbreviations();
         let routes = build_route_map();
+        let switch_full_names: std::collections::HashSet<&str> =
+            SWITCH_ABBREVIATIONS.iter().map(|(_, full)| *full).collect();
         for full_name in abbr.values() {
+            if switch_full_names.contains(full_name.as_str()) {
+                continue;
+            }
             assert!(
                 routes.contains_key(full_name),
                 "abbreviation maps to '{full_name}' but no route defined"

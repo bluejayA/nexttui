@@ -196,6 +196,19 @@ impl Component for NetworkModule {
         }
     }
 
+    fn on_context_changed(&mut self) {
+        self.networks.clear();
+        self.subnets.clear();
+        self.loading = true;
+        self.error_message = None;
+        self.resource_list.set_rows(Vec::new());
+        self.view_state = ViewState::List;
+        // Codex review 3차 P2: `is_modal()` keys off `form.is_some()`, so a
+        // create-form left open across a switch keeps the Networks screen
+        // modal with stale data from the previous cloud.
+        self.form = None;
+    }
+
     fn handle_event(&mut self, event: &AppEvent) {
         match event {
             AppEvent::NetworksLoaded(networks) => {
@@ -470,5 +483,21 @@ mod tests {
         let (mut module, _rx) = setup();
         module.handle_key(key(KeyCode::Char('c')));
         assert_eq!(module.help_hint(), "Esc:Cancel Tab:Next Enter:Submit");
+    }
+
+    #[test]
+    fn test_on_context_changed_clears_form() {
+        // Codex review 3차 P2: `is_modal()` returns true whenever `form`
+        // is populated, so leaving form behind on context switch keeps the
+        // Networks screen modal (suppresses global keys / auto-refresh)
+        // with stale form data from the previous cloud.
+        let (mut module, _rx) = setup();
+        module.handle_key(key(KeyCode::Char('c')));
+        assert!(module.form.is_some(), "setup: form should be open");
+
+        module.on_context_changed();
+
+        assert!(module.form.is_none(), "form must be cleared on switch");
+        assert_eq!(*module.view_state(), ViewState::List);
     }
 }

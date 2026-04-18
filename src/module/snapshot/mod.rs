@@ -25,6 +25,8 @@ pub struct SnapshotModule {
     resource_list: ResourceList,
     all_tenants: bool,
     action_tx: ActionSender,
+    context_target: Option<crate::context::types::ContextTarget>,
+    context_recently_switched: bool,
 }
 
 impl SnapshotModule {
@@ -38,7 +40,17 @@ impl SnapshotModule {
             resource_list: ResourceList::new(snapshot_columns(false)),
             all_tenants: false,
             action_tx,
+            context_target: None,
+            context_recently_switched: false,
         }
+    }
+
+    fn destructive_confirm(&self, message: impl Into<String>) -> ConfirmDialog {
+        ConfirmDialog::for_destructive_opt(
+            message,
+            self.context_target.as_ref(),
+            self.context_recently_switched,
+        )
     }
 
     pub fn view_state(&self) -> &ViewState {
@@ -96,7 +108,7 @@ impl SnapshotModule {
                         .clone()
                         .unwrap_or_else(|| id.chars().take(8).collect());
                     self.confirm.open(
-                        ConfirmDialog::yes_no(format!("Delete snapshot '{name}'?")),
+                        self.destructive_confirm(format!("Delete snapshot '{name}'?")),
                         PendingAction::DeleteSnapshot { id, name },
                     );
                 }
@@ -143,6 +155,26 @@ impl Component for SnapshotModule {
             ViewState::Detail(_) => self.handle_detail_key(key),
             ViewState::Create => None, // No create view for snapshots in Phase 1
         }
+    }
+
+    fn on_context_changed(&mut self) {
+        self.snapshots.clear();
+        self.loading = true;
+        self.error_message = None;
+        self.resource_list.set_rows(Vec::new());
+        self.view_state = ViewState::List;
+        // Codex review 2차 P1: pending destructive confirm must not survive
+        // across a context switch.
+        self.confirm = ConfirmHandler::new();
+    }
+
+    fn set_context_state(
+        &mut self,
+        target: Option<crate::context::types::ContextTarget>,
+        recently_switched: bool,
+    ) {
+        self.context_target = target;
+        self.context_recently_switched = recently_switched;
     }
 
     fn handle_event(&mut self, event: &AppEvent) {

@@ -366,28 +366,27 @@ pub trait HttpEndpointCache: Send + Sync {
 - `pub fn previous(&self) -> Option<&ContextSnapshot>`
 - `pub fn pop_previous(&mut self) -> Option<ContextSnapshot>`
 
-### ContextIndicator (UI Widget — 패시브 타이머)
-**Interface**:
+### ContextIndicator (state holder — 패시브 타이머)
+**Actual implementation (PR3 Step 2/3 — 2026-04-17)**:
 ```rust
 pub struct ContextIndicator {
-    snapshot: Option<ContextSnapshot>,
+    target: Option<ContextTarget>,
     last_switch_at: Option<Instant>,
     highlight_duration: Duration,
 }
 impl ContextIndicator {
     pub fn new(highlight_duration: Duration) -> Self;
-    pub fn set_context(&mut self, snapshot: &ContextSnapshot, mark_highlight: bool);
-}
-impl Component for ContextIndicator {
-    fn render(&self, frame, area) {
-        // 매 render마다 비교: Instant::now() - last_switch_at < highlight_duration
-        let highlighting = self.last_switch_at
-            .map_or(false, |t| t.elapsed() < self.highlight_duration);
-        // ...
-    }
+    pub fn set_target(&mut self, target: &ContextTarget, mark_highlight: bool);
+    pub fn target(&self) -> Option<&ContextTarget>;
+    pub fn is_highlighting(&self) -> bool; // last_switch_at.elapsed() < highlight_duration
 }
 ```
-**Tick 의존성 명시**: 강조가 자동 종료되려면 highlight_duration 이내에 redraw가 발생해야 함. App의 idle redraw 정책이 없다면 `AppEvent::Tick` 또는 short-interval refresh 필요.
+**설계와 다른 점 + 근거**:
+1. `ContextSnapshot` → `ContextTarget`로 파라미터 축소. 인디케이터가 실제로 쓰는 필드는 `cloud` / `project_name` 뿐이라 Token/Epoch를 끌고 다니는 건 과설계였음. `AppEvent::ContextChanged { target }`와 바로 맞물림 → 중간 어댑터 불필요, Token clone 비용(수 KB) 제거.
+2. `Component` trait impl 제거 + 자체 `render()` 제거. 접근 주체가 `App.handle_event`(write) / `StatusBar.render`(read) 둘뿐이고 모두 메인 스레드. `StatusBar`가 `indicator.target()` / `indicator.is_highlighting()`으로 직접 스타일·텍스트를 만들어 렌더링하는 편이 더 단순.
+3. 소유 모델: `Arc<RwLock<ContextIndicator>>` → `App` 단독 소유 + `&ContextIndicator`로 StatusBar에 참조 전달. 동시 접근 없음이 확인되어 락은 불필요. 향후 교차-스레드 접근이 실제로 필요해지면 그 시점에 Arc로 감싼다.
+
+**Tick 의존성**: 강조 자동 종료는 기존 tick_rate 기반 redraw로 충족. 별도 `AppEvent::Tick` 도입 없음.
 
 ### ContextPicker (UI Widget — modal)
 **Interface (impl Component, is_modal=true)**:
@@ -423,6 +422,47 @@ impl Component for ContextIndicator {
       // dispatch
   }
   ```
+
+**Unit 4.5 추가 (Command Bar Integration — 2026-04-17)**:
+- `input_bar: crate::ui::input_bar::InputBar` (기존 정의만 있던 타입을 실제 필드로 보유)
+- `command_parser: crate::input::command::CommandParser` (동일)
+- `handle_key(key)` 내 `InputMode::Command` 분기:
+  ```rust
+  if self.input_mode == InputMode::Command {
+      match self.input_bar.handle_key(key) {
+          InputAction::Commit(buf) => {
+              self.input_mode = InputMode::Normal;
+              if !buf.trim().is_empty() {
+                  self.command_parser.push_history(&buf);
+                  let cmd = self.command_parser.parse(&buf);
+                  if let Some(action) = command_to_action(cmd, ..) {
+                      self.dispatch_action(action);
+                  }
+              }
+          }
+          InputAction::AutoComplete => {
+              if let Some(expanded) = self.command_parser.auto_complete(self.input_bar.buffer()) {
+                  self.input_bar.set_buffer(expanded);
+              }
+          }
+          InputAction::HistoryUp => { if let Some(h) = self.command_parser.history_prev() { self.input_bar.set_buffer(h.to_string()); } }
+          InputAction::HistoryDown => { if let Some(h) = self.command_parser.history_next() { self.input_bar.set_buffer(h.to_string()); } }
+          InputAction::Cancel => { self.input_mode = InputMode::Normal; }
+          InputAction::None | InputAction::SearchChanged(_) => {}
+      }
+      return true;
+  }
+  ```
+- `:` 키 → `InputMode::Command` 전환 시 `self.input_bar.activate(ui::input_bar::InputMode::Command)` 호출로 버퍼 초기화 보장
+- InputMode 타입 일치 문제: `component::InputMode`(app 상태용) ≠ `ui::input_bar::InputMode`(입력 위젯용). 두 모드를 동기화하는 단일 진입점(`enter_command_mode()` 헬퍼) 도입
+- `command_to_action(cmd: Command) -> Option<Action>` 매퍼 (app.rs 내부 함수 또는 command.rs 헬퍼):
+  - Navigate/Quit/Refresh/Help/Switch* → 해당 Action 또는 직접 상태 변경
+  - Unknown → `None` + toast/log 에러 노출
+  - ContextSwitch/ContextList (legacy): 현재 미사용 경로 — Unknown과 동일 취급(toast 안내)
+
+**Render**:
+- 기존 `layout.input_bar` Rect에 `self.input_bar.render(frame, area)` 호출
+- StatusBar 라인과 분리된 InputBar 영역 (이미 `ui/layout.rs`에 확보됨)
 
 ### Worker (src/worker.rs)
 **시그니처 통일**:

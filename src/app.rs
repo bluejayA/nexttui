@@ -13,10 +13,13 @@ use crate::config::Config;
 use crate::event::AppEvent;
 use crate::infra::audit::{AuditEntry, AuditLogger, AuditResult};
 use crate::infra::rbac::{ActionKind, RbacGuard};
+use crate::input::command::{Command, CommandParser};
 use crate::models::common::Route;
 use crate::router::Router;
 use crate::ui::activity_log::{ActivityLog, ActivityLogPopup};
+use crate::ui::context_indicator::ContextIndicator;
 use crate::ui::header::{Header, HeaderContext};
+use crate::ui::input_bar::{InputAction, InputBar};
 use crate::ui::layout::LayoutManager;
 use crate::ui::refresh::RefreshScheduler;
 use crate::ui::sidebar::Sidebar;
@@ -32,7 +35,11 @@ pub enum FocusPane {
 
 pub struct App {
     pub should_quit: bool,
-    pub input_mode: InputMode,
+    /// All writes must route through [`App::set_input_mode`] so the
+    /// `input_bar` widget stays in sync with `input_mode` (BL-P2-073).
+    /// `pub(crate)` blocks external crates from breaking that invariant;
+    /// intra-crate test readers (`assert_eq!(app.input_mode, ...)`) still work.
+    pub(crate) input_mode: InputMode,
     pub sidebar_visible: bool,
     pub focus: FocusPane,
 
@@ -67,6 +74,17 @@ pub struct App {
     activity_popup: ActivityLogPopup,
     show_activity_log: bool,
     audit_logger: Option<AuditLogger>,
+    /// Command bar input widget (`:`-triggered). Paired with `command_parser`.
+    pub(crate) input_bar: InputBar,
+    pub(crate) command_parser: CommandParser,
+    /// Active cloud/project identity rendered by the status bar. Updated from
+    /// `AppEvent::ContextChanged` after a successful switch. (Unit 5 Step 3)
+    pub(crate) context_indicator: ContextIndicator,
+    /// Prefix captured at the start of a Tab-completion cycle. Reused on
+    /// subsequent Tabs so the parser's cycling logic keeps seeing the same
+    /// prefix instead of the expanded value. Reset on any non-Tab input.
+    /// (Codex review 2차 P3)
+    tab_cycle_prefix: Option<String>,
 }
 
 impl App {
@@ -75,6 +93,7 @@ impl App {
         crate::ui::theme::Theme::init(config.app_config().theme);
         let audit_logger = Self::init_audit_logger();
         let current_epoch = action_tx.epoch();
+        let command_parser = Self::init_command_parser(&config);
         Self {
             should_quit: false,
             input_mode: InputMode::Normal,
@@ -100,6 +119,10 @@ impl App {
             activity_popup: ActivityLogPopup::new(),
             show_activity_log: false,
             audit_logger,
+            input_bar: InputBar::new(),
+            command_parser,
+            context_indicator: ContextIndicator::new(std::time::Duration::from_secs(2)),
+            tab_cycle_prefix: None,
         }
     }
 
@@ -114,6 +137,7 @@ impl App {
         crate::ui::theme::Theme::init(config.app_config().theme);
         let audit_logger = Self::init_audit_logger();
         let current_epoch = action_tx.epoch();
+        let command_parser = Self::init_command_parser(&config);
         let mut app = Self {
             should_quit: false,
             input_mode: InputMode::Normal,
@@ -139,6 +163,10 @@ impl App {
             activity_popup: ActivityLogPopup::new(),
             show_activity_log: false,
             audit_logger,
+            input_bar: InputBar::new(),
+            command_parser,
+            context_indicator: ContextIndicator::new(std::time::Duration::from_secs(2)),
+            tab_cycle_prefix: None,
         };
         // Store sidebar items for number-key navigation
         app.sidebar.sync_active(&Route::Servers, false);
@@ -250,11 +278,77 @@ impl App {
             }
         }
 
+        // Command mode — delegate keys to InputBar, then convert InputAction
+        // back into app-level effects. Runs before the Esc-to-Normal block so
+        // Esc cancels via InputBar (which clears the buffer).
+        if self.input_mode == InputMode::Command {
+            // Codex review 2차 P3: any buffer-modifying key must reset the
+            // Tab-cycle prefix. In Command mode InputBar does not emit
+            // `SearchChanged` for Char/Backspace, so detect at the key level.
+            if matches!(key.code, KeyCode::Char(_) | KeyCode::Backspace) {
+                self.tab_cycle_prefix = None;
+            }
+            let act = self.input_bar.handle_key(key);
+            match act {
+                InputAction::Commit(buf) => {
+                    self.tab_cycle_prefix = None;
+                    self.set_input_mode(InputMode::Normal);
+                    if !buf.trim().is_empty() {
+                        let cmd = self.command_parser.parse(&buf);
+                        // Only persist successfully-parsed commands so typos
+                        // don't pollute history (PR3 cargo-review C2).
+                        if !matches!(cmd, Command::Unknown(_)) {
+                            self.command_parser.push_history(&buf);
+                        }
+                        self.execute_command(cmd);
+                    }
+                }
+                InputAction::Cancel => {
+                    self.tab_cycle_prefix = None;
+                    self.set_input_mode(InputMode::Normal);
+                }
+                InputAction::AutoComplete => {
+                    // Codex review 2차 P3: reuse the pre-expansion prefix so
+                    // CommandParser's `last_prefix` gate stays matched and
+                    // cycling works. Without this, the expanded buffer
+                    // becomes the new prefix and subsequent Tabs only match
+                    // the already-expanded command.
+                    let prefix = self
+                        .tab_cycle_prefix
+                        .clone()
+                        .unwrap_or_else(|| self.input_bar.buffer().to_string());
+                    if let Some(expanded) = self.command_parser.auto_complete(&prefix) {
+                        self.input_bar.set_buffer(expanded);
+                        if self.tab_cycle_prefix.is_none() {
+                            self.tab_cycle_prefix = Some(prefix);
+                        }
+                    }
+                }
+                InputAction::HistoryUp => {
+                    self.tab_cycle_prefix = None;
+                    if let Some(h) = self.command_parser.history_prev() {
+                        self.input_bar.set_buffer(h.to_string());
+                    }
+                }
+                InputAction::HistoryDown => {
+                    self.tab_cycle_prefix = None;
+                    if let Some(h) = self.command_parser.history_next() {
+                        self.input_bar.set_buffer(h.to_string());
+                    }
+                }
+                InputAction::SearchChanged(_) => {
+                    self.tab_cycle_prefix = None;
+                }
+                InputAction::None => {}
+            }
+            return true;
+        }
+
         // Global keys in Normal mode (only without modifiers to avoid Ctrl+q etc.)
         if self.input_mode == InputMode::Normal && no_modifiers {
             match key.code {
                 KeyCode::Char(':') => {
-                    self.input_mode = InputMode::Command;
+                    self.set_input_mode(InputMode::Command);
                     return true;
                 }
                 // '/' search is handled by SelectPopup when open (not App-level)
@@ -337,7 +431,7 @@ impl App {
             InputMode::Command | InputMode::Search | InputMode::Confirm
         ) && key.code == KeyCode::Esc
         {
-            self.input_mode = InputMode::Normal;
+            self.set_input_mode(InputMode::Normal);
             return true;
         }
 
@@ -419,10 +513,10 @@ impl App {
                 }
             }
             Action::EnterFormMode => {
-                self.input_mode = InputMode::Form;
+                self.set_input_mode(InputMode::Form);
             }
             Action::ExitFormMode => {
-                self.input_mode = InputMode::Normal;
+                self.set_input_mode(InputMode::Normal);
             }
             Action::ToggleAllTenants => {
                 let prev = self.all_tenants.load(Ordering::Relaxed);
@@ -517,6 +611,44 @@ impl App {
             self.rbac.update_roles(roles.clone(), None);
             self.broadcast_admin();
         }
+        // Context switch completion (Codex adversarial HIGH #1 / BL-P2-052
+        // Part B safety portion). On `ContextChanged`:
+        //   1. Refresh the status-bar indicator (Step 3).
+        //   2. Broadcast `on_context_changed` to every module so they drop
+        //      stale caches — blocks "wrong-context destructive action".
+        //   3. Dispatch each module's `refresh_action` so the new project's
+        //      data starts loading immediately.
+        // The remaining UX bits (router/selection reset + toast) are tracked
+        // by BL-P2-052 Part B leftovers.
+        if let AppEvent::ContextChanged { ref target } = event {
+            // Codex review 3차 P1: async `ContextChanged` can arrive while
+            // the user is in Form/Command mode. The module reset below
+            // leaves the form behind, but without normalizing `input_mode`
+            // here subsequent keys stay routed through the Form-only path
+            // (global shortcuts / command mode become unreachable) and the
+            // UI is effectively stuck until quit.
+            self.set_input_mode(InputMode::Normal);
+            self.context_indicator.set_target(target, true);
+            for component in self.components.values_mut() {
+                component.on_context_changed();
+            }
+            // Broadcast the target + highlight state so destructive dialogs
+            // can attach a fingerprint and escalate to TypeToConfirm while the
+            // switch is still visually fresh.
+            let t = self.context_indicator.target().cloned();
+            let recently = self.context_indicator.is_highlighting();
+            for component in self.components.values_mut() {
+                component.set_context_state(t.clone(), recently);
+            }
+            let refreshes: Vec<Action> = self
+                .components
+                .values()
+                .filter_map(|c| c.refresh_action())
+                .collect();
+            for action in refreshes {
+                let _ = self.action_tx.send(action);
+            }
+        }
         // Migration complete → refresh server list to reflect status change
         let refresh_servers = matches!(
             event,
@@ -595,6 +727,22 @@ impl App {
             Action::ConfirmResize { .. } => Some("Confirming resize...".into()),
             Action::RevertResize { .. } => Some("Reverting resize...".into()),
             _ => None,
+        }
+    }
+
+    /// Build the `CommandParser` with the configured history path and, in
+    /// non-test builds, best-effort load prior history.
+    fn init_command_parser(config: &Config) -> CommandParser {
+        let history_path = config.app_config().command_history_path.clone();
+        #[cfg(test)]
+        {
+            CommandParser::new(history_path)
+        }
+        #[cfg(not(test))]
+        {
+            let mut parser = CommandParser::new(history_path);
+            let _ = parser.load_history();
+            parser
         }
     }
 
@@ -1287,6 +1435,19 @@ impl App {
         self.background_tracker.expire_toasts();
         self.background_tracker.gc_old_entries();
 
+        // Re-broadcast the context state each tick so modules flip back to
+        // `recently_switched = false` once the indicator's highlight window
+        // expires. Runs before the input-mode early-return so destructive
+        // dialogs inside confirm/command mode also see the transition.
+        // (Codex review P2 — without this, recently_switched stays true
+        // forever after the first `ContextChanged` and every destructive
+        // dialog escalates to type-to-confirm.)
+        let ctx_target = self.context_indicator.target().cloned();
+        let ctx_recently = self.context_indicator.is_highlighting();
+        for component in self.components.values_mut() {
+            component.set_context_state(ctx_target.clone(), ctx_recently);
+        }
+
         // Auto-refresh: skip when user is interacting
         if self.input_mode != InputMode::Normal {
             return;
@@ -1405,6 +1566,9 @@ impl App {
             context_hints,
             error_badge_count: self.activity_log.unread_error_count(),
         };
+        // Command / Search / hint input bar
+        self.input_bar.render(frame, areas.input_bar);
+
         // Toast — render in dedicated toast_bar area
         let active_toasts = self.background_tracker.active_toasts();
         if let Some(t) = active_toasts.first() {
@@ -1416,7 +1580,8 @@ impl App {
             toast_msg.render(frame, areas.toast_bar);
         }
 
-        self.status_bar.render(frame, areas.status_bar, &info);
+        self.status_bar
+            .render(frame, areas.status_bar, &info, &self.context_indicator);
     }
 
     pub fn router(&self) -> &Router {
@@ -1534,6 +1699,114 @@ impl App {
     pub fn action_tx(&self) -> &crate::context::ActionSender {
         &self.action_tx
     }
+
+    /// Single write path for `input_mode` that keeps the `InputBar` widget in
+    /// sync (BL-P2-073). Activates the bar for Command / Search, deactivates
+    /// it for Normal / Form / Confirm. All direct `self.input_mode = ...`
+    /// assignments must route through this method so the two representations
+    /// can never drift apart.
+    fn set_input_mode(&mut self, mode: InputMode) {
+        self.input_mode = mode;
+        match mode {
+            InputMode::Command | InputMode::Search => {
+                self.input_bar.activate(mode);
+                self.command_parser.history_reset_cursor();
+                self.command_parser.reset_completion();
+            }
+            InputMode::Normal | InputMode::Form | InputMode::Confirm => {
+                self.input_bar.deactivate();
+            }
+        }
+    }
+
+    /// Persist user state before the process exits. Currently best-effort
+    /// saves command history. Safe to call from any successful exit path
+    /// (Ctrl+C, `:quit`, normal `q`, etc.). Errors are logged, never
+    /// propagated, so terminal cleanup still runs. (BL-P2-071)
+    pub fn shutdown(&self) {
+        if let Err(e) = self.command_parser.save_history() {
+            tracing::warn!(%e, "failed to save command history on shutdown");
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_command_history_path(&mut self, path: std::path::PathBuf) {
+        self.command_parser = CommandParser::new(path);
+    }
+
+    /// Translate a parsed `Command` into app-level effects.
+    /// Unit 4.5 Step B covers Navigate / Quit / Refresh / Help / Switch* and
+    /// soft-deprecates the legacy `:ctx` variants with a toast. Unknown input
+    /// surfaces as an error toast so nothing ever silently drops.
+    fn execute_command(&mut self, cmd: Command) {
+        match cmd {
+            Command::Quit => {
+                self.should_quit = true;
+            }
+            Command::Navigate(route) => {
+                self.dispatch_action(Action::Navigate(route));
+            }
+            Command::Refresh => {
+                if let Some(component) = self.components.get(&self.router.current())
+                    && let Some(action) = component.refresh_action()
+                {
+                    self.dispatch_action(action);
+                }
+            }
+            Command::Help => {
+                self.background_tracker.add_toast(
+                    "Help — :<route> navigate · :q quit · :refresh · :switch-project <name> · :switch-cloud <name> · :switch-back".into(),
+                    crate::background::ToastLevel::Info,
+                );
+            }
+            Command::SwitchProject(name) => {
+                self.dispatch_action(Action::SwitchContext(
+                    crate::context::ContextRequest::ByName {
+                        cloud: None,
+                        project: name,
+                        domain: None,
+                    },
+                ));
+            }
+            Command::SwitchCloud(name) => {
+                // `ContextRequest` requires a project; a pure cloud-only
+                // switch has no first-class representation yet (BL-P2-074).
+                self.background_tracker.add_toast(
+                    format!(
+                        "switch-cloud {name}: not available yet — use :switch-project <name> once the cloud's project list is exposed"
+                    ),
+                    crate::background::ToastLevel::Info,
+                );
+            }
+            Command::SwitchBack => {
+                self.dispatch_action(Action::SwitchBack);
+            }
+            Command::ContextSwitch(cloud) => {
+                // Legacy `:ctx <cloud>` — soft-deprecated in favor of the
+                // Unit 4.5/5 switch commands.
+                self.background_tracker.add_toast(
+                    format!("Legacy :ctx {cloud} — use :switch-cloud or :switch-project instead"),
+                    crate::background::ToastLevel::Info,
+                );
+            }
+            Command::ContextList => {
+                let active = self.config.active_cloud_name();
+                self.background_tracker.add_toast(
+                    format!("Active cloud: {active} (picker: Ctrl+P — Unit 6)"),
+                    crate::background::ToastLevel::Info,
+                );
+            }
+            Command::Unknown(raw) => {
+                let message = if raw.is_empty() {
+                    "Unknown command".to_string()
+                } else {
+                    format!("Unknown command: {raw}")
+                };
+                self.background_tracker
+                    .add_toast(message, crate::background::ToastLevel::Error);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1635,9 +1908,560 @@ mod tests {
     #[test]
     fn test_app_esc_to_normal() {
         let mut app = make_app();
-        app.input_mode = InputMode::Command;
+        // Enter Command mode through the real user path so `input_bar` and
+        // `input_mode` are both activated together.
+        app.handle_key(make_key(KeyCode::Char(':')));
+        assert_eq!(app.input_mode, InputMode::Command);
         app.handle_key(make_key(KeyCode::Esc));
         assert_eq!(app.input_mode, InputMode::Normal);
+    }
+
+    // --- Unit 4.5 Step A: Command Bar Integration ---
+
+    #[test]
+    fn test_command_bar_colon_activates_input_bar() {
+        let mut app = make_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        assert_eq!(app.input_mode, InputMode::Command);
+        // Typing while in command mode accumulates in the input bar buffer.
+        app.handle_key(make_key(KeyCode::Char('s')));
+        app.handle_key(make_key(KeyCode::Char('r')));
+        app.handle_key(make_key(KeyCode::Char('v')));
+        assert_eq!(app.input_bar.buffer(), "srv");
+    }
+
+    #[test]
+    fn test_command_bar_enter_commits_quit() {
+        let mut app = make_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "quit".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        assert!(app.should_quit, "quit should flip should_quit");
+        assert_eq!(app.input_mode, InputMode::Normal);
+        assert_eq!(app.input_bar.buffer(), "");
+    }
+
+    #[test]
+    fn test_command_bar_enter_commits_quit_abbrev_q() {
+        let mut app = make_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        app.handle_key(make_key(KeyCode::Char('q')));
+        app.handle_key(make_key(KeyCode::Enter));
+        assert!(app.should_quit);
+        assert_eq!(app.input_mode, InputMode::Normal);
+    }
+
+    #[test]
+    fn test_command_bar_empty_enter_returns_to_normal() {
+        let mut app = make_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        app.handle_key(make_key(KeyCode::Enter));
+        assert_eq!(app.input_mode, InputMode::Normal);
+        assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn test_command_bar_esc_cancels_and_clears_buffer() {
+        let mut app = make_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        app.handle_key(make_key(KeyCode::Char('x')));
+        app.handle_key(make_key(KeyCode::Esc));
+        assert_eq!(app.input_mode, InputMode::Normal);
+        assert_eq!(app.input_bar.buffer(), "");
+    }
+
+    #[test]
+    fn test_command_bar_tab_expands_abbreviation() {
+        let mut app = make_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        app.handle_key(make_key(KeyCode::Char('s')));
+        app.handle_key(make_key(KeyCode::Char('r')));
+        app.handle_key(make_key(KeyCode::Char('v')));
+        app.handle_key(make_key(KeyCode::Tab));
+        // "srv" is an abbreviation for "servers" — Tab expands the buffer.
+        assert_eq!(app.input_bar.buffer(), "servers");
+    }
+
+    #[test]
+    fn test_command_bar_tab_cycles_through_prefix_matches() {
+        // Codex review 2차 P3: subsequent Tabs with the same prefix must
+        // cycle through all matching commands, not get stuck on the first
+        // expansion. Prefix "s" matches servers/security-groups/snapshots
+        // (plus sb/sc/sp switch abbreviations).
+        let mut app = make_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        app.handle_key(make_key(KeyCode::Char('s')));
+        app.handle_key(make_key(KeyCode::Tab));
+        let first = app.input_bar.buffer().to_string();
+        app.handle_key(make_key(KeyCode::Tab));
+        let second = app.input_bar.buffer().to_string();
+        assert_ne!(
+            first, second,
+            "Tab+Tab must cycle through matches, not stick at {first:?}"
+        );
+    }
+
+    #[test]
+    fn test_command_bar_typing_after_tab_resets_cycle() {
+        // After typing, the next Tab must start cycling from the new buffer,
+        // not from the stored pre-expansion prefix.
+        let mut app = make_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        app.handle_key(make_key(KeyCode::Char('s')));
+        app.handle_key(make_key(KeyCode::Tab));
+        // Backspace to edit buffer → resets the stored prefix.
+        let mut backspaces = app.input_bar.buffer().chars().count();
+        while backspaces > 0 {
+            app.handle_key(make_key(KeyCode::Backspace));
+            backspaces -= 1;
+        }
+        app.handle_key(make_key(KeyCode::Char('v')));
+        app.handle_key(make_key(KeyCode::Tab));
+        assert_eq!(
+            app.input_bar.buffer(),
+            "volumes",
+            "after retyping prefix 'v', Tab should expand to 'volumes'"
+        );
+    }
+
+    #[test]
+    fn test_command_bar_history_up_restores_previous() {
+        let mut app = make_app();
+        // Use a valid command so it gets pushed to history (Unknown commands
+        // are filtered out per PR3 cargo-review C2).
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "servers".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        // Re-enter command mode and navigate up.
+        app.handle_key(make_key(KeyCode::Char(':')));
+        app.handle_key(make_key(KeyCode::Up));
+        assert_eq!(app.input_bar.buffer(), "servers");
+    }
+
+    // --- Unit 5 Step 3: ContextIndicator wired to ContextChanged ---
+
+    #[test]
+    fn test_context_changed_updates_indicator() {
+        use crate::context::types::ContextTarget;
+        let mut app = make_app();
+        assert!(app.context_indicator.target().is_none());
+        app.handle_event(AppEvent::ContextChanged {
+            target: ContextTarget {
+                cloud: "devstack".into(),
+                project_id: "p1".into(),
+                project_name: "admin".into(),
+                domain: "default".into(),
+            },
+        });
+        let t = app
+            .context_indicator
+            .target()
+            .expect("indicator should be set after ContextChanged");
+        assert_eq!(t.cloud, "devstack");
+        assert_eq!(t.project_name, "admin");
+        // The switch marks a highlight.
+        assert!(app.context_indicator.is_highlighting());
+    }
+
+    #[test]
+    fn test_context_changed_resets_input_mode_to_normal() {
+        // Codex review 3차 P1: async `ContextChanged` can arrive while the
+        // user is in Form mode. Without normalizing `input_mode`, subsequent
+        // keys stay routed through the Form-only path and the UI is stuck
+        // (no `:` command mode, no global shortcuts) until quit.
+        use crate::context::types::ContextTarget;
+        let mut app = make_app();
+        app.set_input_mode(InputMode::Form);
+        assert_eq!(app.input_mode, InputMode::Form);
+        app.handle_event(AppEvent::ContextChanged {
+            target: ContextTarget {
+                cloud: "devstack".into(),
+                project_id: "p1".into(),
+                project_name: "admin".into(),
+                domain: "default".into(),
+            },
+        });
+        assert_eq!(
+            app.input_mode,
+            InputMode::Normal,
+            "ContextChanged must restore input_mode to Normal"
+        );
+    }
+
+    // Spy component that records the last (target, recently_switched) pair
+    // delivered via `Component::set_context_state`. Used to verify the
+    // `on_tick` re-broadcast flips `recently_switched` back to false once the
+    // indicator's highlight window expires (Codex review P2).
+    #[derive(Default)]
+    struct ContextSpyState {
+        last_target: Option<crate::context::types::ContextTarget>,
+        last_recently: bool,
+        calls: usize,
+    }
+
+    struct ContextStateSpy {
+        state: std::rc::Rc<std::cell::RefCell<ContextSpyState>>,
+    }
+
+    impl ContextStateSpy {
+        fn new() -> (Self, std::rc::Rc<std::cell::RefCell<ContextSpyState>>) {
+            let state = std::rc::Rc::new(std::cell::RefCell::new(ContextSpyState::default()));
+            (
+                Self {
+                    state: state.clone(),
+                },
+                state,
+            )
+        }
+    }
+
+    impl Component for ContextStateSpy {
+        fn handle_key(&mut self, _key: KeyEvent) -> Option<Action> {
+            None
+        }
+        fn handle_event(&mut self, _event: &AppEvent) {}
+        fn render(&self, _frame: &mut Frame, _area: Rect) {}
+        fn set_context_state(
+            &mut self,
+            target: Option<crate::context::types::ContextTarget>,
+            recently_switched: bool,
+        ) {
+            let mut s = self.state.borrow_mut();
+            s.last_target = target;
+            s.last_recently = recently_switched;
+            s.calls += 1;
+        }
+    }
+
+    #[test]
+    fn test_on_tick_rebroadcasts_recently_switched_when_highlight_expires() {
+        use crate::context::types::ContextTarget;
+        // Codex review P2: after the highlight window elapses, the next
+        // `on_tick` must push `recently_switched = false` to every module,
+        // otherwise destructive dialogs keep demanding the project name.
+        let mut app = make_app();
+        let (spy, state) = ContextStateSpy::new();
+        app.register_component(Route::Servers, Box::new(spy));
+
+        // Simulate a context switch — indicator goes hot, broadcast marks
+        // recently=true on registered modules.
+        app.handle_event(AppEvent::ContextChanged {
+            target: ContextTarget {
+                cloud: "devstack".into(),
+                project_id: "p1".into(),
+                project_name: "admin".into(),
+                domain: "default".into(),
+            },
+        });
+        assert!(
+            state.borrow().last_recently,
+            "recently=true right after switch"
+        );
+        let calls_after_switch = state.borrow().calls;
+        assert!(calls_after_switch >= 1);
+
+        // Rewind the indicator's last switch instant to simulate the
+        // highlight window elapsing without sleeping.
+        app.context_indicator.set_last_switch_at_for_test(
+            std::time::Instant::now() - std::time::Duration::from_secs(10),
+        );
+        assert!(!app.context_indicator.is_highlighting());
+
+        // on_tick must propagate the transition.
+        app.on_tick();
+        let s = state.borrow();
+        assert!(
+            !s.last_recently,
+            "on_tick should flip recently back to false once highlight expires"
+        );
+        assert_eq!(
+            s.last_target.as_ref().map(|t| t.project_name.as_str()),
+            Some("admin")
+        );
+        assert!(
+            s.calls > calls_after_switch,
+            "on_tick should add a broadcast call"
+        );
+    }
+
+    #[test]
+    fn test_context_changed_dispatches_refresh_for_each_module() {
+        // Codex adversarial HIGH #1: after switch, every registered module's
+        // `refresh_action` must be dispatched so stale caches reload from the
+        // new project. Combined with `on_context_changed` broadcast (module
+        // tests), this closes the "wrong-context destructive action" gap.
+        use crate::context::types::ContextTarget;
+        let (tx, mut rx) = crate::context::test_action_channel();
+        let config = test_config();
+        let mut app = App::new(config, tx);
+        app.register_component(
+            Route::Servers,
+            Box::new(RefreshMock::new(Action::FetchServers)),
+        );
+        app.register_component(
+            Route::Networks,
+            Box::new(RefreshMock::new(Action::FetchNetworks)),
+        );
+
+        app.handle_event(AppEvent::ContextChanged {
+            target: ContextTarget {
+                cloud: "devstack".into(),
+                project_id: "p1".into(),
+                project_name: "admin".into(),
+                domain: "default".into(),
+            },
+        });
+
+        let mut received: Vec<Action> = Vec::new();
+        while let Ok(action) = rx.try_recv() {
+            received.push(action);
+        }
+        assert!(
+            received.iter().any(|a| matches!(a, Action::FetchServers)),
+            "expected FetchServers among: {received:?}"
+        );
+        assert!(
+            received.iter().any(|a| matches!(a, Action::FetchNetworks)),
+            "expected FetchNetworks among: {received:?}"
+        );
+    }
+
+    // --- BL-P2-073: InputMode sync invariants ---
+
+    #[test]
+    fn test_set_input_mode_command_activates_input_bar() {
+        let mut app = make_app();
+        app.set_input_mode(InputMode::Command);
+        assert_eq!(app.input_mode, InputMode::Command);
+        // InputBar must now capture typed characters.
+        app.handle_key(make_key(KeyCode::Char('x')));
+        assert_eq!(app.input_bar.buffer(), "x");
+    }
+
+    #[test]
+    fn test_set_input_mode_normal_clears_input_bar_buffer() {
+        let mut app = make_app();
+        app.set_input_mode(InputMode::Command);
+        app.handle_key(make_key(KeyCode::Char('x')));
+        assert_eq!(app.input_bar.buffer(), "x");
+        app.set_input_mode(InputMode::Normal);
+        assert_eq!(app.input_bar.buffer(), "");
+    }
+
+    #[test]
+    fn test_set_input_mode_form_deactivates_input_bar() {
+        let mut app = make_app();
+        app.set_input_mode(InputMode::Command);
+        app.handle_key(make_key(KeyCode::Char('x')));
+        // Switching to Form must drop any in-flight command buffer so the
+        // bar cannot show stale input while a form owns the screen.
+        app.set_input_mode(InputMode::Form);
+        assert_eq!(app.input_mode, InputMode::Form);
+        assert_eq!(app.input_bar.buffer(), "");
+    }
+
+    #[test]
+    fn test_set_input_mode_confirm_deactivates_input_bar() {
+        let mut app = make_app();
+        app.set_input_mode(InputMode::Command);
+        app.handle_key(make_key(KeyCode::Char('x')));
+        app.set_input_mode(InputMode::Confirm);
+        assert_eq!(app.input_mode, InputMode::Confirm);
+        assert_eq!(app.input_bar.buffer(), "");
+    }
+
+    #[test]
+    fn test_shutdown_persists_command_history() {
+        // BL-P2-071: shutdown() must save history so the next session can
+        // restore previous commands via Up.
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("history");
+        let mut app = make_app();
+        app.set_command_history_path(path.clone());
+
+        // Enter and commit a valid command so it's pushed to history.
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "servers".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+
+        app.shutdown();
+
+        assert!(path.exists(), "history file must exist after shutdown");
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            content.contains("servers"),
+            "history file should contain 'servers', got: {content:?}"
+        );
+    }
+
+    #[test]
+    fn test_shutdown_with_no_commands_does_not_error() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("history");
+        let mut app = make_app();
+        app.set_command_history_path(path);
+        // No commands entered. shutdown must be a no-op crash-wise.
+        app.shutdown();
+    }
+
+    #[test]
+    fn test_command_bar_unknown_not_pushed_to_history() {
+        // PR3 cargo-review C2: unknown input must not pollute history.
+        let mut app = make_app();
+        // Push a valid command first.
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "servers".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        // Then an unknown command — should NOT enter history.
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "foobar".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        // Up restores the valid command, skipping the unknown one.
+        app.handle_key(make_key(KeyCode::Char(':')));
+        app.handle_key(make_key(KeyCode::Up));
+        assert_eq!(app.input_bar.buffer(), "servers");
+    }
+
+    #[test]
+    fn test_command_bar_backspace_shrinks_buffer() {
+        let mut app = make_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        app.handle_key(make_key(KeyCode::Char('a')));
+        app.handle_key(make_key(KeyCode::Char('b')));
+        app.handle_key(make_key(KeyCode::Backspace));
+        assert_eq!(app.input_bar.buffer(), "a");
+    }
+
+    // --- Unit 4.5 Step B: Command → Action dispatch ---
+
+    #[test]
+    fn test_command_bar_navigate_servers() {
+        let mut app = make_app();
+        // Start elsewhere so the navigation is observable (default is Servers).
+        app.router_mut().navigate(Route::Networks);
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "servers".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        assert_eq!(app.router().current(), Route::Servers);
+        assert_eq!(app.input_mode, InputMode::Normal);
+    }
+
+    #[test]
+    fn test_command_bar_navigate_abbreviation() {
+        let mut app = make_app();
+        app.router_mut().navigate(Route::Servers);
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "net".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        assert_eq!(app.router().current(), Route::Networks);
+    }
+
+    #[test]
+    fn test_command_bar_switch_project_without_switcher_emits_toast() {
+        let mut app = make_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "switch-project admin".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        let toasts = app.background_tracker().active_toasts();
+        assert!(
+            toasts
+                .iter()
+                .any(|t| t.message.to_lowercase().contains("not available")),
+            "expected switcher-pending toast for switch-project, got: {:?}",
+            toasts.iter().map(|t| t.message.clone()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_command_bar_switch_back_without_switcher_emits_toast() {
+        let mut app = make_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "switch-back".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        let toasts = app.background_tracker().active_toasts();
+        assert!(
+            toasts
+                .iter()
+                .any(|t| t.message.to_lowercase().contains("not available")),
+            "expected switcher-pending toast for switch-back"
+        );
+    }
+
+    #[test]
+    fn test_command_bar_switch_cloud_emits_info_toast() {
+        let mut app = make_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "switch-cloud prod".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        let toasts = app.background_tracker().active_toasts();
+        assert!(
+            toasts
+                .iter()
+                .any(|t| t.message.to_lowercase().contains("switch-cloud")),
+            "expected switch-cloud toast, got: {:?}",
+            toasts.iter().map(|t| t.message.clone()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_command_bar_help_emits_toast() {
+        let mut app = make_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "help".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        let toasts = app.background_tracker().active_toasts();
+        assert!(
+            toasts.iter().any(|t| t.message.contains(":switch-project")
+                || t.message.contains(":switch-back")
+                || t.message.contains(":q")),
+            "expected help toast listing commands, got: {:?}",
+            toasts.iter().map(|t| t.message.clone()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_command_bar_unknown_command_stays_in_normal() {
+        let mut app = make_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "foobar".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        assert_eq!(app.input_mode, InputMode::Normal);
+        assert!(!app.should_quit);
+        // The unknown command must surface through the user-visible toast/log path,
+        // not silently vanish. A warning-level toast is expected.
+        let toasts = app.background_tracker().active_toasts();
+        assert!(
+            toasts
+                .iter()
+                .any(|t| t.message.to_lowercase().contains("unknown")
+                    || t.message.contains("foobar")),
+            "expected toast for unknown command, got: {:?}",
+            toasts.iter().map(|t| t.message.clone()).collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -1892,7 +2716,7 @@ mod tests {
             Box::new(RefreshMock::new(Action::FetchServers)),
         );
         app.router = Router::new(Route::Servers);
-        app.input_mode = InputMode::Form;
+        app.set_input_mode(InputMode::Form);
 
         for _ in 0..150 {
             app.on_tick();
@@ -2098,7 +2922,7 @@ mod tests {
     #[test]
     fn test_exclamation_blocked_in_form_mode() {
         let mut app = make_app();
-        app.input_mode = InputMode::Form;
+        app.set_input_mode(InputMode::Form);
         app.register_component(Route::Servers, Box::new(MockComponent::new()));
         app.handle_key(make_key_with_modifiers(
             KeyCode::Char('!'),
@@ -2110,7 +2934,7 @@ mod tests {
     #[test]
     fn test_exclamation_blocked_in_confirm_mode() {
         let mut app = make_app();
-        app.input_mode = InputMode::Confirm;
+        app.set_input_mode(InputMode::Confirm);
         app.register_component(Route::Servers, Box::new(MockComponent::new()));
         app.handle_key(make_key_with_modifiers(
             KeyCode::Char('!'),

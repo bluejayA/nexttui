@@ -31,6 +31,8 @@ pub struct SecurityGroupModule {
     form: Option<FormWidget>,
     all_tenants: bool,
     action_tx: ActionSender,
+    context_target: Option<crate::context::types::ContextTarget>,
+    context_recently_switched: bool,
 }
 
 impl SecurityGroupModule {
@@ -47,7 +49,17 @@ impl SecurityGroupModule {
             form: None,
             all_tenants: false,
             action_tx,
+            context_target: None,
+            context_recently_switched: false,
         }
+    }
+
+    fn destructive_confirm(&self, message: impl Into<String>) -> ConfirmDialog {
+        ConfirmDialog::for_destructive_opt(
+            message,
+            self.context_target.as_ref(),
+            self.context_recently_switched,
+        )
     }
 
     pub fn view_state(&self) -> &ViewState {
@@ -139,7 +151,7 @@ impl SecurityGroupModule {
                     let id = sg.id.clone();
                     let name = sg.name.clone();
                     self.confirm.open(
-                        ConfirmDialog::yes_no(format!("Delete security group '{name}'?")),
+                        self.destructive_confirm(format!("Delete security group '{name}'?")),
                         PendingAction::DeleteSecurityGroup { id, name },
                     );
                 }
@@ -195,7 +207,7 @@ impl SecurityGroupModule {
                         &rule_id
                     };
                     self.confirm.open(
-                        ConfirmDialog::yes_no(format!("Delete rule {short_id}...?")),
+                        self.destructive_confirm(format!("Delete rule {short_id}...?")),
                         PendingAction::DeleteSecurityGroupRule { rule_id },
                     );
                 }
@@ -349,6 +361,28 @@ impl Component for SecurityGroupModule {
             ViewState::Detail(_) => self.handle_detail_key(key),
             ViewState::Create => self.handle_create_key(key),
         }
+    }
+
+    fn on_context_changed(&mut self) {
+        self.security_groups.clear();
+        self.detail_sg_id = None;
+        self.loading = true;
+        self.error_message = None;
+        self.resource_list.set_rows(Vec::new());
+        self.view_state = ViewState::List;
+        // Codex review 2차 P1: destructive confirm/form must not carry over
+        // across a context switch.
+        self.confirm = ConfirmHandler::new();
+        self.form = None;
+    }
+
+    fn set_context_state(
+        &mut self,
+        target: Option<crate::context::types::ContextTarget>,
+        recently_switched: bool,
+    ) {
+        self.context_target = target;
+        self.context_recently_switched = recently_switched;
     }
 
     fn handle_event(&mut self, event: &AppEvent) {

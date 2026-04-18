@@ -220,6 +220,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let result = run_event_loop(&mut terminal, &mut app, event_rx).await;
 
+    // Persist user state (e.g. command history) before tearing down the
+    // terminal. Best-effort: errors are logged inside `shutdown`. (BL-P2-071)
+    app.shutdown();
+
     // Cleanup terminal
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;

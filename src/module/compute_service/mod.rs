@@ -57,6 +57,12 @@ impl Component for ComputeServiceModule {
             _ => None,
         }
     }
+    fn on_context_changed(&mut self) {
+        self.services.clear();
+        self.loading = true;
+        self.resource_list.set_rows(Vec::new());
+    }
+
     fn handle_event(&mut self, event: &AppEvent) {
         if let AppEvent::ComputeServicesLoaded(svcs) = event {
             self.services = svcs.clone();

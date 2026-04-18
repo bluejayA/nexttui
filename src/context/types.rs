@@ -46,6 +46,16 @@ impl From<&ContextTarget> for TokenScope {
     }
 }
 
+impl ContextTarget {
+    /// Single source of truth for the user-facing " cloud • project " line.
+    /// Used by StatusBar (context indicator) and ConfirmDialog
+    /// (destructive fingerprint) — keeping both readers on this helper prevents
+    /// format drift when the presentation evolves.
+    pub fn fingerprint(&self) -> String {
+        format!(" {} • {} ", self.cloud, self.project_name)
+    }
+}
+
 /// The post-commit view of a switch. Carries the epoch so observers can
 /// verify they are looking at the current generation.
 #[derive(Debug, Clone)]

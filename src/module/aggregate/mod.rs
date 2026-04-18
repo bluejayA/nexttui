@@ -57,6 +57,12 @@ impl Component for AggregateModule {
             _ => None,
         }
     }
+    fn on_context_changed(&mut self) {
+        self.aggregates.clear();
+        self.loading = true;
+        self.resource_list.set_rows(Vec::new());
+    }
+
     fn handle_event(&mut self, event: &AppEvent) {
         if let AppEvent::AggregatesLoaded(aggs) = event {
             self.aggregates = aggs.clone();

@@ -8,13 +8,10 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use super::theme::Theme;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum InputMode {
-    Normal,
-    Command,
-    Search,
-}
+// Single source of truth for input modes (BL-P2-073). The widget only reacts
+// to `Command` and `Search`; other variants (Normal / Form / Confirm) leave
+// the bar inert and render the default hint.
+use crate::component::InputMode;
 
 #[derive(Debug)]
 pub enum InputAction {
@@ -68,7 +65,9 @@ impl InputBar {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> InputAction {
-        if self.mode == InputMode::Normal {
+        // Only Command / Search modes capture input here; everything else is
+        // inert (Form is handled by its own widget, Confirm by ConfirmDialog).
+        if !matches!(self.mode, InputMode::Command | InputMode::Search) {
             return InputAction::None;
         }
 
@@ -86,9 +85,17 @@ impl InputBar {
             KeyCode::Up => InputAction::HistoryUp,
             KeyCode::Down => InputAction::HistoryDown,
             KeyCode::Backspace => {
+                // `cursor_pos` is a byte index; step to the previous char
+                // boundary so multibyte characters (e.g. Korean) are removed
+                // atomically instead of panicking on a mid-codepoint index.
                 if self.cursor_pos > 0 {
-                    self.cursor_pos -= 1;
-                    self.buffer.remove(self.cursor_pos);
+                    let new_pos = self.buffer[..self.cursor_pos]
+                        .char_indices()
+                        .next_back()
+                        .map(|(i, _)| i)
+                        .unwrap_or(0);
+                    self.buffer.replace_range(new_pos..self.cursor_pos, "");
+                    self.cursor_pos = new_pos;
                 }
                 if self.mode == InputMode::Search {
                     InputAction::SearchChanged(self.buffer.clone())
@@ -97,11 +104,13 @@ impl InputBar {
                 }
             }
             KeyCode::Char(c) => {
-                if self.buffer.len() >= MAX_BUFFER_LEN {
+                // Byte-aware length check: a 3-byte char must not straddle
+                // the MAX_BUFFER_LEN boundary by inserting a partial sequence.
+                if self.buffer.len() + c.len_utf8() > MAX_BUFFER_LEN {
                     return InputAction::None;
                 }
                 self.buffer.insert(self.cursor_pos, c);
-                self.cursor_pos += 1;
+                self.cursor_pos += c.len_utf8();
                 if self.mode == InputMode::Search {
                     InputAction::SearchChanged(self.buffer.clone())
                 } else {
@@ -114,14 +123,14 @@ impl InputBar {
 
     pub fn render(&self, frame: &mut Frame, area: Rect) {
         let (prefix, style) = match self.mode {
-            InputMode::Normal => {
+            InputMode::Command => (":", Theme::warning()),
+            InputMode::Search => ("/", Theme::focus_border()),
+            _ => {
                 let hint = "Press : for command, / for search";
                 let widget = Paragraph::new(Span::styled(hint, Theme::disabled()));
                 frame.render_widget(widget, area);
                 return;
             }
-            InputMode::Command => (":", Theme::warning()),
-            InputMode::Search => ("/", Theme::focus_border()),
         };
 
         let line = Line::from(vec![
@@ -218,5 +227,78 @@ mod tests {
         bar.handle_key(key(KeyCode::Char('b')));
         bar.handle_key(key(KeyCode::Backspace));
         assert_eq!(bar.buffer(), "a");
+    }
+
+    // --- Codex adversarial review HIGH #3: UTF-8 cursor safety ---
+
+    #[test]
+    fn test_insert_multibyte_korean_no_panic() {
+        let mut bar = InputBar::new();
+        bar.activate(InputMode::Command);
+        bar.handle_key(key(KeyCode::Char('가')));
+        bar.handle_key(key(KeyCode::Char('나')));
+        bar.handle_key(key(KeyCode::Char('다')));
+        assert_eq!(bar.buffer(), "가나다");
+    }
+
+    #[test]
+    fn test_backspace_multibyte_korean() {
+        let mut bar = InputBar::new();
+        bar.activate(InputMode::Command);
+        bar.handle_key(key(KeyCode::Char('가')));
+        bar.handle_key(key(KeyCode::Char('나')));
+        bar.handle_key(key(KeyCode::Backspace));
+        assert_eq!(bar.buffer(), "가");
+        bar.handle_key(key(KeyCode::Backspace));
+        assert_eq!(bar.buffer(), "");
+    }
+
+    #[test]
+    fn test_mixed_ascii_and_multibyte() {
+        let mut bar = InputBar::new();
+        bar.activate(InputMode::Command);
+        for c in "abc가나다xyz".chars() {
+            bar.handle_key(key(KeyCode::Char(c)));
+        }
+        assert_eq!(bar.buffer(), "abc가나다xyz");
+        for _ in 0..3 {
+            bar.handle_key(key(KeyCode::Backspace));
+        }
+        assert_eq!(bar.buffer(), "abc가나다");
+        // Backspace across the ASCII/CJK boundary should land on char boundary.
+        bar.handle_key(key(KeyCode::Backspace));
+        assert_eq!(bar.buffer(), "abc가나");
+    }
+
+    #[test]
+    fn test_emoji_insert_and_backspace() {
+        let mut bar = InputBar::new();
+        bar.activate(InputMode::Command);
+        bar.handle_key(key(KeyCode::Char('🚀')));
+        assert_eq!(bar.buffer(), "🚀");
+        bar.handle_key(key(KeyCode::Backspace));
+        assert_eq!(bar.buffer(), "");
+    }
+
+    #[test]
+    fn test_set_buffer_then_backspace_on_multibyte_tail() {
+        let mut bar = InputBar::new();
+        bar.activate(InputMode::Command);
+        bar.set_buffer("servers 서울".to_string());
+        // Backspace must step by one Korean char, not by one byte.
+        bar.handle_key(key(KeyCode::Backspace));
+        assert_eq!(bar.buffer(), "servers 서");
+    }
+
+    #[test]
+    fn test_buffer_len_limit_respects_multibyte_width() {
+        // 3-byte Korean char pushing the buffer past MAX_BUFFER_LEN must be
+        // rejected atomically, without inserting a partial sequence.
+        let mut bar = InputBar::new();
+        bar.activate(InputMode::Command);
+        bar.set_buffer("x".repeat(MAX_BUFFER_LEN - 1));
+        // 3-byte insert would exceed MAX_BUFFER_LEN → rejected.
+        bar.handle_key(key(KeyCode::Char('가')));
+        assert_eq!(bar.buffer().len(), MAX_BUFFER_LEN - 1);
     }
 }
