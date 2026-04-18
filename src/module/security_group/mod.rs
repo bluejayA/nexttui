@@ -370,6 +370,10 @@ impl Component for SecurityGroupModule {
         self.error_message = None;
         self.resource_list.set_rows(Vec::new());
         self.view_state = ViewState::List;
+        // Codex review 2차 P1: destructive confirm/form must not carry over
+        // across a context switch.
+        self.confirm = ConfirmHandler::new();
+        self.form = None;
     }
 
     fn set_context_state(

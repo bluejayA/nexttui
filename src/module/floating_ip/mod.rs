@@ -467,7 +467,12 @@ impl Component for FloatingIpModule {
         self.resource_list.set_rows(Vec::new());
         self.view_state = ViewState::List;
         self.pending_fip_id = None;
+        self.pending_ports_server_id = None;
         self.select_popup = None;
+        // Codex review 2차 P1: destructive confirm/form must not survive the
+        // switch so `y` cannot resolve with previous-project IDs.
+        self.confirm = ConfirmHandler::new();
+        self.form = None;
     }
 
     fn set_context_state(

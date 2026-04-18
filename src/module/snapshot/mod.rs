@@ -163,6 +163,9 @@ impl Component for SnapshotModule {
         self.error_message = None;
         self.resource_list.set_rows(Vec::new());
         self.view_state = ViewState::List;
+        // Codex review 2차 P1: pending destructive confirm must not survive
+        // across a context switch.
+        self.confirm = ConfirmHandler::new();
     }
 
     fn set_context_state(

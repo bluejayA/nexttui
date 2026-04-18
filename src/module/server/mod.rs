@@ -969,6 +969,12 @@ impl Component for ServerModule {
         self.resize_pending = None;
         self.migration_progress = None;
         self.view_state = ViewState::List;
+        // Codex review 2차 P1: any destructive confirm opened against the
+        // previous project must not resolve with stale IDs after the switch.
+        self.confirm = ConfirmHandler::new();
+        self.select_popup = None;
+        self.popup_kind = None;
+        self.form = None;
     }
 
     fn set_context_state(
@@ -1281,6 +1287,34 @@ mod tests {
         assert_eq!(module.view_state, ViewState::List);
         assert!(module.resize_pending.is_none());
         assert!(module.migration_progress.is_none());
+    }
+
+    #[test]
+    fn test_on_context_changed_resets_confirm_and_modals() {
+        // Codex review 2차 P1: a confirmation opened before context switch must
+        // not remain accept-able after the switch, or `y` resolves an action
+        // against the previous project's resource IDs.
+        let (mut module, _rx) = setup();
+        let dialog = module.destructive_confirm("Delete this server?");
+        module.confirm.open(
+            dialog,
+            PendingAction::Delete {
+                id: "prev-proj-server-1".into(),
+                name: "web-01".into(),
+            },
+        );
+        module.select_popup = Some(SelectPopup::new("x", Vec::new()));
+        module.popup_kind = Some(DetailPopupKind::AttachVolume);
+        module.form = Some(FormWidget::new("x", Vec::new()));
+        assert!(module.confirm.is_active());
+
+        module.on_context_changed();
+
+        assert!(!module.confirm.is_active());
+        assert!(module.confirm.pending.is_none());
+        assert!(module.select_popup.is_none());
+        assert!(module.popup_kind.is_none());
+        assert!(module.form.is_none());
     }
 
     #[test]
