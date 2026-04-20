@@ -25,6 +25,9 @@ pub enum SwitchError {
     #[error("target not found: {0}")]
     NotFound(String),
 
+    #[error("cloud '{cloud}' has no default project — use :switch-project <name>")]
+    NotConfigured { cloud: String },
+
     #[error("unsupported: {0}")]
     Unsupported(String),
 
@@ -46,6 +49,9 @@ impl Clone for SwitchError {
                 candidates: candidates.clone(),
             },
             Self::NotFound(s) => Self::NotFound(s.clone()),
+            Self::NotConfigured { cloud } => Self::NotConfigured {
+                cloud: cloud.clone(),
+            },
             Self::Unsupported(s) => Self::Unsupported(s.clone()),
             // ApiError and io::Error are not Clone; we surface them as
             // preserved message strings on clone (only used for diagnostic
@@ -118,6 +124,28 @@ mod tests {
         match e.clone() {
             SwitchError::CommitFailed(msg) => assert!(msg.starts_with("api:")),
             _ => panic!("expected CommitFailed"),
+        }
+    }
+
+    #[test]
+    fn test_not_configured_displays_human_readable() {
+        let e = SwitchError::NotConfigured {
+            cloud: "prod".into(),
+        };
+        assert_eq!(
+            e.to_string(),
+            "cloud 'prod' has no default project — use :switch-project <name>"
+        );
+    }
+
+    #[test]
+    fn test_clone_preserves_not_configured() {
+        let e = SwitchError::NotConfigured {
+            cloud: "prod".into(),
+        };
+        match e.clone() {
+            SwitchError::NotConfigured { cloud } => assert_eq!(cloud, "prod"),
+            _ => panic!("expected NotConfigured"),
         }
     }
 }

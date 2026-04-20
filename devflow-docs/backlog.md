@@ -322,11 +322,20 @@ AI 개발 맥락에서 이는 "preference" 수준이 아니라 **claude-code 세
 
 **Ref**: Codex adversarial review HIGH #2 (verbatim 원문은 PR3 feat/bl-p2-031-pr3-commands-ui 브랜치 세션 기록).
 
-### BL-P2-050: LogPanel 텍스트 정제 (제어문자 필터링)
-**Priority**: Low
+### BL-P2-050: LogPanel 텍스트 정제 (제어문자 필터링) + toast safe_display 유틸
+**Priority**: Medium (BL-P2-074 defer 통합 후 상향)
 **Category**: Security / UX
-**Description**: LogPanel의 push()가 임의 문자열을 받아 그대로 렌더링. API 에러 메시지에 ANSI 제어문자가 포함되면 TUI 표시 교란 가능. 현재는 내부 문자열만 사용하므로 낮은 위험이나, 로그 내보내기 기능 추가 시 sanitization 필요.
-**Ref**: Codex Batch 3 리뷰 #5
+**Description**:
+- LogPanel의 push()가 임의 문자열을 받아 그대로 렌더링. API 에러 메시지에 ANSI 제어문자가 포함되면 TUI 표시 교란 가능.
+- **신규 스코프 (BL-P2-074 code-plan R1 리뷰에서 defer, 2026-04-20)**: toast 표시 경로에 `safe_display(&str, max_len=60)` 유틸 신설. `rg safe_display src/` = 0 match 확인. BL-P2-074 NFR-4가 "신규 외부 입력 없음 + toast 터미널 이스케이프 방지"를 요구하지만 유틸 결정사항 4개(유틸 위치/truncate 문자/제어문자 정책/호출 사이트)가 BL-P2-074 scope를 팽창시켜 통합 defer.
+
+필요 작업:
+1. `safe_display(&str, max_len)` 유틸 — 위치 결정 (`src/ui/text.rs` 또는 `src/util/safe_display.rs`), truncate 표기(`…`), 제어문자 정책 (ASCII `\x00-\x1F`, `\x7F`, CR/LF 제거)
+2. LogPanel::push() 적용
+3. toast 발행 경로(`background::add_toast`) 적용 — BL-P2-074 에러 메시지 (`ApiError`, `SwitchError::NotConfigured` 등) 보호
+4. unit 테스트: truncate / CR-LF / ANSI escape / null 입력
+
+**Ref**: Codex Batch 3 리뷰 #5, BL-P2-074 code-plan R1 (Important I2)
 
 ### BL-P2-051: 기존 Nova adapter encode_param() 통일
 **Priority**: Low

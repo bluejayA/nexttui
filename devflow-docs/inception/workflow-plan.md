@@ -1,92 +1,75 @@
 # Workflow Plan
 
-**Timestamp**: 2026-04-13T00:00:00+09:00
-**Selected Approach**: A안 (안전 완전)
-**Updated**:
-- 2026-04-16 — T3 Runtime Wire (FR-11, B3 축소 범위) UPDATE
-- 2026-04-17 — Unit 4.5 Command Bar Integration (stub blind spot 대응) UPDATE
+**Timestamp**: 2026-04-19T09:40:00+09:00
+**BL**: BL-P2-074 (SwitchCloud wire 완결)
+**Parent BL**: BL-P2-031 (PR#76 머지 완료). 부모 workflow-plan은 `.archive/inception-20260418-223706/workflow-plan.md` 참조.
+**Parent Requirements**: `devflow-docs/inception/requirements.md` FR-1 `:switch-cloud <name>` — cloud 전환 (프로젝트는 cloud 기본값 또는 미선택 상태)
+**Selected Approach**: A안 (설계 먼저 + 단일 unit TDD) — 2026-04-19 확정
+
+## Context
+
+BL-P2-074는 BL-P2-031 PR#76의 toast-only stub(`src/app.rs:1771-1780`)을 완결한다. requirements.md FR-1의 "cloud 기본값" 경로를 구체화.
+
+**Review artifacts**: `inception/requirements-review-raw/{spec,quality,adversarial}.md` — 3자 리뷰 원문 + 종합 의견.
+
+### BL-P2-074 확정 설계 결정
+
+| 결정 | 선택 | 근거 |
+|---|---|---|
+| 구현 전략 | 옵션 (a) `ContextRequest::CloudOnly { cloud }` variant | 옵션 (b) picker 경로는 Unit 6 의존 → BL-P2-075로 분리 |
+| Default project source | **신규 `CloudConfig::default_project: Option<String>` 필드** | `auth.project_name` (Keystone bootstrap credential) 재사용은 admin scope 실착지 위험 (adversarial H1) |
+| 미설정 cloud 전환 요청 | **`SwitchError::NotConfigured { cloud }` 전용 variant 신설** | 문자열 fallback은 BL-P2-053 migration 부담 (adversarial H3 + spec + quality 합의) |
+| 동일 cloud 재입력 no-op | state_machine transition 카운터 불변 단위 테스트로 acceptance 측정 | FR-4 testability (3자 합의) |
+| CloudDirectory trait | `default_project(&str) -> Option<String>` 메서드 추가 | 4 impl 사이트 전수 업데이트 (ConfigCloudDirectory + 3 FakeClouds) |
+| ContextRequest 매처 | resolver/switcher/worker/app 4개 사이트 전수 업데이트 | 컴파일러 강제 (`#[non_exhaustive]` 부재) |
+| :switch-back post-CloudOnly | pre-switch `ContextTarget`으로 복귀 | `ContextHistoryStore` 기존 동작 유지 |
+| Toast 안전 | `safe_display(60자 truncate + 제어문자 제거)` 의무화 | 터미널 이스케이프/CR-LF injection 방지 |
 
 ## Approaches Considered
-- A안) 안전 완전 — 설계 + 유닛 분해 전체 (권장) — 단일 BL을 PR1~PR6에 정합
-- B안) 간결 — application-design LIST만, units-generation Minimal — 검증 단축, 안전성 리스크
 
-## Approaches
+### A안) 설계 먼저 + 단일 unit TDD (권장)
+- **포함**: application-design (Standard) → code-generation (Standard, TDD) → build-and-test (Standard)
+- **스킵**: units-generation (단일 unit)
+- **깊이**: Standard
+- **적합**: `CloudConfig` 스키마 확장 + `CloudDirectory` trait 확장 + FR-4 idempotent 위치 + `SwitchError::NotConfigured` 통합을 단일 문서로 응축 → code-generation 중 흔들림 최소화
+- **주의**: +0.5 세션 오버헤드 (설계 문서 작성)
 
-### A안) 안전 완전 (권장)
-- **포함 스테이지**: application-design (Standard, LIST + DETAIL), units-generation (Standard), code-generation (Standard, TDD), build-and-test (Standard)
-- **깊이**: Standard 전반
-- **적합**:
-  - Codex 리뷰가 지적한 cross-cutting 변경 (ContextEpoch, CancellationToken, 폴링 루프 전반 수정)을 컴포넌트 수준에서 사전 설계
-  - PR1~PR6 단계적 머지 전략과 1:1 정합되는 unit 분해 가능
-  - safety-critical NFR (NFR-1) 보장에 필수
-- **주의**: DETAIL 단계 + units-generation으로 inception 시간 증가 (예상 추가 30~60분)
+### B안) 바로 구현
+- **포함**: code-generation (Minimal, TDD) → build-and-test (Standard)
+- **스킵**: application-design, units-generation
+- **깊이**: Minimal (code-generation) / Standard (build-and-test)
+- **적합**: 설계 결정이 requirements-review-raw에서 이미 확정됐다고 간주, 바로 TDD 진입
+- **주의**: idempotent 위치, config 스키마 배치, serde 직렬화 호환성 등 세부 결정을 TDD 루프 안에서 내려야 함 → 리팩토링 증가 가능
 
-### B안) 간결
-- **포함 스테이지**: application-design (Minimal, LIST만), units-generation (Minimal), code-generation (Standard, TDD), build-and-test (Standard)
-- **깊이**: 설계 Minimal, 구현 Standard
-- **적합**: 단일 영역 변경, 위험도 낮은 기능
-- **주의**: 본 BL은 cross-cutting (모든 폴링 루프) + 동시성 (epoch/cancel) + 외부 API (Keystone rescope) + UI (피커/인디케이터) 4축 동시 변경. Minimal 설계로는 통합 지점 누락 가능성이 높아 본 BL에는 비권장.
-
-## Workflow Visualization (T3 UPDATE)
+## Workflow Visualization (A안 기준)
 
 ```
-INCEPTION (UPDATE 모드)
-  ✅ workspace-detection (delta update)
-  ✅ complexity-declaration (Standard)
-  ✅ requirements-analysis (FR-11 + NFR-6/7 추가)
-  ✅ pre-planning (B — NFR 검토 갱신)
-  ✅ workflow-planning (UPDATE — 현재)
-  ➡ application-design UPDATE — T3 컴포넌트 추가 + wire 시퀀스 설계
+INCEPTION
+  ✅ workspace-detection (완료, 델타)
+  ✅ requirements-analysis (완료, 3자 리뷰 반영)
+  ⏭ workflow-planning (현재)
+  ➡ application-design [Standard] (A안)
+  ⏭ units-generation — 스킵 (A안: 단일 unit)
 
 CONSTRUCTION
-  ➡ units-generation UPDATE — T3 unit 분해
-  ➡ code-generation [Standard, TDD]
+  ➡ code-generation [Standard] (TDD RED-GREEN-REFACTOR)
   ➡ build-and-test [Standard]
 ```
 
-## Approved Stages
+## Approved Stages (A안 기준 — gate 선택 대기)
+
 ### PRE-PLANNING
-- user-stories: skipped — Pre-Planning C, 운영자 시나리오 명확
-- nfr-requirements: skipped → B (검토 갱신) — NFR-6 (컴파일 안전성), NFR-7 (Demo 모드 무회귀) 추가
+- user-stories: skipped — Standard complexity + 단일 기능 완결 BL (Pre-Planning Gate C 선택)
+- nfr-requirements: skipped — requirements 개정 + 3자 리뷰에서 NFR 응축 완료 (Pre-Planning Gate C 선택)
 
 ### CONSTRUCTION
-- application-design: included (UPDATE) — T3 wire에 필요한 3개 신규 컴포넌트 + wire 시퀀스 설계
-- units-generation: included (UPDATE) — T3 전용 unit 분해
-- code-generation: included — always
+- application-design: included — `CloudConfig` 스키마 확장 + `CloudDirectory` trait 확장 + FR-4 idempotent 위치 + `SwitchError::NotConfigured` 통합
+- units-generation: skipped — 단일 unit (variant + handler + resolver + tests)
+- code-generation: included — always (TDD protocol 적용)
 - build-and-test: included — always
 
 ## Stage Depths
-- application-design: Standard (기존 DETAIL 유지 + T3 컴포넌트 추가)
-- units-generation: Standard
-- code-generation: Standard (TDD protocol 적용 — _shared/tdd-protocol.md)
+- application-design: Standard
+- units-generation: N/A (skipped)
+- code-generation: Standard (TDD protocol — `_shared/tdd-protocol.md`)
 - build-and-test: Standard
-
-## T3 UPDATE 범위 요약
-
-T3에서 추가/변경되는 컴포넌트:
-
-| 컴포넌트 | 유형 | 설명 |
-|---------|------|------|
-| ConfigCloudDirectory | 신규 Service | Config 래퍼, CloudDirectory trait 구현 |
-| StaticProjectDirectory | 신규 Service | Config 기반 ProjectDirectoryPort 구현 |
-| HttpEndpointCache 노출 | 변경 (AdapterRegistry) | 5개 HttpAdapter의 BaseHttpClient를 Arc<dyn HttpEndpointCache>로 노출 |
-| main.rs wire | 변경 (main.rs) | ContextSwitcher 조립 + app.wire_context_switch 호출 |
-| demo 모드 가드 | 변경 (main.rs) | --demo 시 switcher=None, wire 스킵 |
-
-기존 application-design의 ContextTargetResolver 의존성이 ConfigCloudDirectory + StaticProjectDirectory로 구체화됨.
-
-## PR3 UPDATE 범위 요약 (2026-04-17)
-
-**Trigger**: Unit 5 Step 1 구현 중 발견 — `CommandParser` (`src/input/command.rs`) 및 `InputBar` (`src/ui/input_bar.rs`)가 외부 콜러 0건의 dead code. app.rs:256은 `:` 키를 누르면 `InputMode::Command`로 전환만 하고, 입력 수집·파싱·dispatch 경로 부재.
-
-**영향**: Unit 5의 switch 명령이 파서 단위로만 GREEN이 될 뿐 사용자에게 실제 동작하지 않는 상태로 PR될 위험. `feedback_stub_blind_spot` 패턴 회귀.
-
-**대응**: Unit 5 앞에 Unit 4.5 "Command Bar Integration" 신규 분해 삽입. PR3 = Unit 4.5 + Unit 5.
-
-| 컴포넌트 | 유형 | 설명 |
-|---------|------|------|
-| App (src/app.rs) | 변경 | `input_bar`, `command_parser` 필드 + `InputMode::Command` 위임 + `command_to_action` 매퍼 |
-| InputMode 타입 정합 | 변경 | `component::InputMode` ↔ `ui::input_bar::InputMode` 동기화 진입점 |
-| CommandParser (기존 확장 유지) | 변경 | switch-project/cloud/back 파싱 (Unit 5 Step 1에서 선구현) |
-
-CONSTRUCTION 흐름: INCEPTION UPDATE(units + application-design + workflow-plan) → CONSTRUCTION 재개 → Unit 4.5 → Unit 5.

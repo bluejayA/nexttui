@@ -73,6 +73,22 @@ impl ContextSwitcher {
             Ok(t) => t,
             Err(e) => return Err((self.state.epoch().current(), e)),
         };
+        // BL-P2-074 FR-4 / D1: if the resolved target matches the currently
+        // committed context, short-circuit without touching the state
+        // machine. Race note (TOCTOU): a concurrent switch that beats this
+        // caller into `try_begin` will leave the machine non-Idle and this
+        // fast path will be skipped — the caller then observes `InProgress`.
+        // FR-4 acceptance is defined for sequential callers only.
+        if let Some(snap) = self.state.committed_snapshot()
+            && snap.target == target
+        {
+            tracing::debug!(
+                cloud = %target.cloud,
+                project = %target.project_name,
+                "switch_noop_same_target"
+            );
+            return Ok((snap.epoch, snap));
+        }
         self.run_switch_to(target).await
     }
 
@@ -216,6 +232,9 @@ mod tests {
         }
         fn known_clouds(&self) -> Vec<String> {
             vec!["devstack".into()]
+        }
+        fn default_project(&self, _cloud: &str) -> Option<String> {
+            None
         }
     }
 
@@ -552,6 +571,97 @@ mod tests {
         assert!(
             old_token.is_cancelled(),
             "pre-switch epoch work must be cancelled as part of the switch"
+        );
+    }
+
+    /// BL-P2-074 FR-4 / D1: repeating `:switch-cloud` against the same
+    /// cloud (which resolves to the same `ContextTarget`) must not bump
+    /// the epoch, and must not re-run the rescope/commit side effects.
+    /// TOCTOU: this only holds for sequential callers — a concurrent
+    /// switch racing `try_begin` still returns `InProgress` (by design).
+    #[tokio::test]
+    async fn test_switcher_noop_on_same_target() {
+        let f = default_fixture();
+        // Prime: commit target "demo".
+        f.switcher.switch(by_name("demo")).await.unwrap();
+        let epoch_after_first = f.epoch.current();
+        let steps_after_first = f.session.transition_steps();
+
+        // Re-issue: same target, no session port re-entry, epoch unchanged.
+        let (epoch, snapshot) = f.switcher.switch(by_name("demo")).await.unwrap();
+        assert_eq!(
+            epoch, epoch_after_first,
+            "noop must return the committed epoch"
+        );
+        assert_eq!(snapshot.target.project_name, "demo");
+        assert_eq!(
+            f.epoch.current(),
+            epoch_after_first,
+            "epoch counter must not advance on noop"
+        );
+        assert_eq!(
+            f.session.transition_steps(),
+            steps_after_first,
+            "no additional port calls on noop"
+        );
+    }
+
+    /// BL-P2-074 D4: `:switch-back` after a `CloudOnly` transition returns
+    /// the pre-switch `ContextTarget`. CloudOnly origin is not preserved.
+    #[tokio::test]
+    async fn test_switch_back_after_cloud_only_returns_previous_target() {
+        // Build a fixture whose resolver honours CloudOnly via a default
+        // project. Reuse default_fixture topology but swap CloudDirectory.
+        let epoch = Arc::new(ContextEpoch::new());
+        let state = Arc::new(SwitchStateMachine::new(epoch.clone()));
+        let cancellation = Arc::new(CancellationRegistry::new());
+        let history = Arc::new(SyncMutex::new(ContextHistoryStore::new()));
+
+        struct CloudsWithDefault;
+        impl CloudDirectory for CloudsWithDefault {
+            fn active_cloud(&self) -> String {
+                "devstack".into()
+            }
+            fn known_clouds(&self) -> Vec<String> {
+                vec!["devstack".into()]
+            }
+            fn default_project(&self, cloud: &str) -> Option<String> {
+                (cloud == "devstack").then(|| "demo".to_string())
+            }
+        }
+        let clouds: Arc<dyn CloudDirectory> = Arc::new(CloudsWithDefault);
+        let directory: Arc<dyn ProjectDirectoryPort> = Arc::new(FakeDirectory {
+            data: StdMutex::new(HashMap::from([(
+                "devstack".into(),
+                vec![candidate("demo", "id-demo"), candidate("admin", "id-admin")],
+            )])),
+        });
+        let resolver = Arc::new(ContextTargetResolver::new(clouds, directory));
+        let session = Arc::new(MockContextSession::new(
+            scope("admin"),
+            token("old", "admin"),
+            token("new", "demo"),
+        ));
+        let switcher = ContextSwitcher::new(
+            state,
+            cancellation,
+            resolver,
+            session.clone() as Arc<dyn ContextSessionPort>,
+            history,
+        );
+
+        // admin → demo (via CloudOnly resolving to default "demo")
+        switcher.switch(by_name("admin")).await.unwrap();
+        switcher
+            .switch(ContextRequest::CloudOnly {
+                cloud: "devstack".into(),
+            })
+            .await
+            .unwrap();
+        let (_, snapshot) = switcher.switch_back().await.unwrap();
+        assert_eq!(
+            snapshot.target.project_name, "admin",
+            "switch-back must restore the pre-CloudOnly target"
         );
     }
 }

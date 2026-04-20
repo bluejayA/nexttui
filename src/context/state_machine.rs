@@ -157,6 +157,19 @@ impl SwitchStateMachine {
         )
     }
 
+    /// The currently committed snapshot, if any. Returns `None` while a
+    /// switch is in flight or before the first successful commit. Used by
+    /// [`ContextSwitcher::switch`] for the BL-P2-074 same-target fast path
+    /// — it lets the switcher check "are we already here?" without the
+    /// caller having to pattern-match `SwitchStateView::Idle { current: Some(..) }`.
+    pub fn committed_snapshot(&self) -> Option<ContextSnapshot> {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        match &*state {
+            SwitchState::Idle { current } => current.clone(),
+            SwitchState::Switching { .. } => None,
+        }
+    }
+
     /// Shared handle to the epoch counter. Callers that need to stamp an
     /// event with "the epoch of the attempt" (e.g., an error toast) can
     /// read this without going through `state()`.

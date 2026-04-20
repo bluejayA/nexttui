@@ -26,6 +26,9 @@ pub enum ContextRequest {
         cloud: Option<String>,
         project_id: String,
     },
+    /// BL-P2-074: cloud-only switch — resolver uses `CloudDirectory::default_project`
+    /// to pick the project implicitly. Introduced for `:switch-cloud <name>`.
+    CloudOnly { cloud: String },
 }
 
 /// Fully resolved target: every identifier is populated and authoritative.
@@ -181,6 +184,17 @@ mod tests {
         match r {
             ContextRequest::ById { project_id, .. } => assert_eq!(project_id, "uuid-1"),
             _ => panic!("expected ById"),
+        }
+    }
+
+    #[test]
+    fn test_context_request_cloud_only_is_constructible() {
+        let r = ContextRequest::CloudOnly {
+            cloud: "prod".to_string(),
+        };
+        match r {
+            ContextRequest::CloudOnly { cloud } => assert_eq!(cloud, "prod"),
+            _ => panic!("expected CloudOnly"),
         }
     }
 

@@ -787,12 +787,6 @@ async fn handle_action(
             None
         }
 
-        Action::SwitchCloud(_cloud_name) => {
-            // Legacy stub from Phase 1. Superseded by Action::SwitchContext
-            // (BL-P2-031). Kept until callers migrate.
-            None
-        }
-
         Action::SwitchContext(_) | Action::SwitchBack => {
             // Intercepted by `App::dispatch_action` (Unit 4) — a real
             // switch never reaches the worker. This arm stays as a
