@@ -26,6 +26,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use tracing::Instrument;
 
 use super::error::SwitchError;
 use super::types::{ContextRequest, ContextTarget};
@@ -111,24 +112,33 @@ impl ContextTargetResolver {
                     .ok_or(SwitchError::NotFound(project_id))
             }
             ContextRequest::CloudOnly { cloud } => {
-                // BL-P2-074: delegate to default_project + ByName disambiguation.
+                // BL-P2-074: delegate to default_project + project disambiguation.
+                // - Span attached via `Instrument` (not `.enter()`) so it does
+                //   not leak across `.await` points on a Tokio worker.
+                // - Skips `normalize_cloud_project`: cloud is already authoritative
+                //   and `default_project` values must be passed through verbatim
+                //   (they may contain `/`, e.g. `team/foo` hierarchical names).
                 let span = tracing::info_span!("resolve_cloud_only", cloud = %cloud);
-                let _enter = span.enter();
-                self.validate_cloud(&cloud)?;
-                let project = self.clouds.default_project(&cloud).ok_or_else(|| {
-                    tracing::warn!(cloud = %cloud, "cloud_no_default_project");
-                    SwitchError::NotConfigured {
-                        cloud: cloud.clone(),
-                    }
-                })?;
-                tracing::debug!(resolved_project = %project, "cloud_only_resolved");
-                self.resolve_by_name_inner(Some(cloud), project, None).await
+                async move {
+                    self.validate_cloud(&cloud)?;
+                    let project = self.clouds.default_project(&cloud).ok_or_else(|| {
+                        tracing::warn!(cloud = %cloud, "cloud_no_default_project");
+                        SwitchError::NotConfigured {
+                            cloud: cloud.clone(),
+                        }
+                    })?;
+                    tracing::debug!(resolved_project = %project, "cloud_only_resolved");
+                    self.disambiguate_by_name(cloud, project, None).await
+                }
+                .instrument(span)
+                .await
             }
         }
     }
 
-    /// Shared `ByName` disambiguation body. Extracted so `CloudOnly` can
-    /// delegate without a self-async recursion through `resolve` itself.
+    /// Shared `ByName` entry point: normalizes the cloud prefix then
+    /// disambiguates. Kept so the external `ByName` arm still runs the
+    /// inline `cloud/project` parsing that BL-P2-031 introduced.
     async fn resolve_by_name_inner(
         &self,
         cloud: Option<String>,
@@ -136,6 +146,19 @@ impl ContextTargetResolver {
         domain: Option<String>,
     ) -> Result<ContextTarget, SwitchError> {
         let (cloud, project_name) = normalize_cloud_project(cloud, project, &*self.clouds)?;
+        self.disambiguate_by_name(cloud, project_name, domain).await
+    }
+
+    /// Disambiguation body only — takes an already-resolved cloud and a
+    /// verbatim project name. `CloudOnly` calls this directly so a
+    /// `default_project` of e.g. `"team/foo"` is not re-split on `/` by
+    /// [`normalize_cloud_project`] (BL-P2-074 Codex P2 #2).
+    async fn disambiguate_by_name(
+        &self,
+        cloud: String,
+        project_name: String,
+        domain: Option<String>,
+    ) -> Result<ContextTarget, SwitchError> {
         let candidates = self.directory.list_projects(&cloud).await?;
         let mut iter = candidates
             .into_iter()
@@ -609,6 +632,28 @@ mod tests {
             SwitchError::NotConfigured { cloud } => assert_eq!(cloud, "devstack"),
             other => panic!("expected NotConfigured, got {other:?}"),
         }
+    }
+
+    /// Codex P2 #2: `default_project` values must be passed through
+    /// verbatim. A hierarchical name like `team/foo` must NOT be split
+    /// on `/` as if it were inline `cloud/project` syntax.
+    #[tokio::test]
+    async fn test_resolve_cloud_only_preserves_slash_in_default_project() {
+        let resolver = ContextTargetResolver::new(
+            clouds_with_defaults("devstack", &["devstack"], &[("devstack", "team/foo")]),
+            directory(&[(
+                "devstack",
+                vec![candidate("devstack", "team/foo", "id-1", "default")],
+            )]),
+        );
+        let target = resolver
+            .resolve(ContextRequest::CloudOnly {
+                cloud: "devstack".into(),
+            })
+            .await
+            .expect("default project 'team/foo' must resolve, not be split on '/'");
+        assert_eq!(target.project_name, "team/foo");
+        assert_eq!(target.project_id, "id-1");
     }
 
     #[tokio::test]
