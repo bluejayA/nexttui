@@ -203,7 +203,6 @@ pub enum Action {
 
     // System
     RefreshAll,
-    SwitchCloud(String),
     Quit,
 
     // Runtime context switch (BL-P2-031)
@@ -266,7 +265,6 @@ mod tests {
             Action::FetchImages,
             Action::FetchProjects,
             Action::RefreshAll,
-            Action::SwitchCloud("prod".into()),
             Action::Quit,
         ];
         assert!(actions.len() >= 18);

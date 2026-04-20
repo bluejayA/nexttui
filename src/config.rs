@@ -37,6 +37,8 @@ pub struct CloudConfig {
     #[serde(default = "default_verify_true")]
     pub verify: bool,
     pub cacert: Option<PathBuf>,
+    #[serde(default)]
+    pub default_project: Option<String>,
 }
 
 fn default_interface() -> String {
@@ -689,6 +691,7 @@ clouds:
                 identity_api_version: 3,
                 verify: true,
                 cacert: None,
+                default_project: None,
             },
         )]);
         let result = Config::determine_active_cloud(&clouds, Some("nonexistent"));
@@ -738,6 +741,7 @@ clouds:
             identity_api_version: 3,
             verify: true,
             cacert: None,
+            default_project: None,
         }
     }
 
@@ -868,5 +872,33 @@ servers_secs = 60
             config.cache_ttl(ResourceType::Aggregates),
             Duration::from_secs(120)
         );
+    }
+
+    #[test]
+    fn test_load_clouds_yaml_without_default_project_yields_none() {
+        let dir = TempDir::new().unwrap();
+        let path = write_clouds_yaml(&dir, valid_clouds_yaml());
+        let config = Config::load_from(&path).unwrap();
+        let cloud = config.cloud_config("devstack").unwrap();
+        assert_eq!(cloud.default_project, None);
+    }
+
+    #[test]
+    fn test_load_clouds_yaml_with_default_project_yields_some() {
+        let dir = TempDir::new().unwrap();
+        let yaml = r#"
+clouds:
+  prod:
+    auth:
+      auth_url: https://keystone.prod.example.com/v3
+      username: admin
+      password: secret
+    default_project: my_workload
+    region_name: RegionOne
+"#;
+        let path = write_clouds_yaml(&dir, yaml);
+        let config = Config::load_from(&path).unwrap();
+        let cloud = config.cloud_config("prod").unwrap();
+        assert_eq!(cloud.default_project, Some("my_workload".to_string()));
     }
 }

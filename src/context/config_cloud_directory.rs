@@ -34,6 +34,18 @@ impl CloudDirectory for ConfigCloudDirectory {
             .map(|s| s.to_string())
             .collect()
     }
+
+    fn default_project(&self, cloud: &str) -> Option<String> {
+        self.config
+            .cloud_config(cloud)
+            .and_then(|c| c.default_project.clone())
+    }
+
+    /// Override: direct HashMap lookup via `cloud_config` — avoids the
+    /// `Vec<String>` allocation that the default impl incurs.
+    fn contains_cloud(&self, name: &str) -> bool {
+        self.config.cloud_config(name).is_some()
+    }
 }
 
 #[cfg(test)]
@@ -86,5 +98,41 @@ clouds:
         let mut clouds = dir.known_clouds();
         clouds.sort();
         assert_eq!(clouds, vec!["alpha", "beta"]);
+    }
+
+    #[test]
+    fn test_default_project_returns_configured_value() {
+        let config = Arc::new(test_config(
+            r#"
+clouds:
+  prod:
+    auth:
+      auth_url: https://keystone/v3
+      username: admin
+      password: secret
+    default_project: my_workload
+    region_name: RegionOne
+"#,
+        ));
+        let dir = ConfigCloudDirectory::new(config);
+        assert_eq!(dir.default_project("prod"), Some("my_workload".into()));
+    }
+
+    #[test]
+    fn test_default_project_none_when_unset() {
+        let config = Arc::new(test_config(
+            r#"
+clouds:
+  prod:
+    auth:
+      auth_url: https://keystone/v3
+      username: admin
+      password: secret
+    region_name: RegionOne
+"#,
+        ));
+        let dir = ConfigCloudDirectory::new(config);
+        assert_eq!(dir.default_project("prod"), None);
+        assert_eq!(dir.default_project("unknown"), None);
     }
 }

@@ -26,6 +26,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use tracing::Instrument;
 
 use super::error::SwitchError;
 use super::types::{ContextRequest, ContextTarget};
@@ -57,6 +58,19 @@ impl From<ProjectCandidate> for ContextTarget {
 pub trait CloudDirectory: Send + Sync {
     fn active_cloud(&self) -> String;
     fn known_clouds(&self) -> Vec<String>;
+    /// Returns the runtime-switch default project for the given cloud, if
+    /// configured. BL-P2-074: `:switch-cloud <name>` resolves via this.
+    /// Intentionally **not** `auth.project_name` (Keystone bootstrap scope)
+    /// — see application-design D3.
+    fn default_project(&self, cloud: &str) -> Option<String>;
+
+    /// Check whether a cloud is known without allocating a `Vec<String>`.
+    /// Default impl delegates to `known_clouds()` for back-compat;
+    /// implementations with a map-like backing store (e.g.
+    /// [`ConfigCloudDirectory`]) should override for O(1) lookup.
+    fn contains_cloud(&self, name: &str) -> bool {
+        self.known_clouds().iter().any(|c| c == name)
+    }
 }
 
 /// Port over "which projects can the current user reach in a given cloud".
@@ -86,29 +100,7 @@ impl ContextTargetResolver {
                 cloud,
                 project,
                 domain,
-            } => {
-                let (cloud, project_name) = normalize_cloud_project(cloud, project, &*self.clouds)?;
-                let candidates = self.directory.list_projects(&cloud).await?;
-                let mut iter = candidates
-                    .into_iter()
-                    .filter(|c| c.project_name == project_name)
-                    .filter(|c| match &domain {
-                        Some(d) => &c.domain == d,
-                        None => true,
-                    });
-                // Pull at most two — single match: Ok; two-or-more: Ambiguous;
-                // none: NotFound. Avoids a panic-prone `.unwrap()` while keeping
-                // the disambiguation policy identical.
-                match (iter.next(), iter.next()) {
-                    (None, _) => Err(SwitchError::NotFound(project_name)),
-                    (Some(only), None) => Ok(only.into()),
-                    (Some(first), Some(second)) => {
-                        let mut candidates: Vec<ContextTarget> = vec![first.into(), second.into()];
-                        candidates.extend(iter.map(Into::into));
-                        Err(SwitchError::Ambiguous { candidates })
-                    }
-                }
-            }
+            } => self.resolve_by_name_inner(cloud, project, domain).await,
             ContextRequest::ById { cloud, project_id } => {
                 let cloud = cloud.unwrap_or_else(|| self.clouds.active_cloud());
                 self.validate_cloud(&cloud)?;
@@ -118,6 +110,73 @@ impl ContextTargetResolver {
                     .find(|c| c.project_id == project_id)
                     .map(Into::into)
                     .ok_or(SwitchError::NotFound(project_id))
+            }
+            ContextRequest::CloudOnly { cloud } => {
+                // BL-P2-074: delegate to default_project + project disambiguation.
+                // - Span attached via `Instrument` (not `.enter()`) so it does
+                //   not leak across `.await` points on a Tokio worker.
+                // - Skips `normalize_cloud_project`: cloud is already authoritative
+                //   and `default_project` values must be passed through verbatim
+                //   (they may contain `/`, e.g. `team/foo` hierarchical names).
+                let span = tracing::info_span!("resolve_cloud_only", cloud = %cloud);
+                async move {
+                    self.validate_cloud(&cloud)?;
+                    let project = self.clouds.default_project(&cloud).ok_or_else(|| {
+                        tracing::warn!(cloud = %cloud, "cloud_no_default_project");
+                        SwitchError::NotConfigured {
+                            cloud: cloud.clone(),
+                        }
+                    })?;
+                    tracing::debug!(resolved_project = %project, "cloud_only_resolved");
+                    self.disambiguate_by_name(cloud, project, None).await
+                }
+                .instrument(span)
+                .await
+            }
+        }
+    }
+
+    /// Shared `ByName` entry point: normalizes the cloud prefix then
+    /// disambiguates. Kept so the external `ByName` arm still runs the
+    /// inline `cloud/project` parsing that BL-P2-031 introduced.
+    async fn resolve_by_name_inner(
+        &self,
+        cloud: Option<String>,
+        project: String,
+        domain: Option<String>,
+    ) -> Result<ContextTarget, SwitchError> {
+        let (cloud, project_name) = normalize_cloud_project(cloud, project, &*self.clouds)?;
+        self.disambiguate_by_name(cloud, project_name, domain).await
+    }
+
+    /// Disambiguation body only — takes an already-resolved cloud and a
+    /// verbatim project name. `CloudOnly` calls this directly so a
+    /// `default_project` of e.g. `"team/foo"` is not re-split on `/` by
+    /// [`normalize_cloud_project`] (BL-P2-074 Codex P2 #2).
+    async fn disambiguate_by_name(
+        &self,
+        cloud: String,
+        project_name: String,
+        domain: Option<String>,
+    ) -> Result<ContextTarget, SwitchError> {
+        let candidates = self.directory.list_projects(&cloud).await?;
+        let mut iter = candidates
+            .into_iter()
+            .filter(|c| c.project_name == project_name)
+            .filter(|c| match &domain {
+                Some(d) => &c.domain == d,
+                None => true,
+            });
+        // Pull at most two — single match: Ok; two-or-more: Ambiguous;
+        // none: NotFound. Avoids a panic-prone `.unwrap()` while keeping
+        // the disambiguation policy identical.
+        match (iter.next(), iter.next()) {
+            (None, _) => Err(SwitchError::NotFound(project_name)),
+            (Some(only), None) => Ok(only.into()),
+            (Some(first), Some(second)) => {
+                let mut candidates: Vec<ContextTarget> = vec![first.into(), second.into()];
+                candidates.extend(iter.map(Into::into));
+                Err(SwitchError::Ambiguous { candidates })
             }
         }
     }
@@ -136,7 +195,7 @@ impl ContextTargetResolver {
     }
 
     fn validate_cloud(&self, cloud: &str) -> Result<(), SwitchError> {
-        if self.clouds.known_clouds().iter().any(|c| c == cloud) {
+        if self.clouds.contains_cloud(cloud) {
             Ok(())
         } else {
             Err(SwitchError::NotFound(format!("cloud '{cloud}'")))
@@ -159,7 +218,7 @@ fn normalize_cloud_project(
     let cloud = cloud_arg
         .or(prefix_cloud)
         .unwrap_or_else(|| clouds.active_cloud());
-    if !clouds.known_clouds().iter().any(|c| c == &cloud) {
+    if !clouds.contains_cloud(&cloud) {
         return Err(SwitchError::NotFound(format!("cloud '{cloud}'")));
     }
     Ok((cloud, project_name))
@@ -173,6 +232,7 @@ mod tests {
     struct FakeClouds {
         active: String,
         known: Vec<String>,
+        defaults: std::collections::HashMap<String, String>,
     }
 
     impl CloudDirectory for FakeClouds {
@@ -181,6 +241,9 @@ mod tests {
         }
         fn known_clouds(&self) -> Vec<String> {
             self.known.clone()
+        }
+        fn default_project(&self, cloud: &str) -> Option<String> {
+            self.defaults.get(cloud).cloned()
         }
     }
 
@@ -233,6 +296,22 @@ mod tests {
         Arc::new(FakeClouds {
             active: active.into(),
             known: known.iter().map(|s| s.to_string()).collect(),
+            defaults: std::collections::HashMap::new(),
+        })
+    }
+
+    fn clouds_with_defaults(
+        active: &str,
+        known: &[&str],
+        defaults: &[(&str, &str)],
+    ) -> Arc<dyn CloudDirectory> {
+        Arc::new(FakeClouds {
+            active: active.into(),
+            known: known.iter().map(|s| s.to_string()).collect(),
+            defaults: defaults
+                .iter()
+                .map(|(c, p)| ((*c).to_string(), (*p).to_string()))
+                .collect(),
         })
     }
 
@@ -479,5 +558,119 @@ mod tests {
         let resolver = ContextTargetResolver::new(clouds, dir);
         let err = resolver.list_user_projects().await.unwrap_err();
         assert!(matches!(err, SwitchError::RescopeRejected(_)));
+    }
+
+    #[test]
+    fn test_cloud_directory_default_project_reflects_config() {
+        let clouds = clouds_with_defaults(
+            "devstack",
+            &["devstack", "prod"],
+            &[("devstack", "admin"), ("prod", "my_workload")],
+        );
+        assert_eq!(clouds.default_project("devstack"), Some("admin".into()));
+        assert_eq!(clouds.default_project("prod"), Some("my_workload".into()));
+        assert_eq!(clouds.default_project("unknown"), None);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_cloud_only_returns_default_project_target() {
+        let resolver = ContextTargetResolver::new(
+            clouds_with_defaults("devstack", &["devstack"], &[("devstack", "my_workload")]),
+            directory(&[(
+                "devstack",
+                vec![candidate("devstack", "my_workload", "id-1", "default")],
+            )]),
+        );
+        let target = resolver
+            .resolve(ContextRequest::CloudOnly {
+                cloud: "devstack".into(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(target.cloud, "devstack");
+        assert_eq!(target.project_name, "my_workload");
+        assert_eq!(target.project_id, "id-1");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_cloud_only_unknown_cloud_returns_not_found() {
+        let resolver = ContextTargetResolver::new(
+            clouds_with_defaults("devstack", &["devstack"], &[("devstack", "admin")]),
+            directory(&[(
+                "devstack",
+                vec![candidate("devstack", "admin", "id-1", "default")],
+            )]),
+        );
+        let err = resolver
+            .resolve(ContextRequest::CloudOnly {
+                cloud: "nope".into(),
+            })
+            .await
+            .unwrap_err();
+        match err {
+            SwitchError::NotFound(s) => assert!(s.contains("cloud 'nope'")),
+            other => panic!("expected NotFound, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_resolve_cloud_only_no_default_returns_not_configured() {
+        let resolver = ContextTargetResolver::new(
+            clouds("devstack", &["devstack"]),
+            directory(&[(
+                "devstack",
+                vec![candidate("devstack", "admin", "id-1", "default")],
+            )]),
+        );
+        let err = resolver
+            .resolve(ContextRequest::CloudOnly {
+                cloud: "devstack".into(),
+            })
+            .await
+            .unwrap_err();
+        match err {
+            SwitchError::NotConfigured { cloud } => assert_eq!(cloud, "devstack"),
+            other => panic!("expected NotConfigured, got {other:?}"),
+        }
+    }
+
+    /// Codex P2 #2: `default_project` values must be passed through
+    /// verbatim. A hierarchical name like `team/foo` must NOT be split
+    /// on `/` as if it were inline `cloud/project` syntax.
+    #[tokio::test]
+    async fn test_resolve_cloud_only_preserves_slash_in_default_project() {
+        let resolver = ContextTargetResolver::new(
+            clouds_with_defaults("devstack", &["devstack"], &[("devstack", "team/foo")]),
+            directory(&[(
+                "devstack",
+                vec![candidate("devstack", "team/foo", "id-1", "default")],
+            )]),
+        );
+        let target = resolver
+            .resolve(ContextRequest::CloudOnly {
+                cloud: "devstack".into(),
+            })
+            .await
+            .expect("default project 'team/foo' must resolve, not be split on '/'");
+        assert_eq!(target.project_name, "team/foo");
+        assert_eq!(target.project_id, "id-1");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_cloud_only_stale_default_returns_not_found() {
+        let resolver = ContextTargetResolver::new(
+            clouds_with_defaults("devstack", &["devstack"], &[("devstack", "ghost")]),
+            directory(&[("devstack", vec![])]),
+        );
+        let err = resolver
+            .resolve(ContextRequest::CloudOnly {
+                cloud: "devstack".into(),
+            })
+            .await
+            .unwrap_err();
+        match err {
+            SwitchError::NotFound(s) => assert_eq!(s, "ghost"),
+            other => panic!("expected NotFound, got {other:?}"),
+        }
     }
 }

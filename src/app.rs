@@ -1769,14 +1769,13 @@ impl App {
                 ));
             }
             Command::SwitchCloud(name) => {
-                // `ContextRequest` requires a project; a pure cloud-only
-                // switch has no first-class representation yet (BL-P2-074).
-                self.background_tracker.add_toast(
-                    format!(
-                        "switch-cloud {name}: not available yet — use :switch-project <name> once the cloud's project list is exposed"
-                    ),
-                    crate::background::ToastLevel::Info,
-                );
+                // BL-P2-074: resolve via `CloudConfig::default_project` and
+                // delegate to the standard switch path. Errors (unknown
+                // cloud, no default project, stale default) surface via
+                // the existing `spawn_switch` error → ApiError toast.
+                self.dispatch_action(Action::SwitchContext(
+                    crate::context::ContextRequest::CloudOnly { cloud: name },
+                ));
             }
             Command::SwitchBack => {
                 self.dispatch_action(Action::SwitchBack);
@@ -2405,21 +2404,41 @@ mod tests {
         );
     }
 
+    /// BL-P2-074 FR-1: `:switch-cloud prod` routes to the switch pipeline
+    /// instead of the legacy "not-available" stub. With no wired switcher
+    /// (test context), the call falls through to `spawn_switch`, which
+    /// emits the generic "Context switch not available yet (runtime
+    /// adapter pending)" toast. The legacy stub phrasing
+    /// (`switch-cloud <name>: not available yet — use :switch-project ...`)
+    /// must no longer appear — its presence would mean the handler never
+    /// dispatched `Action::SwitchContext(CloudOnly)`.
     #[test]
-    fn test_command_bar_switch_cloud_emits_info_toast() {
+    fn test_command_bar_switch_cloud_dispatches_context_request_without_toast() {
         let mut app = make_app();
         app.handle_key(make_key(KeyCode::Char(':')));
         for c in "switch-cloud prod".chars() {
             app.handle_key(make_key(KeyCode::Char(c)));
         }
         app.handle_key(make_key(KeyCode::Enter));
+
         let toasts = app.background_tracker().active_toasts();
+        let messages: Vec<String> = toasts.iter().map(|t| t.message.clone()).collect();
+
+        // Legacy stub phrasing must be absent.
         assert!(
-            toasts
+            !messages
                 .iter()
-                .any(|t| t.message.to_lowercase().contains("switch-cloud")),
-            "expected switch-cloud toast, got: {:?}",
-            toasts.iter().map(|t| t.message.clone()).collect::<Vec<_>>()
+                .any(|m| m.to_lowercase().contains("use :switch-project")
+                    && m.to_lowercase().contains("switch-cloud")),
+            "legacy stub toast must be removed, got: {messages:?}"
+        );
+        // spawn_switch path (switcher=None) toast must be present, confirming
+        // the SwitchContext action reached the pipeline.
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.to_lowercase().contains("context switch not available")),
+            "expected spawn_switch fallback toast, got: {messages:?}"
         );
     }
 
@@ -3447,6 +3466,9 @@ mod tests {
             }
             fn known_clouds(&self) -> Vec<String> {
                 vec!["devstack".into()]
+            }
+            fn default_project(&self, _cloud: &str) -> Option<String> {
+                None
             }
         }
         struct FakeDirectory;

@@ -1,0 +1,28 @@
+# cargo-audit configuration
+# https://docs.rs/cargo-audit/latest/cargo_audit/config/index.html
+
+[advisories]
+# Ignored advisories must be reviewed periodically — add a comment per entry
+# explaining why the advisory is inapplicable to this codebase, and when the
+# ignore should be revisited.
+ignore = [
+    # RUSTSEC-2026-0097 — rand 0.8.5 unsoundness via custom logger calling
+    # `rand::rng()` during logging.
+    #
+    # Not applicable to nexttui:
+    #   - `rand` appears only as a transitive build-time dep of `phf_generator`
+    #     (perfect hash generator). `grep -rn "use rand" src/` = 0 matches.
+    #   - nexttui uses `tracing`, not `log`, and no custom logger calls `rand`.
+    #   - Unsoundness requires 5 simultaneous conditions (log + thread_rng
+    #     features + custom logger + rand::rng() from logger + reseed race +
+    #     trace/warn logging with getrandom failure) — the first is already
+    #     false for this crate.
+    #
+    # Revisit when `phf_generator` bumps to rand >= 0.9 (upstream fix) or when
+    # this crate starts using `rand` directly. Tracked loosely under
+    # BL-P2-068 (Actions SHA pinning / CI maintenance).
+    "RUSTSEC-2026-0097",
+]
+
+[output]
+quiet = false
