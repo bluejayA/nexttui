@@ -250,20 +250,6 @@ AI 개발 맥락에서 이는 "preference" 수준이 아니라 **claude-code 세
 - BL-P2-050 (LogPanel 제어문자 필터링) 과 정책 정렬 검토
 **Ref**: PR3 Unit 4.5 cargo-review C4 + G3
 
-### BL-P2-074: SwitchCloud wire 전략 (`CloudOnly` variant or picker 두 단계 플로우)
-**Priority**: Medium
-**Category**: Feature / Architecture
-**Description**: PR3 cargo-review C8 + G2. 현재 `:switch-cloud <name>` 입력 시 `ContextRequest`가 project: String 필수라 cloud-only 전환 표현 불가 → toast만 발행하고 실제 전환 0. PR3는 stub 유지.
-선택지:
-- (a) `ContextRequest::CloudOnly { cloud: String }` variant 추가 → resolver에서 해당 cloud의 default project로 위임
-- (b) `Command::SwitchCloud(name)` 수신 시 resolver에게 해당 cloud의 project 목록을 조회 → picker를 여는 두 단계 플로우 (Unit 6 ContextPicker와 통합)
-필요 작업:
-- 두 옵션의 trade-off 결정 (resolver/Keystone 호출 빈도, UX 일관성)
-- 선택된 옵션 구현 + 통합 테스트
-- ContextIndicator (Unit 5 Step 2) 의 pending 상태 표시 연동
-**의존**: Unit 5 Step 2 (ContextIndicator)
-**Ref**: PR3 Unit 4.5 cargo-review C8 + G2
-
 ### BL-P2-075: legacy `:ctx` 명령 deprecation 타임라인
 **Priority**: Low
 **Category**: Tech debt
@@ -651,3 +637,4 @@ AI 개발 맥락에서 이는 "preference" 수준이 아니라 **claude-code 세
 - **BL-P2-073**: InputMode 단일화 — component::InputMode 단일 소스 + set_input_mode 헬퍼 (PR #76, 2026-04-18)
 - **BL-P2-077**: PR3 cargo-review 잔여 MED — unicode-width 전환 + NO_COLOR bg 제거 (PR #76, 2026-04-18)
 - **BL-P2-079**: PR3 Codex 2차/3차 review 잔여 finding — confirm reset + Usage refetch + Tab cycling + input_mode/Network form reset (PR #76, 2026-04-18)
+- **BL-P2-074**: SwitchCloud wire 완결 — `ContextRequest::CloudOnly` variant + `CloudConfig::default_project` 필드 + `SwitchError::NotConfigured` + `ContextSwitcher` idempotent fast-path (PR #78, 2026-04-20). safe_display는 BL-P2-050으로 defer. Codex P2 2건(tracing Instrument, slash in default_project) 반영.
