@@ -8,6 +8,7 @@ use std::sync::Arc;
 use serde::Deserialize;
 use tracing::{debug, info};
 
+use crate::adapter::auth::rescope::sanitize_rescope_body;
 use crate::config::Config;
 use crate::context::error::SwitchError;
 use crate::port::error::ApiError;
@@ -93,7 +94,7 @@ impl DomainNameResolver {
 
         let status = resp.status();
         if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
+            let body = sanitize_rescope_body(&resp.text().await.unwrap_or_default());
             return Err(SwitchError::Api(ApiError::NotFound {
                 resource_type: "domain".into(),
                 id: format!("{domain_id} ({status}): {body}"),
@@ -240,6 +241,41 @@ mod tests {
         assert!(
             matches!(err, SwitchError::Api(ApiError::NotFound { .. })),
             "expected Api(NotFound) for 404, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn http_error_body_is_truncated_and_sanitized() {
+        // large body with token-like header material — must not appear in error
+        let large_body = format!(
+            "X-Auth-Token: gAAAALeakedDomainToken\n{}",
+            "z".repeat(2048)
+        );
+        let resp = CannedResponse {
+            status_line: "500 Internal Server Error",
+            body: large_body,
+        };
+        let (base_url, _handle) = spawn_one_shot(resp).await;
+        let config = make_config("devstack", &format!("{base_url}/v3"));
+        let resolver = DomainNameResolver::new(
+            Arc::new(reqwest::Client::new()),
+            config,
+            Duration::from_secs(60),
+        );
+
+        let err = resolver
+            .resolve_name("devstack", "did-500", "tok-500-big")
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            !msg.contains("gAAAALeakedDomainToken"),
+            "token material leaked in domain error: {msg}"
+        );
+        assert!(
+            msg.chars().count() < 400,
+            "domain error message too long ({} chars): {msg}",
+            msg.chars().count()
         );
     }
 }

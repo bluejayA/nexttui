@@ -7,6 +7,7 @@ use serde::Deserialize;
 use tracing::{debug, error, info, warn};
 
 use crate::adapter::auth::directory_cache::DirectoryCache;
+use crate::adapter::auth::rescope::sanitize_rescope_body;
 use crate::adapter::auth::token_scope_fingerprint::TokenScopeFingerprint;
 use crate::config::Config;
 use crate::context::error::SwitchError;
@@ -66,20 +67,58 @@ impl KeystoneProjectDirectory {
         }
     }
 
+    /// Validate that `next_url` is safe to follow: must be http/https and must
+    /// share the same host+port as `auth_url` (the configured Keystone endpoint).
+    /// Rejects anything else to prevent SSRF via a malicious `links.next` value.
+    fn validate_next_url(next_url: &str, auth_url: &str) -> Result<(), SwitchError> {
+        let parsed = reqwest::Url::parse(next_url).map_err(|_| {
+            SwitchError::Api(ApiError::Parse(
+                "pagination next URL is not a valid URL".into(),
+            ))
+        })?;
+
+        // Only allow http / https — reject file://, data://, etc.
+        if parsed.scheme() != "http" && parsed.scheme() != "https" {
+            warn!(next_url, "directory_next_url_rejected");
+            return Err(SwitchError::Api(ApiError::Parse(
+                "pagination next URL scheme/host mismatch".into(),
+            )));
+        }
+
+        let allowed = reqwest::Url::parse(auth_url).map_err(|_| {
+            SwitchError::Api(ApiError::Parse("auth_url is not a valid URL".into()))
+        })?;
+
+        let next_host = parsed.host_str().unwrap_or("");
+        let allowed_host = allowed.host_str().unwrap_or("");
+        let next_port = parsed.port_or_known_default();
+        let allowed_port = allowed.port_or_known_default();
+
+        if next_host != allowed_host || next_port != allowed_port {
+            warn!(next_url, "directory_next_url_rejected");
+            return Err(SwitchError::Api(ApiError::Parse(
+                "pagination next URL scheme/host mismatch".into(),
+            )));
+        }
+
+        Ok(())
+    }
+
     /// Fetch all pages from Keystone starting at `initial_url`.
     async fn fetch_all_pages(
         &self,
         initial_url: String,
         token_id: &str,
         max_pages: usize,
-    ) -> Result<Vec<KeystoneProject>, SwitchError> {
+        auth_url: &str,
+    ) -> Result<(Vec<KeystoneProject>, usize), SwitchError> {
         let mut all_projects: Vec<KeystoneProject> = Vec::new();
         let mut next_url: Option<String> = Some(initial_url);
-        let mut pages = 0usize;
+        let mut page_count = 0usize;
 
         while let Some(url) = next_url.take() {
-            if pages >= max_pages {
-                warn!(pages, max_pages, "directory_pagination_runaway");
+            if page_count >= max_pages {
+                warn!(page_count, max_pages, "directory_pagination_runaway");
                 return Err(SwitchError::Api(ApiError::Parse(format!(
                     "pagination runaway, >{max_pages} pages"
                 ))));
@@ -95,14 +134,14 @@ impl KeystoneProjectDirectory {
 
             let status = resp.status();
             if status.as_u16() == 401 {
-                let body = resp.text().await.unwrap_or_default();
+                let body = sanitize_rescope_body(&resp.text().await.unwrap_or_default());
                 warn!(status = 401, "directory_lookup_401");
                 return Err(SwitchError::RescopeRejected(format!(
                     "directory lookup 401 — token rejected: {body}"
                 )));
             }
             if !status.is_success() {
-                let body = resp.text().await.unwrap_or_default();
+                let body = sanitize_rescope_body(&resp.text().await.unwrap_or_default());
                 error!(status = status.as_u16(), "directory_lookup_http_error");
                 return Err(SwitchError::Api(ApiError::ServiceUnavailable {
                     service: format!("keystone directory ({status}): {body}"),
@@ -116,11 +155,17 @@ impl KeystoneProjectDirectory {
             })?;
 
             all_projects.extend(parsed.projects);
-            next_url = parsed.links.next.filter(|s| !s.is_empty());
-            pages += 1;
+
+            // Validate next URL before following (SSRF guard)
+            if let Some(candidate) = parsed.links.next.filter(|s| !s.is_empty()) {
+                Self::validate_next_url(&candidate, auth_url)?;
+                next_url = Some(candidate);
+            }
+
+            page_count += 1;
         }
 
-        Ok(all_projects)
+        Ok((all_projects, page_count))
     }
 }
 
@@ -163,13 +208,11 @@ impl ProjectDirectoryPort for KeystoneProjectDirectory {
         let initial_url = format!("{auth_url}/auth/projects");
 
         // Fetch all pages
-        let raw = self
-            .fetch_all_pages(initial_url, &token.id, self.max_pages)
+        let (raw, page_count) = self
+            .fetch_all_pages(initial_url, &token.id, self.max_pages, &auth_url)
             .await?;
 
         let count = raw.len();
-        let pages = count; // approximate — we know page count from loop but expose count here
-        let _ = pages; // suppress lint; pages tracked inside fetch_all_pages
 
         let candidates: Vec<ProjectCandidate> = raw
             .into_iter()
@@ -181,7 +224,7 @@ impl ProjectDirectoryPort for KeystoneProjectDirectory {
             })
             .collect();
 
-        info!(cloud, count, "directory_fetched");
+        info!(cloud, pages = page_count, count, "directory_fetched");
 
         self.cache.put(cloud, &fp, candidates.clone());
         Ok(candidates)
@@ -503,6 +546,189 @@ mod tests {
             }
             other => panic!("expected Api(Parse) for runaway, got {other:?}"),
         }
+    }
+
+    // --- Security: body truncation + sanitization ---
+
+    #[tokio::test]
+    async fn http_5xx_body_is_truncated_and_sanitized() {
+        // large body containing token-like header material
+        let large_body = format!(
+            "X-Auth-Token: gAAAALeakedTokenMaterial\n{}",
+            "x".repeat(2048)
+        );
+        let resp = CannedResponse {
+            status_line: "503 Service Unavailable",
+            body: large_body,
+        };
+        let (base_url, _handle) = spawn_one_shot(resp).await;
+        let config = make_config("devstack", &format!("{base_url}/v3"));
+        let cache = Arc::new(DirectoryCache::new(Duration::from_secs(60)));
+        let auth = Arc::new(FakeScopedAuth::with_token(make_token("tok-503")));
+        let clouds = Arc::new(FakeCloudDir {
+            active: "devstack".into(),
+        });
+        let dir = KeystoneProjectDirectory::new(
+            Arc::new(reqwest::Client::new()),
+            auth,
+            clouds,
+            config,
+            cache,
+            10,
+        );
+
+        let err = dir.list_projects("devstack").await.unwrap_err();
+        let msg = err.to_string();
+        // token material must not appear in the error message
+        assert!(
+            !msg.contains("gAAAALeakedTokenMaterial"),
+            "token leaked in 5xx error: {msg}"
+        );
+        // message must be truncated (not more than ~400 chars)
+        assert!(
+            msg.chars().count() < 400,
+            "5xx error message too long ({} chars): {msg}",
+            msg.chars().count()
+        );
+    }
+
+    #[tokio::test]
+    async fn http_401_body_is_truncated_and_sanitized() {
+        let large_body = format!(
+            "X-Auth-Token: gAAAALeaked401Token\n{}",
+            "y".repeat(2048)
+        );
+        let resp = CannedResponse {
+            status_line: "401 Unauthorized",
+            body: large_body,
+        };
+        let (base_url, _handle) = spawn_one_shot(resp).await;
+        let config = make_config("devstack", &format!("{base_url}/v3"));
+        let cache = Arc::new(DirectoryCache::new(Duration::from_secs(60)));
+        let auth = Arc::new(FakeScopedAuth::with_token(make_token("tok-401-big")));
+        let clouds = Arc::new(FakeCloudDir {
+            active: "devstack".into(),
+        });
+        let dir = KeystoneProjectDirectory::new(
+            Arc::new(reqwest::Client::new()),
+            auth,
+            clouds,
+            config,
+            cache,
+            10,
+        );
+
+        let err = dir.list_projects("devstack").await.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            !msg.contains("gAAAALeaked401Token"),
+            "token leaked in 401 error: {msg}"
+        );
+        assert!(
+            msg.chars().count() < 400,
+            "401 error message too long ({} chars): {msg}",
+            msg.chars().count()
+        );
+    }
+
+    // --- Security: SSRF guard on links.next ---
+
+    #[tokio::test]
+    async fn links_next_rejects_different_host() {
+        // Page 1 returns links.next pointing to IMDS (169.254.169.254) — SSRF candidate
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base = format!("http://{addr}");
+
+        let ssrf_url = "http://169.254.169.254/v3/auth/projects";
+        let page1_body = format!(
+            r#"{{"projects":[{{"id":"p1","name":"proj1","domain_id":"d1"}}],"links":{{"next":"{ssrf_url}"}}}}"#
+        );
+
+        let _handle = tokio::spawn(async move {
+            // Serve only 1 response — if adapter follows the SSRF URL it would
+            // try a different host, but we just verify it doesn't request again.
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 8192];
+            let _ = stream.read(&mut buf).await.unwrap();
+            let wire = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{page1_body}",
+                page1_body.len()
+            );
+            stream.write_all(wire.as_bytes()).await.unwrap();
+            let _ = stream.shutdown().await;
+        });
+
+        let config = make_config("devstack", &format!("{base}/v3"));
+        let cache = Arc::new(DirectoryCache::new(Duration::from_secs(60)));
+        let auth = Arc::new(FakeScopedAuth::with_token(make_token("tok-ssrf")));
+        let clouds = Arc::new(FakeCloudDir {
+            active: "devstack".into(),
+        });
+        let dir = KeystoneProjectDirectory::new(
+            Arc::new(reqwest::Client::new()),
+            auth,
+            clouds,
+            config,
+            cache,
+            10,
+        );
+
+        let err = dir.list_projects("devstack").await.unwrap_err();
+        assert!(
+            matches!(err, SwitchError::Api(ApiError::Parse(_))),
+            "expected Api(Parse) for SSRF host mismatch, got {err:?}"
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.contains("mismatch") || msg.contains("SSRF") || msg.contains("scheme") || msg.contains("host"),
+            "error message should mention the rejection reason: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn links_next_rejects_file_scheme() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base = format!("http://{addr}");
+
+        let file_url = "file:///etc/passwd";
+        let page1_body = format!(
+            r#"{{"projects":[{{"id":"p1","name":"proj1","domain_id":"d1"}}],"links":{{"next":"{file_url}"}}}}"#
+        );
+
+        let _handle = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 8192];
+            let _ = stream.read(&mut buf).await.unwrap();
+            let wire = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{page1_body}",
+                page1_body.len()
+            );
+            stream.write_all(wire.as_bytes()).await.unwrap();
+            let _ = stream.shutdown().await;
+        });
+
+        let config = make_config("devstack", &format!("{base}/v3"));
+        let cache = Arc::new(DirectoryCache::new(Duration::from_secs(60)));
+        let auth = Arc::new(FakeScopedAuth::with_token(make_token("tok-file")));
+        let clouds = Arc::new(FakeCloudDir {
+            active: "devstack".into(),
+        });
+        let dir = KeystoneProjectDirectory::new(
+            Arc::new(reqwest::Client::new()),
+            auth,
+            clouds,
+            config,
+            cache,
+            10,
+        );
+
+        let err = dir.list_projects("devstack").await.unwrap_err();
+        assert!(
+            matches!(err, SwitchError::Api(ApiError::Parse(_))),
+            "expected Api(Parse) for file:// scheme, got {err:?}"
+        );
     }
 
     #[tokio::test]
