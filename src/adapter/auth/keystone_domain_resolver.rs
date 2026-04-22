@@ -44,6 +44,17 @@ impl DomainNameResolver {
         }
     }
 
+    /// Seed the cache for a given (cloud, domain_id) pair. Used in tests
+    /// to inject cached entries without making HTTP calls.
+    #[cfg(test)]
+    pub fn seed_cache(&self, cloud: &str, domain_id: &str, name: &str) {
+        let mut guard = self.cache.write().unwrap();
+        guard.insert(
+            (cloud.to_string(), domain_id.to_string()),
+            (name.to_string(), Instant::now()),
+        );
+    }
+
     /// Resolve `domain_id` → `domain.name` for the given `cloud`.
     ///
     /// Returns cached value on hit; otherwise calls Keystone
