@@ -29,6 +29,12 @@ unwrap_used = "deny"
 expect_used = "deny"
 enum_glob_use = "deny"
 
+[features]
+# Gated integration tests that require a live devstack container.
+# NOT default — local `cargo test` never runs these.
+# CI activates via: cargo test --test devstack_directory --features devstack-integration
+devstack-integration = []
+
 [dev-dependencies]
 http = "1.4.0"
 tempfile = "3"

@@ -57,3 +57,98 @@ jobs:
       - uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  devstack-integration:
+    name: Devstack integration gate (BL-P2-080 FR-8)
+    runs-on: ubuntu-latest
+    # Dedicated concurrency group so a fresh push to the same branch/PR
+    # cancels the in-flight devstack run without touching the fast `rust` job.
+    concurrency:
+      group: devstack-integration-${{ github.ref }}
+      cancel-in-progress: true
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # ------------------------------------------------------------------
+      # Step: start devstack container
+      # ------------------------------------------------------------------
+      # PLACEHOLDER: The devstack docker image digest has NOT been verified
+      # in this environment.  This step is disabled (`if: false`) until the
+      # actual image digest is confirmed by the devstack infra owner
+      # (BL-P2-081 coordination or manual pinning).
+      #
+      # When the digest is known, replace the placeholder tag and remove the
+      # `if: false` guard.  Everything else (healthcheck, log upload, test
+      # invocation) is already wired and will activate automatically.
+      #
+      # TODO: pin actual devstack image — BL-P2-080 CI gate
+      # ------------------------------------------------------------------
+      - name: Start devstack container (PLACEHOLDER — currently disabled)
+        id: devstack-setup
+        if: false  # Disabled until image digest is confirmed (BL-P2-081)
+        run: |
+          docker run -d \
+            --name devstack \
+            -p 5000:5000 \
+            -p 5001:5001 \
+            opendevstack/devstack:placeholder
+          # TODO: replace `placeholder` with a pinned tag or digest, e.g.:
+          #   opendevstack/devstack@sha256:<verified-digest>
+          # Floating `latest` is intentionally forbidden (supply-chain safety).
+
+      # ------------------------------------------------------------------
+      # Step: wait for Keystone endpoint to become healthy
+      # ------------------------------------------------------------------
+      # This step is also gated on the container being up.  It runs only
+      # when `devstack-setup` ran (i.e., when `if: false` is lifted above).
+      - name: Wait for Keystone endpoint (localhost:5000)
+        id: devstack-health
+        if: steps.devstack-setup.outcome == 'success'
+        run: |
+          echo "Waiting for Keystone at localhost:5000 (max 120s)…"
+          deadline=$(($(date +%s) + 120))
+          until nc -z localhost 5000 2>/dev/null; do
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "ERROR: Keystone did not become ready within 120s"
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "Keystone is up."
+
+      # ------------------------------------------------------------------
+      # Step: run devstack integration tests
+      # ------------------------------------------------------------------
+      # Requires DEVSTACK_URL and DEVSTACK_TOKEN injected from GHA secrets
+      # (set up as repo/env secrets when the container is activated).
+      - name: Run devstack integration tests
+        id: devstack-test
+        if: steps.devstack-health.outcome == 'success'
+        env:
+          DEVSTACK_URL: ${{ vars.DEVSTACK_URL }}
+          DEVSTACK_TOKEN: ${{ secrets.DEVSTACK_TOKEN }}
+        run: |
+          cargo test \
+            --test devstack_directory \
+            --features devstack-integration \
+            -- --nocapture
+
+      # ------------------------------------------------------------------
+      # Step: collect docker logs on any failure
+      # ------------------------------------------------------------------
+      - name: Collect devstack container logs on failure
+        if: failure()
+        run: |
+          docker logs devstack > devstack.log 2>&1 || echo "(container not running)" > devstack.log
+
+      - name: Upload devstack logs as artifact
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: devstack-logs-${{ github.run_id }}
+          path: devstack.log
+          retention-days: 7
