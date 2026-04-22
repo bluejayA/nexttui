@@ -67,9 +67,11 @@ impl KeystoneProjectDirectory {
         }
     }
 
-    /// Validate that `next_url` is safe to follow: must be http/https and must
-    /// share the same host+port as `auth_url` (the configured Keystone endpoint).
-    /// Rejects anything else to prevent SSRF via a malicious `links.next` value.
+    /// Validate that `next_url` is safe to follow: must share scheme + host +
+    /// port with `auth_url` (the configured Keystone endpoint). Same-scheme
+    /// enforcement prevents credential leak via https→http downgrade
+    /// (Codex branch review 2026-04-22). Rejects anything else to prevent
+    /// SSRF via a malicious `links.next` value.
     fn validate_next_url(next_url: &str, auth_url: &str) -> Result<(), SwitchError> {
         let parsed = reqwest::Url::parse(next_url).map_err(|_| {
             SwitchError::Api(ApiError::Parse(
@@ -88,6 +90,15 @@ impl KeystoneProjectDirectory {
         let allowed = reqwest::Url::parse(auth_url).map_err(|_| {
             SwitchError::Api(ApiError::Parse("auth_url is not a valid URL".into()))
         })?;
+
+        // Enforce exact scheme match — block https→http downgrade that would
+        // leak X-Auth-Token on plaintext transport.
+        if parsed.scheme() != allowed.scheme() {
+            warn!(next_url, "directory_next_url_rejected");
+            return Err(SwitchError::Api(ApiError::Parse(
+                "pagination next URL scheme/host mismatch".into(),
+            )));
+        }
 
         let next_host = parsed.host_str().unwrap_or("");
         let allowed_host = allowed.host_str().unwrap_or("");
@@ -729,6 +740,38 @@ mod tests {
             matches!(err, SwitchError::Api(ApiError::Parse(_))),
             "expected Api(Parse) for file:// scheme, got {err:?}"
         );
+    }
+
+    #[test]
+    fn validate_next_url_rejects_scheme_downgrade() {
+        // Direct test of validator: https auth_url + http same-host next_url
+        // must be rejected (credential leak guard).
+        let result = KeystoneProjectDirectory::validate_next_url(
+            "http://keystone.example.com/v3/auth/projects?marker=p1",
+            "https://keystone.example.com/v3",
+        );
+        assert!(
+            matches!(result, Err(SwitchError::Api(ApiError::Parse(_)))),
+            "expected Api(Parse) for scheme downgrade, got {result:?}"
+        );
+
+        // Inverse: http auth_url + https same-host next_url should also be
+        // rejected (policy is exact match, not "allow upgrade").
+        let result = KeystoneProjectDirectory::validate_next_url(
+            "https://keystone.example.com/v3/auth/projects?marker=p1",
+            "http://keystone.example.com/v3",
+        );
+        assert!(
+            matches!(result, Err(SwitchError::Api(ApiError::Parse(_)))),
+            "expected Api(Parse) for scheme upgrade, got {result:?}"
+        );
+
+        // Control: same scheme + same host + same port → pass.
+        let result = KeystoneProjectDirectory::validate_next_url(
+            "https://keystone.example.com/v3/auth/projects?marker=p1",
+            "https://keystone.example.com/v3",
+        );
+        assert!(result.is_ok(), "expected Ok for matching scheme+host, got {result:?}");
     }
 
     #[tokio::test]
