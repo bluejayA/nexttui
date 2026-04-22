@@ -80,6 +80,18 @@ impl DomainNameResolver {
             }
         }
 
+        // Guard: reject domain_id values that contain characters outside the
+        // safe set (alphanumeric, '-', '_'). This prevents path-traversal
+        // attempts such as "../../v3/users/<id>" from reaching the HTTP layer.
+        if !domain_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            return Err(SwitchError::Api(ApiError::Parse(
+                "domain_id contains invalid characters".into(),
+            )));
+        }
+
         info!(cloud, domain_id, "domain_lazy_resolve");
 
         let auth_url = self
@@ -252,6 +264,47 @@ mod tests {
         assert!(
             matches!(err, SwitchError::Api(ApiError::NotFound { .. })),
             "expected Api(NotFound) for 404, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_name_rejects_path_traversal_domain_id() {
+        // domain_id containing "../../" must be rejected before any HTTP call.
+        // Use an unreachable server to confirm zero HTTP requests are made.
+        let config = make_config("devstack", "http://127.0.0.1:1/v3"); // port 1 — unreachable
+        let resolver = DomainNameResolver::new(
+            Arc::new(reqwest::Client::new()),
+            config,
+            Duration::from_secs(60),
+        );
+
+        let err = resolver
+            .resolve_name("devstack", "../../etc/passwd", "tok-x")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, SwitchError::Api(ApiError::Parse(_))),
+            "expected Api(Parse) for path-traversal domain_id, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_name_rejects_slash_in_domain_id() {
+        // domain_id with a plain slash must also be rejected before any HTTP call.
+        let config = make_config("devstack", "http://127.0.0.1:1/v3");
+        let resolver = DomainNameResolver::new(
+            Arc::new(reqwest::Client::new()),
+            config,
+            Duration::from_secs(60),
+        );
+
+        let err = resolver
+            .resolve_name("devstack", "abc/def", "tok-y")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, SwitchError::Api(ApiError::Parse(_))),
+            "expected Api(Parse) for slash in domain_id, got {err:?}"
         );
     }
 

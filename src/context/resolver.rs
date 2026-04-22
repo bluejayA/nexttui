@@ -214,11 +214,13 @@ impl ContextTargetResolver {
                 (&self.scoped_auth, &self.domain_resolver)
         {
             // --- Fallback: domain_id → name lazy resolution (FR-5 D4) ---
-            // Get the current token to use as X-Auth-Token for domain lookups.
-            let token_id = scoped_auth
-                .current_token()
-                .map(|t| t.id)
-                .unwrap_or_default();
+            // A valid token is required for the X-Auth-Token header. If none is
+            // available, skip the HTTP fallback and return NotFound immediately
+            // to avoid an empty-string token being sent to Keystone.
+            let Some(token) = scoped_auth.current_token() else {
+                return Err(SwitchError::NotFound(project_name));
+            };
+            let token_id = token.id;
 
             let mut resolved: Vec<ProjectCandidate> = Vec::new();
             for candidate in &name_matched {
@@ -944,6 +946,60 @@ mod tests {
         assert!(
             matches!(err, SwitchError::NotFound(_)),
             "expected NotFound after fallback mismatch, got {err:?}"
+        );
+    }
+
+    /// When current_token() returns None, fallback returns NotFound immediately
+    /// without making any HTTP calls (domain_resolver must NOT be invoked).
+    #[tokio::test]
+    async fn disambiguate_by_name_fallback_no_token_returns_notfound() {
+        struct NoTokenAuth;
+
+        #[async_trait_inner]
+        impl ScopedAuthPort for NoTokenAuth {
+            fn current_scope(&self) -> TokenScope {
+                TokenScope::Project {
+                    name: "admin".into(),
+                    domain: "default".into(),
+                }
+            }
+            fn current_token(&self) -> Option<Token> {
+                None // ← simulates missing token
+            }
+            async fn set_active(
+                &self,
+                _scope: TokenScope,
+                _token: Token,
+            ) -> Result<(), SwitchError> {
+                Ok(())
+            }
+        }
+
+        // The domain resolver is wired but should never be called (port 1 = unreachable).
+        let domain_res = make_domain_resolver_with_cache("devstack", "did-default", "Default");
+        // Seed an entry but port 1 is unreachable — if HTTP is attempted the test panics or errors.
+        let resolver = ContextTargetResolver::new(
+            clouds("devstack", &["devstack"]),
+            directory(&[(
+                "devstack",
+                // 1st-pass: domain field "did-default" != "Default" → no match
+                vec![candidate("devstack", "admin", "id-1", "did-default")],
+            )]),
+            Some(Arc::new(NoTokenAuth) as Arc<dyn ScopedAuthPort>),
+            Some(domain_res),
+        );
+
+        let err = resolver
+            .resolve(ContextRequest::ByName {
+                cloud: None,
+                project: "admin".into(),
+                domain: Some("Default".into()),
+            })
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, SwitchError::NotFound(_)),
+            "expected NotFound when token is None, got {err:?}"
         );
     }
 

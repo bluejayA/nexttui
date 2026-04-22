@@ -35,6 +35,10 @@ use nexttui::port::scoped_auth::ScopedAuthPort;
 use nexttui::port::types::{AuthCredential, AuthMethod, ProjectScopeParam};
 use nexttui::worker::run_worker;
 
+const DIRECTORY_CACHE_TTL: Duration = Duration::from_secs(300);
+const DOMAIN_CACHE_TTL: Duration = Duration::from_secs(300);
+const MAX_DIRECTORY_PAGES: usize = 100;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing (file-based, since TUI owns stdout/stderr)
@@ -167,7 +171,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // BL-P2-080: HTTP-backed project directory with TTL cache + domain resolver.
         // The rescope_client defined below is reused here; an additional client
         // instance is created for domain resolution (same pool, separate timeout).
-        let directory_cache = Arc::new(DirectoryCache::new(Duration::from_secs(300)));
+        let directory_cache = Arc::new(DirectoryCache::new(DIRECTORY_CACHE_TTL));
         let http_client_for_dir = Arc::new(
             reqwest::Client::builder()
                 .timeout(Duration::from_secs(30))
@@ -177,7 +181,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let domain_resolver = Arc::new(DomainNameResolver::new(
             http_client_for_dir.clone(),
             config_for_wire.clone(),
-            Duration::from_secs(300),
+            DOMAIN_CACHE_TTL,
         ));
         let project_dir = Arc::new(KeystoneProjectDirectory::new(
             http_client_for_dir.clone(),
@@ -185,7 +189,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             cloud_dir.clone(),
             config_for_wire.clone(),
             directory_cache.clone(),
-            100, // max_pages
+            MAX_DIRECTORY_PAGES,
         ));
         let resolver = Arc::new(ContextTargetResolver::new(
             cloud_dir.clone(),
