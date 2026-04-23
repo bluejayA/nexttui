@@ -176,10 +176,7 @@ async fn t1_pagination_forced_real_fetch() {
     // `{auth_url}/auth/projects`, so we encode the query param via auth_url.
     // The SSRF validator checks scheme+host+port only — query params are not
     // part of the check, so this is safe and expected.
-    let limited_auth_url = format!(
-        "{}/v3?limit=1",
-        devstack_url.trim_end_matches('/')
-    );
+    let limited_auth_url = format!("{}/v3?limit=1", devstack_url.trim_end_matches('/'));
     let config_limited = make_devstack_config(CLOUD, &limited_auth_url);
 
     let dir = KeystoneProjectDirectory::new(
@@ -208,10 +205,7 @@ async fn t1_pagination_forced_real_fetch() {
             "T1: candidate cloud mismatch: got {:?}",
             c.cloud
         );
-        assert!(
-            !c.project_id.is_empty(),
-            "T1: project_id must not be empty"
-        );
+        assert!(!c.project_id.is_empty(), "T1: project_id must not be empty");
         assert!(
             !c.project_name.is_empty(),
             "T1: project_name must not be empty"
@@ -291,10 +285,8 @@ async fn t2_real_uuid_rescope_201() {
     // Step 2: rescope using the real project_id.
     let rescope_url = format!("{}/v3", devstack_url.trim_end_matches('/'));
     let client = reqwest::Client::new();
-    let rescope_adapter = nexttui::adapter::auth::rescope::KeystoneRescopeAdapter::new(
-        client,
-        rescope_url,
-    );
+    let rescope_adapter =
+        nexttui::adapter::auth::rescope::KeystoneRescopeAdapter::new(client, rescope_url);
 
     let target = nexttui::context::types::ContextTarget {
         cloud: CLOUD.to_string(),

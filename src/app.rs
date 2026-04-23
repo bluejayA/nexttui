@@ -1633,10 +1633,7 @@ impl App {
     /// `ContextChanged` events invalidate the relevant cloud's entries so
     /// subsequent `list_projects` calls see the new token's project list.
     /// (BL-P2-080 D2.)
-    pub fn wire_directory_cache(
-        &mut self,
-        cache: Arc<crate::adapter::auth::DirectoryCache>,
-    ) {
+    pub fn wire_directory_cache(&mut self, cache: Arc<crate::adapter::auth::DirectoryCache>) {
         self.directory_cache = Some(cache);
     }
 
@@ -3679,9 +3676,9 @@ mod tests {
 
     #[tokio::test]
     async fn handle_context_changed_invalidates_directory_cache() {
-        use std::time::Duration;
         use crate::adapter::auth::DirectoryCache;
         use crate::context::ContextTarget;
+        use std::time::Duration;
 
         let mut app = make_app();
 

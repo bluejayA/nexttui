@@ -91,10 +91,7 @@ impl ContextSwitcher {
                 reason = "resolve_epoch_drift",
                 "switch_epoch_drift_during_resolve"
             );
-            return Err((
-                self.state.epoch().current(),
-                SwitchError::InProgress,
-            ));
+            return Err((self.state.epoch().current(), SwitchError::InProgress));
         }
         // BL-P2-074 FR-4 / D1: if the resolved target matches the currently
         // committed context, short-circuit without touching the state
@@ -699,10 +696,10 @@ mod tests {
         // We need a resolver that bumps the epoch WHILE it's resolving.
         // We achieve this by having the resolver use a barrier-based fake
         // directory that signals back so the test can bump the epoch.
-        use std::sync::{Arc, Mutex};
         use crate::context::epoch::ContextEpoch;
         use crate::context::state_machine::SwitchStateMachine;
         use crate::context::types::ContextTarget;
+        use std::sync::{Arc, Mutex};
 
         let epoch = Arc::new(ContextEpoch::new());
         let state = Arc::new(SwitchStateMachine::new(epoch.clone()));
@@ -717,7 +714,10 @@ mod tests {
 
         #[async_trait]
         impl ProjectDirectoryPort for EpochBumpingDirectory {
-            async fn list_projects(&self, cloud: &str) -> Result<Vec<ProjectCandidate>, SwitchError> {
+            async fn list_projects(
+                &self,
+                cloud: &str,
+            ) -> Result<Vec<ProjectCandidate>, SwitchError> {
                 // Simulate a concurrent switch bumping the epoch before we return
                 let bump_target = ContextTarget {
                     cloud: cloud.to_string(),

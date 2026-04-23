@@ -87,9 +87,8 @@ impl KeystoneProjectDirectory {
             )));
         }
 
-        let allowed = reqwest::Url::parse(auth_url).map_err(|_| {
-            SwitchError::Api(ApiError::Parse("auth_url is not a valid URL".into()))
-        })?;
+        let allowed = reqwest::Url::parse(auth_url)
+            .map_err(|_| SwitchError::Api(ApiError::Parse("auth_url is not a valid URL".into())))?;
 
         // Enforce exact scheme match — block https→http downgrade that would
         // leak X-Auth-Token on plaintext transport.
@@ -192,10 +191,9 @@ impl ProjectDirectoryPort for KeystoneProjectDirectory {
         }
 
         // Get current token
-        let token = self
-            .scoped_auth
-            .current_token()
-            .ok_or_else(|| SwitchError::Unsupported("no active token for directory lookup".into()))?;
+        let token = self.scoped_auth.current_token().ok_or_else(|| {
+            SwitchError::Unsupported("no active token for directory lookup".into())
+        })?;
 
         // Compute fingerprint for cache keying
         let fp = TokenScopeFingerprint::new().compute(&token);
@@ -210,7 +208,9 @@ impl ProjectDirectoryPort for KeystoneProjectDirectory {
         let auth_url = self
             .config
             .cloud_config(cloud)
-            .ok_or_else(|| SwitchError::Unsupported(format!("cloud '{cloud}' not found in config")))?
+            .ok_or_else(|| {
+                SwitchError::Unsupported(format!("cloud '{cloud}' not found in config"))
+            })?
             .auth
             .auth_url
             .trim_end_matches('/')
@@ -297,11 +297,7 @@ mod tests {
         fn current_token(&self) -> Option<Token> {
             self.token.lock().ok()?.clone()
         }
-        async fn set_active(
-            &self,
-            _scope: TokenScope,
-            _token: Token,
-        ) -> Result<(), SwitchError> {
+        async fn set_active(&self, _scope: TokenScope, _token: Token) -> Result<(), SwitchError> {
             Ok(())
         }
     }
@@ -467,9 +463,14 @@ mod tests {
         let page3_url = format!("{base}/v3/auth/projects?page=3");
 
         let bodies = vec![
-            format!(r#"{{"projects":[{{"id":"p1","name":"proj1","domain_id":"d1"}}],"links":{{"next":"{page2_url}"}}}}"#),
-            format!(r#"{{"projects":[{{"id":"p2","name":"proj2","domain_id":"d1"}}],"links":{{"next":"{page3_url}"}}}}"#),
-            r#"{"projects":[{"id":"p3","name":"proj3","domain_id":"d1"}],"links":{"next":null}}"#.into(),
+            format!(
+                r#"{{"projects":[{{"id":"p1","name":"proj1","domain_id":"d1"}}],"links":{{"next":"{page2_url}"}}}}"#
+            ),
+            format!(
+                r#"{{"projects":[{{"id":"p2","name":"proj2","domain_id":"d1"}}],"links":{{"next":"{page3_url}"}}}}"#
+            ),
+            r#"{"projects":[{"id":"p3","name":"proj3","domain_id":"d1"}],"links":{"next":null}}"#
+                .into(),
         ];
 
         let _handle = tokio::spawn(async move {
@@ -520,7 +521,9 @@ mod tests {
         let _handle = tokio::spawn(async move {
             // Serve many responses all with self-referencing next
             for _ in 0..5 {
-                let Ok((mut stream, _)) = listener.accept().await else { break };
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    break;
+                };
                 let mut buf = [0u8; 8192];
                 let _ = stream.read(&mut buf).await.unwrap();
                 let body = format!(
@@ -605,10 +608,7 @@ mod tests {
 
     #[tokio::test]
     async fn http_401_body_is_truncated_and_sanitized() {
-        let large_body = format!(
-            "X-Auth-Token: gAAAALeaked401Token\n{}",
-            "y".repeat(2048)
-        );
+        let large_body = format!("X-Auth-Token: gAAAALeaked401Token\n{}", "y".repeat(2048));
         let resp = CannedResponse {
             status_line: "401 Unauthorized",
             body: large_body,
@@ -692,7 +692,10 @@ mod tests {
         );
         let msg = err.to_string();
         assert!(
-            msg.contains("mismatch") || msg.contains("SSRF") || msg.contains("scheme") || msg.contains("host"),
+            msg.contains("mismatch")
+                || msg.contains("SSRF")
+                || msg.contains("scheme")
+                || msg.contains("host"),
             "error message should mention the rejection reason: {msg}"
         );
     }
@@ -771,7 +774,10 @@ mod tests {
             "https://keystone.example.com/v3/auth/projects?marker=p1",
             "https://keystone.example.com/v3",
         );
-        assert!(result.is_ok(), "expected Ok for matching scheme+host, got {result:?}");
+        assert!(
+            result.is_ok(),
+            "expected Ok for matching scheme+host, got {result:?}"
+        );
     }
 
     #[tokio::test]

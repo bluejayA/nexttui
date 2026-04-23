@@ -16,11 +16,11 @@ use nexttui::adapter::auth::keystone::KeystoneAuthAdapter;
 use nexttui::adapter::auth::rescope::KeystoneRescopeAdapter;
 use nexttui::adapter::auth::scoped_session::ScopedAuthSession;
 use nexttui::adapter::auth::token_cache::{self as token_cache, TokenCacheStore};
+use nexttui::adapter::auth::{DirectoryCache, DomainNameResolver, KeystoneProjectDirectory};
 use nexttui::adapter::http::endpoint_invalidator::EndpointCatalogInvalidator;
 use nexttui::adapter::registry::AdapterRegistry;
 use nexttui::app::App;
 use nexttui::config::Config;
-use nexttui::adapter::auth::{DirectoryCache, DomainNameResolver, KeystoneProjectDirectory};
 use nexttui::context::{
     CancellationRegistry, ConfigCloudDirectory, ContextHistoryStore, ContextSwitcher,
     ContextTargetResolver, SwitchStateMachine,

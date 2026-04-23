@@ -1,9 +1,9 @@
 //! Lazy domain_id → domain.name resolver for BL-P2-080 domain fallback.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
-use std::sync::Arc;
 
 use serde::Deserialize;
 use tracing::{debug, info};
@@ -311,10 +311,7 @@ mod tests {
     #[tokio::test]
     async fn http_error_body_is_truncated_and_sanitized() {
         // large body with token-like header material — must not appear in error
-        let large_body = format!(
-            "X-Auth-Token: gAAAALeakedDomainToken\n{}",
-            "z".repeat(2048)
-        );
+        let large_body = format!("X-Auth-Token: gAAAALeakedDomainToken\n{}", "z".repeat(2048));
         let resp = CannedResponse {
             status_line: "500 Internal Server Error",
             body: large_body,

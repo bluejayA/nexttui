@@ -210,8 +210,7 @@ impl ContextTargetResolver {
         //   C. domain == Some and resolver available: try domain_id fallback.
 
         if let Some(d) = &domain
-            && let (Some(scoped_auth), Some(resolver)) =
-                (&self.scoped_auth, &self.domain_resolver)
+            && let (Some(scoped_auth), Some(resolver)) = (&self.scoped_auth, &self.domain_resolver)
         {
             // --- Fallback: domain_id → name lazy resolution (FR-5 D4) ---
             // A valid token is required for the X-Auth-Token header. If none is
@@ -252,8 +251,7 @@ impl ContextTargetResolver {
                 (None, _) => Err(SwitchError::NotFound(project_name)),
                 (Some(only), None) => Ok(only.into()),
                 (Some(first), Some(second)) => {
-                    let mut ambiguous: Vec<ContextTarget> =
-                        vec![first.into(), second.into()];
+                    let mut ambiguous: Vec<ContextTarget> = vec![first.into(), second.into()];
                     ambiguous.extend(resolved_iter.map(Into::into));
                     Err(SwitchError::Ambiguous {
                         candidates: ambiguous,
@@ -811,8 +809,8 @@ mod tests {
             }
         }
         fn current_token(&self) -> Option<Token> {
-            use chrono::{TimeZone, Utc};
             use crate::port::types::{CatalogEntry, ProjectScope};
+            use chrono::{TimeZone, Utc};
             Some(Token {
                 id: self.token_id.clone(),
                 expires_at: Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap(),
@@ -826,11 +824,7 @@ mod tests {
                 catalog: Vec::<CatalogEntry>::new(),
             })
         }
-        async fn set_active(
-            &self,
-            _scope: TokenScope,
-            _token: Token,
-        ) -> Result<(), SwitchError> {
+        async fn set_active(&self, _scope: TokenScope, _token: Token) -> Result<(), SwitchError> {
             Ok(())
         }
     }
