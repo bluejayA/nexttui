@@ -49,6 +49,20 @@ pub struct KeystoneProjectDirectory {
 }
 
 impl KeystoneProjectDirectory {
+    /// Wire up the HTTP-backed project directory.
+    ///
+    /// * `client` — shared `reqwest::Client` reused across HTTP calls so we
+    ///   keep connection pools warm with Keystone.
+    /// * `scoped_auth` — provides the current token used as
+    ///   `X-Auth-Token` and as the input to the cache fingerprint.
+    /// * `clouds` — used by the cross-cloud guard (only the active cloud is
+    ///   allowed; see FR-7).
+    /// * `config` — source of the `auth_url` for the target cloud.
+    /// * `cache` — per-cloud TTL cache that short-circuits repeated lookups
+    ///   until the token scope changes or `AppEvent::ContextChanged`
+    ///   invalidates it.
+    /// * `max_pages` — hard cap on pagination loops to prevent runaway
+    ///   responses (see FR-2).
     pub fn new(
         client: Arc<reqwest::Client>,
         scoped_auth: Arc<dyn ScopedAuthPort>,

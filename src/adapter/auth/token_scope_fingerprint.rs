@@ -18,6 +18,10 @@ pub struct TokenScopeFingerprint {
 }
 
 impl TokenScopeFingerprint {
+    /// Construct a new fingerprint factory. The underlying
+    /// `BuildHasherDefault<DefaultHasher>` is a zero-sized type, so this
+    /// constructor is effectively free to call; `Default` is provided for
+    /// callers that prefer `TokenScopeFingerprint::default()`.
     pub fn new() -> Self {
         Self {
             hasher_factory: BuildHasherDefault::default(),

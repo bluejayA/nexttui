@@ -1,8 +1,7 @@
 //! Lazy domain_id → domain.name resolver for BL-P2-080 domain fallback.
 
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
@@ -35,6 +34,13 @@ pub struct DomainNameResolver {
 }
 
 impl DomainNameResolver {
+    /// Wire up the lazy domain-name resolver.
+    ///
+    /// * `client` — shared `reqwest::Client` (reuse the same instance given
+    ///   to `KeystoneProjectDirectory` so connection pools are not split).
+    /// * `config` — provides the `auth_url` per cloud.
+    /// * `ttl` — how long a resolved `domain_id → domain.name` pair is cached
+    ///   in memory before a fresh `GET /v3/domains/{id}` call is issued.
     pub fn new(client: Arc<reqwest::Client>, config: Arc<Config>, ttl: Duration) -> Self {
         Self {
             client,
