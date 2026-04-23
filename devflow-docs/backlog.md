@@ -2,12 +2,211 @@
 
 ## Pending
 
+### BL-P2-082: KeystoneProjectDirectory security hardening (Unit 1 fast-follow medium findings) — P2
+**Priority**: Medium (defense-in-depth, 실측 위험 낮음)
+**Category**: Auth / Security
+**Parent**: BL-P2-080 Unit 1 (commits cd1f54d + d294cee, R1 Stage 3 security review)
+
+**Scope (3 items)**:
+
+1. **Fingerprint scope 확장**
+   - 현재: `TokenScopeFingerprint::compute(token)`이 `token.id` 문자열만 해시
+   - 위험: `token.id`가 rescope 후에도 동일한 희귀 경우 (Keystone 구현 따라 이론적 가능) 또는 SipHasher13 64-bit collision(2^-32) 시 "다른 scope의 cache 반환"
+   - 수정: key에 `token.project.id` + `token.project.domain_id` 포함 또는 fingerprint 자체를 128-bit 튜플 hash로 확장
+   - 테스트: 동일 `token.id`, 다른 `token.project.id` → 다른 fingerprint verify
+
+2. **Response size DoS cap**
+   - `src/adapter/auth/keystone_project_directory.rs`: `reqwest` 기본 body unlimited. 악성 Keystone이 수 GB JSON 반환 시 OOM
+   - 수정: `resp.bytes_stream()`으로 N MB(예: 5 MB) cap 또는 Content-Length 사전 검사. 페이지당 `parsed.projects.len() > N`(예: 10000) cap 추가
+   - 테스트: mock이 limit 초과 응답 반환 → adapter가 reject (`ApiError::Parse("response too large")` 등)
+
+3. **DirectoryCache lock poisoning recovery 일관성**
+   - 현재: `DirectoryCache` `.write().ok()` 패턴이 poison 시 조용히 dead. `DomainNameResolver`는 `map_err(...)` 또는 `unwrap_or_else(|e| e.into_inner())` 패턴 사용
+   - 수정: `DirectoryCache`도 `DomainNameResolver`와 동일한 recovery 패턴 적용. poison 발생 시 조용히 dead 대신 복구 후 계속 동작. 현재 poison 경로가 없어 실무 무해하나 후속 코드 유지보수 일관성 측면
+   - 테스트: 해당 없음 (poison 경로 없으므로 코드 일관성만)
+
+**Acceptance**:
+- 3개 item 모두 구현 + 테스트 추가
+- clippy `-D warnings` green, 신규 dep 없음
+- BL-P2-080과 독립 PR로 shippable
+
+**Ref**: BL-P2-080 Unit 1 R1 Stage 3 security review (2026-04-22) — high 2 + Important 1은 Unit 1 내 d294cee로 해결, 본 BL은 medium 3 fast-follow.
+
+### BL-P2-080: Same-cloud HTTP ProjectDirectory (real UUID via `/v3/auth/projects`) — P0
+**Priority**: Critical (`:switch-project` 실동작 전제, `:switch-cloud`는 BL-P2-081과 결합해서 완결)
+**Category**: Auth / Resolver
+
+**Problem**: 2026-04-21 systematic-debugging 결과. 현재 `src/context/static_project_directory.rs`는 stub:
+- `auth.project_name` 단건만 반환 → `:switch-project <다른이름>` 모두 `NotFound` (증상 2)
+- `project_id = project_name` placeholder → rescope body의 `scope.project.id`에 UUID 아닌 이름("admin") 전송 → Keystone **401** (증상 1). 실증 Test A(placeholder)=401 vs Test B(real UUID)=201로 유일 변수 확정
+
+`static_project_directory.rs:5-6` 주석이 "BL-P2-052 will replace this with an HTTP-based implementation"이라고 하지만 BL-P2-052 description에는 이 작업이 없음 — 코드 주석과 backlog 불일치. 이 BL이 그 gap을 닫음.
+
+**Scope (Phase 1 — 명확 경계)**:
+- **In scope**: **same-cloud** (`active_cloud()` == target cloud) `/v3/auth/projects` 조회. resolver의 `ById`/`ByName`/`CloudOnly` 세 경로 모두 real UUID 혜택을 받아 **`:switch-project` end-to-end 성공** + `:switch-cloud <same>` idempotent fast-path 정상화
+- **Out of scope (→ BL-P2-081)**: cross-cloud directory 조회 (target cloud token 필요) + `KeystoneRescopeAdapter` 단일 `wire_auth_url` 바인딩 제거. BL-P2-080은 `ProjectDirectoryPort`만 교체하고 per-cloud auth factory는 BL-P2-081이 담당 — 두 BL은 독립 PR로 shippable하되 `:switch-cloud` cross-cloud full E2E는 양쪽 머지 후 green
+
+**필요 작업 (acceptance)**:
+
+1. **`KeystoneProjectDirectory` 신규 HTTP adapter** (`src/adapter/auth/keystone_project_directory.rs`):
+   - `GET {auth_url}/v3/auth/projects` 호출, `X-Auth-Token: <current_token.id>`
+   - 응답 파싱: `projects[].{id, name, domain_id}` + `links.next`
+   - `ProjectCandidate { cloud, project_id, project_name, domain }` 매핑 — `domain`은 `domain_id` 기반 resolve (필요시 `GET /v3/domains/{id}` 단건 조회 또는 domain_id 자체를 name 대신 저장 — resolver 호환성 확인)
+
+2. **Pagination**:
+   - `links.next` URL을 따라 다음 페이지 가져오기, `next`가 null/absent일 때 종료
+   - **DoS 방어**: max_pages 제한 (예: 100) — 초과 시 `ApiError::Parse("pagination runaway, >100 pages")`
+   - 각 페이지 HTTP error 시 누적된 결과 버리고 에러 전파 (partial result 금지)
+   - 테스트: devstack container에 `?limit=1` 쿼리로 pagination 강제 트리거 + 3페이지 이상 verify
+
+3. **Per-cloud cache**:
+   - Key: `(cloud_name, token_scope_fingerprint)` — token rescope 후 `token_scope`가 바뀌면 자동 miss → 자동 invalidate
+   - TTL: 5분 (외부에서 프로젝트 생성 후 바로 전환하는 운영 시나리오 고려)
+   - Explicit invalidation trigger: `AppEvent::ContextChanged` 수신 시 해당 cloud cache flush
+   - 테스트: TTL 만료 후 재조회, context switch 후 cache miss 확인
+
+4. **Concurrency**:
+   - 기존 `CancellationRegistry` (`src/context/cancellation.rs`) 재활용 또는 epoch gate 적용 — in-flight directory 호출 중 새 switch 요청이 들어오면 stale 결과 drop
+   - `ContextSwitcher`의 epoch와 연동 — `resolver.resolve()` 내부에서 epoch 비교
+   - 테스트: 두 개의 빠른 switch request 시퀀스 → 첫 번째의 directory 응답이 두 번째 도중 도착해도 첫 번째 target이 commit되지 않음
+
+5. **Resolver 세 경로 모두 수혜 검증**:
+   - `ContextRequest::ByName { project: "admin" }` — directory에서 name=="admin" 매칭 → real UUID 반환
+   - `ContextRequest::ById { project_id: "<uuid>" }` — directory candidate 중 UUID 매칭 (resolver.rs:110 `c.project_id == project_id` 정상 동작)
+   - `ContextRequest::CloudOnly { cloud }` — `default_project`를 name으로 disambiguate → real UUID
+
+6. **`StaticProjectDirectory` 처리**:
+   - **삭제 금지** — 기존 테스트들이 의존. `#[cfg(test)]` 또는 `pub(crate)`로 강등, 파일을 `src/context/test_fixtures/static_project_directory.rs` (또는 유사) 로 이동
+   - `main.rs` wiring은 `KeystoneProjectDirectory`로 교체
+   - `static_project_directory.rs:5-6` 주석을 "Test fixture only — production path uses `KeystoneProjectDirectory` (BL-P2-080)"로 갱신
+
+7. **CI integration test (release gate)**:
+   - devstack docker image 기동 (기존 `reauth` gate와 같은 chain에 추가 가능 — BL-P2-081 CI와 공유)
+   - 실제 `/v3/auth/projects` 호출 + pagination 강제 (`?limit=1`) + real UUID로 rescope 성공 (201 Created)
+   - 이게 없으면 regression이 로컬 실증 단계까지 안 잡힘 (Codex v3 M1 교훈 적용)
+
+8. **코드 레벨 주석 정리**:
+   - `static_project_directory.rs:5-6`, `:45-48` placeholder 주석 갱신
+   - `resolver.rs:110` ById 경로의 "BL-P2-052" 참조 제거 (이 BL로 해결됨)
+
+**Acceptance 요약**:
+- `:switch-project admin` 포함 same-cloud 전환이 devstack에서 end-to-end 녹색
+- Pagination/TTL/invalidation/concurrency 각 유닛 테스트 + devstack integration test green
+- CI에서 devstack 컨테이너 기반 real `/v3/auth/projects` 호출 gate 추가
+- `StaticProjectDirectory`는 test-only로 강등, production path는 `KeystoneProjectDirectory`
+- BL-P2-081과 공유하는 CI infra 재사용
+
+**Out of scope 확인 (→ BL-P2-081이 처리)**:
+- Cross-cloud directory 조회 (target cloud token 필요)
+- `KeystoneRescopeAdapter` 단일 `wire_auth_url` 바인딩 제거
+- per-cloud auth strategy factory
+
+**Ref**: 2026-04-21 systematic-debugging (Test A/B), Codex adversarial-review 3라운드 — v1 finding M2 (P0 scope 확장, pagination/scoping/invalidation/concurrency 요구), v3 finding M1 (CI release gate 요구).
+
+### BL-P2-081: Trait-based cross-cloud auth — explicit declaration + fail-fast (v3.1) — P1
+**Priority**: High (`:switch-cloud` 실동작 조건)
+**Category**: Auth / Context Switch
+
+**CI devstack gate activation checklist (BL-P2-080 Unit 3 R1 review 2026-04-23)**:
+BL-P2-080 Unit 3(`.github/workflows/ci.yml::devstack-integration`)은 placeholder digest + `if: false` 상태로 merge됨. BL-P2-081 PR 또는 이후 activation PR에서 `if: false` 제거 시 **반드시 함께 적용**:
+- [ ] `opendevstack/devstack:placeholder` → 실제 image digest (`sha256:...`)로 pin
+- [ ] `DEVSTACK_TOKEN`을 `echo "::add-mask::$DEVSTACK_TOKEN"`으로 GHA masker 등록 (`--nocapture` + Debug 출력에서 token leak 방지)
+- [ ] Third-party actions SHA digest pin: `dtolnay/rust-toolchain`, `Swatinem/rust-cache`, `rustsec/audit-check`, `actions/upload-artifact` (supply chain 방어)
+- [ ] `docker logs devstack` artifact에 sanitize 파이프라인 추가: `grep -Ev '(token|password|secret|fernet)'`
+- [ ] Job-level `timeout-minutes: 15` 명시
+- [ ] `if: env.DEVSTACK_TOKEN != ''` guard 추가 (silent skip 방지)
+- [ ] README/PR body에 "Unit 3 CI gate 활성화 완료" 명시
+
+
+**Description**: 2026-04-21 systematic-debugging + Codex 3라운드 adversarial-review 결과. BL-P2-074 PR #78로 `:switch-cloud` UX/state는 wire 되었으나 실환경에서 **rescope가 cross-cloud 불가** (Test D = 404 Fernet recognition, Test E = target cloud password auth = 201). 단 환경 일반화는 확증 불가 — shared Fernet key repository / K2K federation에서는 rescope가 작동. 운영 배포는 shared-key / isolated / 회사별 custom auth(KT Cloud SSO, OIDC 게이트웨이 등)가 모두 쓰일 가능성. **단일 전략 lock-in 금지 + 확장 가능 구조 + 운영자 명시 선언**이 설계 원칙.
+
+**Design (v3.1 — Codex 3라운드 확정, 이 섹션이 유일한 canonical source)**:
+
+**원칙 (단순화)**:
+- **명시 선언**: `:switch-cloud` 사용 시 `cross_cloud_mode` **required**. 미선언 → `SwitchError::NotConfigured { cloud, reason: "cross_cloud_mode not declared" }`
+- **Fail-fast**: 선언된 전략 실패 시 폴백 없이 현재 mode + 가이드 포함 명시적 에러 반환
+- **학습 cache / probe 없음**: 런타임 전략 변경 없음, 의도적 401/404 유발 없음
+- 운영자 선언 = 배포 토폴로지 책임 표명. 잘못된 선언은 명시적 에러로 드러남
+
+**원칙 (확장성 — Port/Adapter 패턴 정합)**:
+- `CrossCloudAuthStrategy` **trait** + `CrossCloudAuthRegistry` (`HashMap<String, Arc<dyn CrossCloudAuthStrategy>>`)
+- Builtin Phase 1: `TokenRescopeStrategy(name="rescope")`, `PasswordReauthStrategy(name="reauth")`
+- 향후 확장: `KtCloudSsoStrategy`, `OidcStrategy`, `CustomCorpTokenStrategy` 등 — 소스 수정 없이 registry에 등록
+- `clouds.yaml` 신규 필드:
+  - `cross_cloud_mode: string` (required for `:switch-cloud`, registry key)
+  - `cross_cloud_config: serde_yaml::Value` (optional free-form slot — Phase 1 미사용, 향후 strategy별 추가 파라미터 담기용)
+- Registry lookup 실패 → `SwitchError::NotConfigured { cloud, reason: "unknown cross_cloud_mode: X (registered: rescope, reauth)" }`
+
+**원칙 (감사성 — Codex v3 finding H2 대응)**:
+- Startup 시 `tracing::info!(registered = [...], "cross_cloud_auth registry bootstrapped")`
+- Cloud별 mode resolve 시 `tracing::info!(cloud = X, mode = Y, strategy = Z, "cross_cloud_mode resolved")`
+- Config load 시 미등록 mode는 warn으로 조기 감지 (switch 시 hard fail은 기본)
+- Introspection: 간단한 debug command 또는 TUI view — 운영자가 "현재 어떤 strategy가 어느 cloud에 활성인지" 확인 가능 (registry.list() + cloud별 resolve 결과)
+
+**원칙 (검증 — Codex v3 finding M1 대응, 옵션 β)**:
+- `reauth` validation: **CI integration test release gate** — devstack docker image 기동 후 target cloud password auth → rescoped token 획득 → rescope body로 rescope adapter 검증
+- `rescope` validation: Phase 1은 **로컬 수동 실증만 요구**하되 backlog에 `BL-P2-084`(shared-Fernet CI fixture + rescope production promotion)을 follow-up BL로 등록. `rescope` 선언 허용하되 backlog에 "CI gate 미확보" 명시.
+
+**Phase 1 필요 작업**:
+1. `CrossCloudAuthStrategy` trait + `CrossCloudAuthRegistry` 구현
+2. `KeystoneRescopeAdapter` factory화 — startup `wire_auth_url` 고정 바인딩 제거, target cloud URL로 호출
+3. 신규 `PasswordReauthAdapter` — target cloud credentials로 password auth (`clouds.yaml`에서 해당 cloud의 `auth.username/password/user_domain_name` 사용)
+4. `ContextSessionPort::rescope` 구현이 registry lookup → `strategy.authenticate(target, ctx)` 호출
+5. `clouds.yaml` 파싱 확장 (`cross_cloud_mode`, `cross_cloud_config`)
+6. Startup/resolve 로그 + introspection view
+7. CI integration test: `reauth` 경로 (devstack docker), MockStrategy dispatcher 유닛 테스트
+8. `rescope` 로컬 수동 실증 (BL-P2-084 완료 전까지는 experimental 성격)
+9. credentials 없는 cloud에 `reauth` 요청 시 명시적 `SwitchError::NotConfigured` (기존 variant 재활용)
+
+**Acceptance**:
+- `:switch-cloud <target>` 미선언 시 명시적 NotConfigured, 선언 + registry 미등록 시 명시적 NotConfigured, 선언된 strategy 실행 성공 시 실제 전환 완료
+- Startup 로그에 registered strategies + cloud별 resolve 결과 모두 기록
+- `reauth` CI integration test green (release gate)
+- `rescope` 로컬 실증 결과 문서화 (PR 본문 또는 `docs/`)
+- `backlog.md`의 BL-P2-081 이 canonical source로서 코드와 일치 (spec drift 방지)
+
+**Ref**: 2026-04-21 systematic-debugging (Test A/B/D/E), Codex adversarial-review 3라운드 findings (v1 H1/M1/M2, v2 H1/H2/M1, v3 H1/H2/M1). 이전 설계안(`auto` 폴백 + 학습 cache)은 v3.1에서 **deprecated/제거** — 해당 모델을 참조하는 PR 금지.
+
+### BL-P2-083: Interim token-expiry guard (P0/P1 ship 전 필수)
+**Priority**: High (P0+P1 머지 전 블로커)
+**Category**: Auth / Safety
+**Description**: 2026-04-21 Codex adversarial-review finding M1. BL-P2-052 Part A(본격 auto refresh)는 설계/구현 규모가 있어 P0/P1보다 뒤에 처리하지만, P0/P1 머지 순간부터 사용자 세션은 55분 뒤 deterministic auth 실패를 맞음. interim guard 없이 ship하면 장애가 switch 로직으로 오귀인될 위험. interim guard로 "세션 만료" 상태를 명확히 구분하고 telemetry를 깔아 BL-P2-052 Part A의 근거 데이터 확보.
+
+필요 작업 (최소):
+1. `get_token` 경로에서 token `expires_at`이 now + margin(예: 5분) 안쪽이면 명시적 `SwitchError::SessionExpired { cloud, project }` 또는 `ApiError::SessionExpired` (BL-P2-053 NotAuthenticated variant 신설 논의와 정합화) 반환.
+2. UI toast 안내문: "세션이 만료되었습니다. `:switch-context`로 재전환하거나 앱을 다시 시작하세요." (safe_display 적용 — BL-P2-050 완료 후 결합 가능).
+3. Telemetry: tracing `warn!(expired_at, cloud, project, "session_expired")` 로 기록 — BL-P2-052 Part A의 "얼마나 자주 발생하는가" 근거 데이터.
+4. 테스트: expired token fixture → get_token 호출 → 명시적 SessionExpired 반환, `ApiError::AuthFailed`로 오인되지 않음.
+
+**Ref**: 2026-04-21 Codex adversarial-review M1.
+
+### BL-P2-084: Shared-Fernet CI fixture + `rescope` production promotion — Follow-up
+**Priority**: Medium (BL-P2-081 후속)
+**Category**: Auth / CI infrastructure
+**Description**: BL-P2-081 v3.1의 `rescope` strategy는 Phase 1에서 로컬 수동 실증만 요구하고 CI gate 미확보 상태로 ship됨 (Codex v3 finding M1 타협안 β). 운영자 선언 기반이라 잘못된 선언은 fail-fast로 드러나지만, 공유 fixture가 없으면 regression 감지 어려움. 이 BL에서 shared-Fernet 토폴로지의 CI fixture를 구성하고 `rescope` 경로를 release gate로 승격.
+
+필요 작업:
+1. **docker-compose fixture**: 두 Keystone 인스턴스 + 공유 `/etc/keystone/fernet-keys` 볼륨. 각각 다른 endpoint URL, 같은 fernet key repository.
+2. **Integration test**: 첫 Keystone에서 token 발급 → 두 번째 Keystone에 rescope (token-method) → 201 Created 검증. devstack image 재사용 가능한지 평가.
+3. **CI 워크플로우 추가**: `reauth` 경로(BL-P2-081에서 도입)와 동일 체인에 `rescope` integration test 추가.
+4. **Backlog 정리**: BL-P2-081의 "rescope CI gate 미확보" 주석 제거, production promotion 반영.
+5. **Docs**: `docs/dev-topologies.md` (또는 유사)에 shared-Fernet 구성 방법 문서화 — 로컬 기여자가 재현 가능하도록.
+
+**Acceptance**:
+- CI에서 shared-Fernet 토폴로지 기동 + rescope 경로 integration test green
+- BL-P2-081의 v3.1 canonical section에서 rescope가 production-ready로 갱신
+- `docs/dev-topologies.md` (또는 유사)에 재현 절차 명시
+
+**Ref**: 2026-04-21 Codex adversarial-review v3 finding M1, BL-P2-081 옵션 β 타협안 follow-up.
+
 ### BL-P2-052: Rescoped 토큰 자동 refresh + ContextChanged handler
-**Priority**: High
+**Priority**: High (Part A 기준) — **BL-P2-080 / BL-P2-081 / BL-P2-083 이후**
 **Category**: Auth / Functional Regression
 **Description**: BL-P2-031 Unit 3b T2 review S2 + PR1 cargo-review integration finding.
 
-**Part A — Rescoped 토큰 자동 refresh**: C1 가드 도입으로 KeystoneAuthAdapter는 initial scope 토큰만 자동 refresh. set_active(demo) 후 demo 토큰이 expire되면 `get_token`이 영구 실패 (`refresh_token` 가드가 AuthFailed 반환). 사용자 영향: ~55분 후 demo 세션이 모든 API 호출 실패.
+**주의 (2026-04-21)**: 이 BL의 description은 **토큰 refresh + ContextChanged UX에만 해당**. `static_project_directory.rs:5-6` 주석이 암시하는 "HTTP-based ProjectDirectory 교체"는 이 BL의 scope에 없음 — `BL-P2-080`이 담당. 해당 주석은 BL-P2-080 구현 시 갱신.
+
+**Part A — Rescoped 토큰 자동 refresh**: C1 가드 도입으로 KeystoneAuthAdapter는 initial scope 토큰만 자동 refresh. set_active(demo) 후 demo 토큰이 expire되면 `get_token`이 영구 실패 (`refresh_token` 가드가 AuthFailed 반환). 사용자 영향: ~55분 후 demo 세션이 모든 API 호출 실패. `BL-P2-083` interim guard가 먼저 ship되어 장애 명시성을 확보한 후, 이 Part A가 완결판(백그라운드 auto refresh)으로 대체.
 필요 작업: ScopedAuthSession 또는 신규 RescopeRefresher가 active scope 토큰의 near-expiry를 감지 → KeystoneRescopePort로 새 토큰 발급 → set_active로 갱신. 또는 최소한 get_token 에러 메시지를 "session expired, please switch context again"으로 명확화.
 
 **Part B — `AppEvent::ContextChanged` handler 구현** (PR3 진행 중 대폭 처리, 잔여만 여기 남음):
