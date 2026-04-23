@@ -22,3 +22,7 @@ devstack-lima-archive.zip
 # DevFlow archives
 devflow-docs/.archive/
 devflow-docs/Screenshot1.png
+
+# DevFlow session-scoped (ephemeral, superseded by MEMORY.md + audit.md)
+devflow-docs/devflow-state.md
+devflow-docs/session-summary.md
