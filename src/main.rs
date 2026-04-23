@@ -16,13 +16,14 @@ use nexttui::adapter::auth::keystone::KeystoneAuthAdapter;
 use nexttui::adapter::auth::rescope::KeystoneRescopeAdapter;
 use nexttui::adapter::auth::scoped_session::ScopedAuthSession;
 use nexttui::adapter::auth::token_cache::{self as token_cache, TokenCacheStore};
+use nexttui::adapter::auth::{DirectoryCache, DomainNameResolver, KeystoneProjectDirectory};
 use nexttui::adapter::http::endpoint_invalidator::EndpointCatalogInvalidator;
 use nexttui::adapter::registry::AdapterRegistry;
 use nexttui::app::App;
 use nexttui::config::Config;
 use nexttui::context::{
     CancellationRegistry, ConfigCloudDirectory, ContextHistoryStore, ContextSwitcher,
-    ContextTargetResolver, StaticProjectDirectory, SwitchStateMachine,
+    ContextTargetResolver, SwitchStateMachine,
 };
 use nexttui::demo::create_demo_app;
 use nexttui::event::AppEvent;
@@ -33,6 +34,10 @@ use nexttui::port::keystone_rescope::KeystoneRescopePort;
 use nexttui::port::scoped_auth::ScopedAuthPort;
 use nexttui::port::types::{AuthCredential, AuthMethod, ProjectScopeParam};
 use nexttui::worker::run_worker;
+
+const DIRECTORY_CACHE_TTL: Duration = Duration::from_secs(300);
+const DOMAIN_CACHE_TTL: Duration = Duration::from_secs(300);
+const MAX_DIRECTORY_PAGES: usize = 100;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -162,8 +167,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // === Phase C: wire context switcher ===
         let cloud_dir = Arc::new(ConfigCloudDirectory::new(config_for_wire.clone()));
-        let project_dir = Arc::new(StaticProjectDirectory::new(config_for_wire.clone()));
-        let resolver = Arc::new(ContextTargetResolver::new(cloud_dir, project_dir));
+
+        // BL-P2-080: HTTP-backed project directory with TTL cache + domain resolver.
+        // The rescope_client defined below is reused here; an additional client
+        // instance is created for domain resolution (same pool, separate timeout).
+        let directory_cache = Arc::new(DirectoryCache::new(DIRECTORY_CACHE_TTL));
+        let http_client_for_dir = Arc::new(
+            reqwest::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .connect_timeout(Duration::from_secs(10))
+                .build()?,
+        );
+        let domain_resolver = Arc::new(DomainNameResolver::new(
+            http_client_for_dir.clone(),
+            config_for_wire.clone(),
+            DOMAIN_CACHE_TTL,
+        ));
+        let project_dir = Arc::new(KeystoneProjectDirectory::new(
+            http_client_for_dir.clone(),
+            auth_provider.clone() as Arc<dyn ScopedAuthPort>,
+            cloud_dir.clone(),
+            config_for_wire.clone(),
+            directory_cache.clone(),
+            MAX_DIRECTORY_PAGES,
+        ));
+        let resolver = Arc::new(ContextTargetResolver::new(
+            cloud_dir.clone(),
+            project_dir,
+            Some(auth_provider.clone() as Arc<dyn ScopedAuthPort>),
+            Some(domain_resolver),
+        ));
 
         let invalidator = Arc::new(EndpointCatalogInvalidator::new(endpoint_caches));
 
@@ -199,6 +232,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             history,
         ));
         app.wire_context_switch(switcher, event_tx);
+        app.wire_directory_cache(directory_cache);
 
         (app, event_rx, None)
     };

@@ -261,3 +261,21 @@
 - 2026-04-20T06:29:33Z — file-edit — devflow-docs/construction/bl-p2-074/cargo-review-report.md
 - 2026-04-20T14:28:22Z — file-edit — devflow-docs/backlog.md
 - 2026-04-20T14:28:23Z — file-edit — devflow-docs/backlog.md
+[2026-04-21T22:41:27Z] worktree-created | bl=BL-P2-080 | branch=feat/bl-p2-080-keystone-project-directory | path=.worktrees/bl-p2-080-keystone-project-directory | baseline=1329-passed
+[2026-04-21T22:49:35Z] application-design-LIST-completed | bl=BL-P2-080 | components=5
+[2026-04-21T23:21:20Z] application-design-DETAIL-completed | bl=BL-P2-080 | components=5 | NFR-design=skipped-Standard
+[2026-04-21T23:57:45Z] application-design-DETAIL-revised | bl=BL-P2-080 | R1-feedback-applied | issues-closed=5 | recommendations-applied=4 | requirements-FR7-synced
+[2026-04-22T00:05:13Z] application-design-DETAIL-R2-applied | bl=BL-P2-080 | recommendations=3-applied | assumption-6=synced | cache-clone=documented | fingerprint=BuildHasherDefault
+[2026-04-22T01:28:29Z] application-design-DETAIL-R3-applied | bl=BL-P2-080 | codex-adversarial=3-critical-high-addressed | D4=resolver-level | D2=handle_event-direct | FR-4=entry-epoch-gate | D5=design-closed-wording | CI=detailed-contract
+[2026-04-22T01:32:34Z] application-design-R4-applied | bl=BL-P2-080 | diagram-updated | InProgress-semantic-documented | migration-range-20-callsites
+[2026-04-22T01:36:35Z] phase-transition | from=INCEPTION | to=CONSTRUCTION | commit=aca622c | bl=BL-P2-080
+[2026-04-22T01:38:13Z] units-generation-completed | bl=BL-P2-080 | depth=Minimal | units=3 | order="foundations->integration->ci"
+[2026-04-22T01:40:05Z] units-gate-approved | bl=BL-P2-080 | units=3 | mode=B-unchanged
+[2026-04-22T01:40:41Z] sdd-mode-selected | bl=BL-P2-080 | units=3 | mode=A-SDD
+[2026-04-22T02:03:50Z] sdd-paused-before-unit-1 | bl=BL-P2-080 | reason=user-requested | resume-point=unit-1-dispatch
+[2026-04-22T05:30:52Z] sdd-resumed | bl=BL-P2-080 | resume-point=unit-1-dispatch
+[2026-04-22T08:06:53Z] unit-1-implemented | bl=BL-P2-080 | commit=cd1f54d | tests=1350 | clippy=clean
+[2026-04-22T10:37:08Z] unit-1-fastfollow-applied | bl=BL-P2-080 | commit=d294cee | tests=1355 | highs-fixed=2 | backlog-added=BL-P2-082
+[2026-04-22T13:11:31Z] unit-1-completed | bl=BL-P2-080 | commits=cd1f54d+d294cee | tests=1355 | R1-verdict=PASS(conditional->fixed)
+[2026-04-22T13:45:45Z] unit-2-implemented | bl=BL-P2-080 | commits=7dce166+197f261+5a1d371 | tests=1363 | clippy=clean
+- 2026-04-23T02:23:45Z — file-edit — devflow-docs/backlog.md

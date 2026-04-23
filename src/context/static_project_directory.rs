@@ -1,9 +1,11 @@
 //! [`ProjectDirectoryPort`] implementation backed by static [`Config`] data.
 //!
+//! Test fixture only — production path uses `KeystoneProjectDirectory` (BL-P2-080).
+//!
 //! Returns the single `project_name` declared in each cloud's auth section.
 //! Clouds without a `project_name` yield an empty list. `project_id` is set
-//! to `project_name` as a placeholder — BL-P2-052 will replace this with an
-//! HTTP-based implementation that queries `/v3/auth/projects` for real UUIDs.
+//! to `project_name` (placeholder for tests — the real HTTP-backed
+//! `KeystoneProjectDirectory` provides authoritative UUIDs in production).
 
 use std::sync::Arc;
 
@@ -42,8 +44,8 @@ impl ProjectDirectoryPort for StaticProjectDirectory {
 
         Ok(vec![ProjectCandidate {
             cloud: cloud.to_string(),
-            // PLACEHOLDER: project_id uses project_name until BL-P2-052
-            // adds HTTP-based `/v3/auth/projects` lookup for real UUIDs.
+            // Test fixture only — production path uses `KeystoneProjectDirectory`
+            // (BL-P2-080) which provides real UUIDs from Keystone.
             project_id: project_name.clone(),
             project_name: project_name.clone(),
             domain,
@@ -84,7 +86,7 @@ clouds:
         assert_eq!(projects[0].project_name, "admin-project");
         assert_eq!(projects[0].cloud, "prod");
         assert_eq!(projects[0].domain, "Default");
-        // PLACEHOLDER: project_id == project_name until BL-P2-052
+        // Test fixture only — project_id == project_name (production uses real UUIDs)
         assert_eq!(projects[0].project_id, "admin-project");
     }
 

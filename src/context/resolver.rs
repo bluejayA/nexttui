@@ -30,6 +30,8 @@ use tracing::Instrument;
 
 use super::error::SwitchError;
 use super::types::{ContextRequest, ContextTarget};
+use crate::adapter::auth::DomainNameResolver;
+use crate::port::scoped_auth::ScopedAuthPort;
 
 /// Project reachable by the current user. `cloud` is populated by the
 /// directory implementation; the resolver does not need to know how to
@@ -84,11 +86,23 @@ pub trait ProjectDirectoryPort: Send + Sync {
 pub struct ContextTargetResolver {
     clouds: Arc<dyn CloudDirectory>,
     directory: Arc<dyn ProjectDirectoryPort>,
+    scoped_auth: Option<Arc<dyn ScopedAuthPort>>,
+    domain_resolver: Option<Arc<DomainNameResolver>>,
 }
 
 impl ContextTargetResolver {
-    pub fn new(clouds: Arc<dyn CloudDirectory>, directory: Arc<dyn ProjectDirectoryPort>) -> Self {
-        Self { clouds, directory }
+    pub fn new(
+        clouds: Arc<dyn CloudDirectory>,
+        directory: Arc<dyn ProjectDirectoryPort>,
+        scoped_auth: Option<Arc<dyn ScopedAuthPort>>,
+        domain_resolver: Option<Arc<DomainNameResolver>>,
+    ) -> Self {
+        Self {
+            clouds,
+            directory,
+            scoped_auth,
+            domain_resolver,
+        }
     }
 
     /// Resolve a request to its authoritative target. Performs cloud
@@ -160,25 +174,94 @@ impl ContextTargetResolver {
         domain: Option<String>,
     ) -> Result<ContextTarget, SwitchError> {
         let candidates = self.directory.list_projects(&cloud).await?;
-        let mut iter = candidates
+
+        // --- Primary filter: exact project_name + domain match ---
+        // Collect all name-matched candidates first (needed for fallback too).
+        let name_matched: Vec<ProjectCandidate> = candidates
             .into_iter()
             .filter(|c| c.project_name == project_name)
+            .collect();
+
+        let primary: Vec<&ProjectCandidate> = name_matched
+            .iter()
             .filter(|c| match &domain {
                 Some(d) => &c.domain == d,
                 None => true,
-            });
-        // Pull at most two — single match: Ok; two-or-more: Ambiguous;
-        // none: NotFound. Avoids a panic-prone `.unwrap()` while keeping
-        // the disambiguation policy identical.
-        match (iter.next(), iter.next()) {
-            (None, _) => Err(SwitchError::NotFound(project_name)),
-            (Some(only), None) => Ok(only.into()),
-            (Some(first), Some(second)) => {
-                let mut candidates: Vec<ContextTarget> = vec![first.into(), second.into()];
-                candidates.extend(iter.map(Into::into));
-                Err(SwitchError::Ambiguous { candidates })
-            }
+            })
+            .collect();
+
+        // If primary found at least one candidate, use it — no fallback needed.
+        if !primary.is_empty() {
+            return match primary.len() {
+                1 => Ok(primary[0].clone().into()),
+                _ => {
+                    let ambiguous: Vec<ContextTarget> =
+                        primary.into_iter().cloned().map(Into::into).collect();
+                    Err(SwitchError::Ambiguous {
+                        candidates: ambiguous,
+                    })
+                }
+            };
         }
+
+        // Primary returned zero candidates. Three cases:
+        //   A. domain == None: name itself not found.
+        //   B. domain == Some but no resolver: NotFound.
+        //   C. domain == Some and resolver available: try domain_id fallback.
+
+        if let Some(d) = &domain
+            && let (Some(scoped_auth), Some(resolver)) = (&self.scoped_auth, &self.domain_resolver)
+        {
+            // --- Fallback: domain_id → name lazy resolution (FR-5 D4) ---
+            // A valid token is required for the X-Auth-Token header. If none is
+            // available, skip the HTTP fallback and return NotFound immediately
+            // to avoid an empty-string token being sent to Keystone.
+            let Some(token) = scoped_auth.current_token() else {
+                return Err(SwitchError::NotFound(project_name));
+            };
+            let token_id = token.id;
+
+            let mut resolved: Vec<ProjectCandidate> = Vec::new();
+            for candidate in &name_matched {
+                if candidate.domain.is_empty() {
+                    continue;
+                }
+                match resolver
+                    .resolve_name(&cloud, &candidate.domain, &token_id)
+                    .await
+                {
+                    Ok(resolved_name) => {
+                        tracing::info!(
+                            cloud = %cloud,
+                            domain_id = %candidate.domain,
+                            "domain_lazy_resolve_trigger"
+                        );
+                        if resolved_name == *d {
+                            resolved.push(candidate.clone());
+                        }
+                    }
+                    Err(_) => {
+                        // Resolution failed — skip this candidate silently
+                    }
+                }
+            }
+
+            let mut resolved_iter = resolved.into_iter();
+            return match (resolved_iter.next(), resolved_iter.next()) {
+                (None, _) => Err(SwitchError::NotFound(project_name)),
+                (Some(only), None) => Ok(only.into()),
+                (Some(first), Some(second)) => {
+                    let mut ambiguous: Vec<ContextTarget> = vec![first.into(), second.into()];
+                    ambiguous.extend(resolved_iter.map(Into::into));
+                    Err(SwitchError::Ambiguous {
+                        candidates: ambiguous,
+                    })
+                }
+            };
+        }
+
+        // No fallback available (domain == None or resolvers not wired) → NotFound.
+        Err(SwitchError::NotFound(project_name))
     }
 
     /// List every project the current user can reach across every cloud.
@@ -331,6 +414,8 @@ mod tests {
                 "devstack",
                 vec![candidate("devstack", "admin", "id-1", "default")],
             )]),
+            None,
+            None,
         );
         let target = resolver
             .resolve(ContextRequest::ByName {
@@ -356,6 +441,8 @@ mod tests {
                     candidate("devstack", "admin", "id-2", "heat"),
                 ],
             )]),
+            None,
+            None,
         );
         let err = resolver
             .resolve(ContextRequest::ByName {
@@ -387,6 +474,8 @@ mod tests {
                     candidate("devstack", "admin", "id-2", "heat"),
                 ],
             )]),
+            None,
+            None,
         );
         let target = resolver
             .resolve(ContextRequest::ByName {
@@ -404,6 +493,8 @@ mod tests {
         let resolver = ContextTargetResolver::new(
             clouds("devstack", &["devstack"]),
             directory(&[("devstack", vec![])]),
+            None,
+            None,
         );
         let err = resolver
             .resolve(ContextRequest::ByName {
@@ -430,6 +521,8 @@ mod tests {
                 ),
                 ("prod", vec![candidate("prod", "admin", "p-1", "default")]),
             ]),
+            None,
+            None,
         );
         let target = resolver
             .resolve(ContextRequest::ByName {
@@ -454,6 +547,8 @@ mod tests {
                 ),
                 ("prod", vec![candidate("prod", "admin", "p-1", "default")]),
             ]),
+            None,
+            None,
         );
         let target = resolver
             .resolve(ContextRequest::ByName {
@@ -473,6 +568,8 @@ mod tests {
         let resolver = ContextTargetResolver::new(
             clouds("devstack", &["devstack"]),
             directory(&[("devstack", vec![])]),
+            None,
+            None,
         );
         let err = resolver
             .resolve(ContextRequest::ByName {
@@ -496,6 +593,8 @@ mod tests {
                 "devstack",
                 vec![candidate("devstack", "admin", "id-1", "default")],
             )]),
+            None,
+            None,
         );
         let target = resolver
             .resolve(ContextRequest::ById {
@@ -512,6 +611,8 @@ mod tests {
         let resolver = ContextTargetResolver::new(
             clouds("devstack", &["devstack"]),
             directory(&[("devstack", vec![])]),
+            None,
+            None,
         );
         let err = resolver
             .resolve(ContextRequest::ById {
@@ -543,6 +644,8 @@ mod tests {
                     ],
                 ),
             ]),
+            None,
+            None,
         );
         let projects = resolver.list_user_projects().await.unwrap();
         assert_eq!(projects.len(), 3);
@@ -555,7 +658,7 @@ mod tests {
             FakeDirectory::with(std::collections::HashMap::new())
                 .fail_with(SwitchError::RescopeRejected("no token".into())),
         );
-        let resolver = ContextTargetResolver::new(clouds, dir);
+        let resolver = ContextTargetResolver::new(clouds, dir, None, None);
         let err = resolver.list_user_projects().await.unwrap_err();
         assert!(matches!(err, SwitchError::RescopeRejected(_)));
     }
@@ -580,6 +683,8 @@ mod tests {
                 "devstack",
                 vec![candidate("devstack", "my_workload", "id-1", "default")],
             )]),
+            None,
+            None,
         );
         let target = resolver
             .resolve(ContextRequest::CloudOnly {
@@ -600,6 +705,8 @@ mod tests {
                 "devstack",
                 vec![candidate("devstack", "admin", "id-1", "default")],
             )]),
+            None,
+            None,
         );
         let err = resolver
             .resolve(ContextRequest::CloudOnly {
@@ -621,6 +728,8 @@ mod tests {
                 "devstack",
                 vec![candidate("devstack", "admin", "id-1", "default")],
             )]),
+            None,
+            None,
         );
         let err = resolver
             .resolve(ContextRequest::CloudOnly {
@@ -645,6 +754,8 @@ mod tests {
                 "devstack",
                 vec![candidate("devstack", "team/foo", "id-1", "default")],
             )]),
+            None,
+            None,
         );
         let target = resolver
             .resolve(ContextRequest::CloudOnly {
@@ -661,6 +772,8 @@ mod tests {
         let resolver = ContextTargetResolver::new(
             clouds_with_defaults("devstack", &["devstack"], &[("devstack", "ghost")]),
             directory(&[("devstack", vec![])]),
+            None,
+            None,
         );
         let err = resolver
             .resolve(ContextRequest::CloudOnly {
@@ -672,5 +785,246 @@ mod tests {
             SwitchError::NotFound(s) => assert_eq!(s, "ghost"),
             other => panic!("expected NotFound, got {other:?}"),
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // BL-P2-080: domain_lazy_resolve fallback tests
+    // -----------------------------------------------------------------------
+
+    use crate::adapter::auth::DomainNameResolver;
+    use crate::port::scoped_auth::ScopedAuthPort;
+    use crate::port::types::{Token, TokenScope};
+    use async_trait::async_trait as async_trait_inner;
+
+    struct FakeScopedAuth {
+        token_id: String,
+    }
+
+    #[async_trait_inner]
+    impl ScopedAuthPort for FakeScopedAuth {
+        fn current_scope(&self) -> TokenScope {
+            TokenScope::Project {
+                name: "admin".into(),
+                domain: "default".into(),
+            }
+        }
+        fn current_token(&self) -> Option<Token> {
+            use crate::port::types::{CatalogEntry, ProjectScope};
+            use chrono::{TimeZone, Utc};
+            Some(Token {
+                id: self.token_id.clone(),
+                expires_at: Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap(),
+                project: ProjectScope {
+                    id: "p-id".into(),
+                    name: "admin".into(),
+                    domain_id: "default-id".into(),
+                    domain_name: "default".into(),
+                },
+                roles: Vec::new(),
+                catalog: Vec::<CatalogEntry>::new(),
+            })
+        }
+        async fn set_active(&self, _scope: TokenScope, _token: Token) -> Result<(), SwitchError> {
+            Ok(())
+        }
+    }
+
+    fn make_domain_resolver_with_cache(
+        cloud: &str,
+        domain_id: &str,
+        domain_name: &str,
+    ) -> Arc<DomainNameResolver> {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+        let mut f = NamedTempFile::with_suffix(".yaml").unwrap();
+        let yaml = format!(
+            "clouds:\n  {cloud}:\n    auth:\n      auth_url: http://127.0.0.1:1/v3\n      username: admin\n      password: secret\n"
+        );
+        f.write_all(yaml.as_bytes()).unwrap();
+        let cfg = crate::config::Config::load_from(f.path()).unwrap();
+        let resolver = DomainNameResolver::new(
+            Arc::new(reqwest::Client::new()),
+            Arc::new(cfg),
+            std::time::Duration::from_secs(60),
+        );
+        // Seed the cache via the test helper so no HTTP is needed
+        resolver.seed_cache(cloud, domain_id, domain_name);
+        Arc::new(resolver)
+    }
+
+    /// When domain_resolver is None, existing behaviour is preserved.
+    #[tokio::test]
+    async fn disambiguate_by_name_domain_match_no_fallback_when_no_resolver() {
+        // domain filter "Default" but candidate has "default" — no resolver, returns NotFound
+        let resolver = ContextTargetResolver::new(
+            clouds("devstack", &["devstack"]),
+            directory(&[(
+                "devstack",
+                vec![candidate("devstack", "admin", "id-1", "did-default")],
+            )]),
+            None,
+            None,
+        );
+        // "Default" != "did-default" and no resolver → NotFound
+        let err = resolver
+            .resolve(ContextRequest::ByName {
+                cloud: None,
+                project: "admin".into(),
+                domain: Some("Default".into()),
+            })
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, SwitchError::NotFound(_)),
+            "expected NotFound, got {err:?}"
+        );
+    }
+
+    /// With domain_resolver injected, 1st-pass 0-match triggers fallback
+    /// that resolves domain_id → name and finds the candidate.
+    #[tokio::test]
+    async fn disambiguate_by_name_fallback_resolves_domain_id_to_name_and_matches() {
+        let scoped_auth: Arc<dyn ScopedAuthPort> = Arc::new(FakeScopedAuth {
+            token_id: "tok-123".into(),
+        });
+        let domain_res = make_domain_resolver_with_cache("devstack", "did-default", "Default");
+
+        let resolver = ContextTargetResolver::new(
+            clouds("devstack", &["devstack"]),
+            directory(&[(
+                "devstack",
+                // domain field is a UUID-like domain_id, not a name
+                vec![candidate("devstack", "admin", "id-1", "did-default")],
+            )]),
+            Some(scoped_auth),
+            Some(domain_res),
+        );
+        let target = resolver
+            .resolve(ContextRequest::ByName {
+                cloud: None,
+                project: "admin".into(),
+                domain: Some("Default".into()),
+            })
+            .await
+            .expect("fallback should resolve domain_id to name and match");
+        assert_eq!(target.project_id, "id-1");
+        assert_eq!(target.domain, "did-default");
+    }
+
+    /// Fallback is invoked but the resolved name still doesn't match → NotFound.
+    #[tokio::test]
+    async fn disambiguate_by_name_fallback_fails_returns_notfound() {
+        let scoped_auth: Arc<dyn ScopedAuthPort> = Arc::new(FakeScopedAuth {
+            token_id: "tok-xyz".into(),
+        });
+        // Resolver maps "did-other" → "OtherDomain", not "Default"
+        let domain_res = make_domain_resolver_with_cache("devstack", "did-other", "OtherDomain");
+
+        let resolver = ContextTargetResolver::new(
+            clouds("devstack", &["devstack"]),
+            directory(&[(
+                "devstack",
+                vec![candidate("devstack", "admin", "id-1", "did-other")],
+            )]),
+            Some(scoped_auth),
+            Some(domain_res),
+        );
+        let err = resolver
+            .resolve(ContextRequest::ByName {
+                cloud: None,
+                project: "admin".into(),
+                domain: Some("Default".into()),
+            })
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, SwitchError::NotFound(_)),
+            "expected NotFound after fallback mismatch, got {err:?}"
+        );
+    }
+
+    /// When current_token() returns None, fallback returns NotFound immediately
+    /// without making any HTTP calls (domain_resolver must NOT be invoked).
+    #[tokio::test]
+    async fn disambiguate_by_name_fallback_no_token_returns_notfound() {
+        struct NoTokenAuth;
+
+        #[async_trait_inner]
+        impl ScopedAuthPort for NoTokenAuth {
+            fn current_scope(&self) -> TokenScope {
+                TokenScope::Project {
+                    name: "admin".into(),
+                    domain: "default".into(),
+                }
+            }
+            fn current_token(&self) -> Option<Token> {
+                None // ← simulates missing token
+            }
+            async fn set_active(
+                &self,
+                _scope: TokenScope,
+                _token: Token,
+            ) -> Result<(), SwitchError> {
+                Ok(())
+            }
+        }
+
+        // The domain resolver is wired but should never be called (port 1 = unreachable).
+        let domain_res = make_domain_resolver_with_cache("devstack", "did-default", "Default");
+        // Seed an entry but port 1 is unreachable — if HTTP is attempted the test panics or errors.
+        let resolver = ContextTargetResolver::new(
+            clouds("devstack", &["devstack"]),
+            directory(&[(
+                "devstack",
+                // 1st-pass: domain field "did-default" != "Default" → no match
+                vec![candidate("devstack", "admin", "id-1", "did-default")],
+            )]),
+            Some(Arc::new(NoTokenAuth) as Arc<dyn ScopedAuthPort>),
+            Some(domain_res),
+        );
+
+        let err = resolver
+            .resolve(ContextRequest::ByName {
+                cloud: None,
+                project: "admin".into(),
+                domain: Some("Default".into()),
+            })
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, SwitchError::NotFound(_)),
+            "expected NotFound when token is None, got {err:?}"
+        );
+    }
+
+    /// When domain is None, fallback is never triggered.
+    #[tokio::test]
+    async fn disambiguate_by_name_no_domain_specified_skips_fallback() {
+        // If fallback were called, it would panic (unreachable server).
+        // Since domain=None, fallback must not be triggered.
+        let scoped_auth: Arc<dyn ScopedAuthPort> = Arc::new(FakeScopedAuth {
+            token_id: "tok-abc".into(),
+        });
+        let domain_res = make_domain_resolver_with_cache("devstack", "did-x", "SomeDomain");
+
+        let resolver = ContextTargetResolver::new(
+            clouds("devstack", &["devstack"]),
+            directory(&[(
+                "devstack",
+                vec![candidate("devstack", "admin", "id-1", "did-x")],
+            )]),
+            Some(scoped_auth),
+            Some(domain_res),
+        );
+        // domain=None → no fallback → plain name match succeeds
+        let target = resolver
+            .resolve(ContextRequest::ByName {
+                cloud: None,
+                project: "admin".into(),
+                domain: None,
+            })
+            .await
+            .expect("domain=None should use plain name match");
+        assert_eq!(target.project_id, "id-1");
     }
 }

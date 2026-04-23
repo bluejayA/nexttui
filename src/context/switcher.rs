@@ -65,6 +65,13 @@ impl ContextSwitcher {
         &self,
         request: ContextRequest,
     ) -> Result<(Epoch, ContextSnapshot), (Epoch, SwitchError)> {
+        // Snapshot the epoch *before* the async resolve. If another switch
+        // completes (and its state.commit() bumps the epoch) while we are
+        // resolving, we detect the drift here and return `InProgress`
+        // rather than fighting for `try_begin` against a now-idle machine.
+        // (FR-4 entry-epoch gate — BL-P2-080 Unit 2.)
+        let entry_epoch = self.state.epoch().current();
+
         // 1. Resolve user input → authoritative target. Resolver errors
         //    happen before we touch the state machine, so stamp with the
         //    currently-committed epoch — the error toast then survives
@@ -73,6 +80,19 @@ impl ContextSwitcher {
             Ok(t) => t,
             Err(e) => return Err((self.state.epoch().current(), e)),
         };
+
+        // Entry-epoch gate: if another switch committed during our resolve,
+        // the epoch will have advanced. Bail out rather than risk running
+        // the session side-effects with stale context.
+        if self.state.epoch().current() != entry_epoch {
+            tracing::warn!(
+                entry_epoch,
+                current = self.state.epoch().current(),
+                reason = "resolve_epoch_drift",
+                "switch_epoch_drift_during_resolve"
+            );
+            return Err((self.state.epoch().current(), SwitchError::InProgress));
+        }
         // BL-P2-074 FR-4 / D1: if the resolved target matches the currently
         // committed context, short-circuit without touching the state
         // machine. Race note (TOCTOU): a concurrent switch that beats this
@@ -308,7 +328,7 @@ mod tests {
                 vec![candidate("demo", "id-demo"), candidate("admin", "id-admin")],
             )])),
         });
-        let resolver = Arc::new(ContextTargetResolver::new(clouds, directory));
+        let resolver = Arc::new(ContextTargetResolver::new(clouds, directory, None, None));
 
         let session = Arc::new(session);
         let switcher = ContextSwitcher::new(
@@ -636,7 +656,7 @@ mod tests {
                 vec![candidate("demo", "id-demo"), candidate("admin", "id-admin")],
             )])),
         });
-        let resolver = Arc::new(ContextTargetResolver::new(clouds, directory));
+        let resolver = Arc::new(ContextTargetResolver::new(clouds, directory, None, None));
         let session = Arc::new(MockContextSession::new(
             scope("admin"),
             token("old", "admin"),
@@ -663,5 +683,101 @@ mod tests {
             snapshot.target.project_name, "admin",
             "switch-back must restore the pre-CloudOnly target"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // BL-P2-080 FR-4: entry-epoch gate tests
+    // -----------------------------------------------------------------------
+
+    /// When the epoch changes during `resolve` (simulated by bumping state
+    /// externally), `switch()` must return `SwitchError::InProgress`.
+    #[tokio::test]
+    async fn switch_epoch_drift_during_resolve_returns_in_progress() {
+        // We need a resolver that bumps the epoch WHILE it's resolving.
+        // We achieve this by having the resolver use a barrier-based fake
+        // directory that signals back so the test can bump the epoch.
+        use crate::context::epoch::ContextEpoch;
+        use crate::context::state_machine::SwitchStateMachine;
+        use crate::context::types::ContextTarget;
+        use std::sync::{Arc, Mutex};
+
+        let epoch = Arc::new(ContextEpoch::new());
+        let state = Arc::new(SwitchStateMachine::new(epoch.clone()));
+        let cancellation = Arc::new(CancellationRegistry::new());
+        let history = Arc::new(Mutex::new(ContextHistoryStore::new()));
+
+        // A directory that bumps epoch externally while resolving
+        struct EpochBumpingDirectory {
+            state: Arc<SwitchStateMachine>,
+            data: StdMutex<HashMap<String, Vec<ProjectCandidate>>>,
+        }
+
+        #[async_trait]
+        impl ProjectDirectoryPort for EpochBumpingDirectory {
+            async fn list_projects(
+                &self,
+                cloud: &str,
+            ) -> Result<Vec<ProjectCandidate>, SwitchError> {
+                // Simulate a concurrent switch bumping the epoch before we return
+                let bump_target = ContextTarget {
+                    cloud: cloud.to_string(),
+                    project_id: "concurrent".into(),
+                    project_name: "concurrent".into(),
+                    domain: "default".into(),
+                };
+                // Try to begin a concurrent switch to bump epoch
+                let _ = self.state.try_begin(bump_target);
+                Ok(self
+                    .data
+                    .lock()
+                    .unwrap()
+                    .get(cloud)
+                    .cloned()
+                    .unwrap_or_default())
+            }
+        }
+
+        let directory: Arc<dyn ProjectDirectoryPort> = Arc::new(EpochBumpingDirectory {
+            state: state.clone(),
+            data: StdMutex::new(HashMap::from([(
+                "devstack".into(),
+                vec![candidate("demo", "id-demo"), candidate("admin", "id-admin")],
+            )])),
+        });
+        let clouds: Arc<dyn CloudDirectory> = Arc::new(FakeClouds);
+        let resolver = Arc::new(ContextTargetResolver::new(clouds, directory, None, None));
+        let session = Arc::new(MockContextSession::new(
+            scope("admin"),
+            token("old", "admin"),
+            token("new", "demo"),
+        ));
+        let switcher = ContextSwitcher::new(
+            state,
+            cancellation,
+            resolver,
+            session.clone() as Arc<dyn ContextSessionPort>,
+            history,
+        );
+
+        // switch() should detect epoch drift and return InProgress
+        let (_, err) = switcher.switch(by_name("demo")).await.unwrap_err();
+        assert!(
+            matches!(err, SwitchError::InProgress),
+            "expected InProgress due to epoch drift, got {err:?}"
+        );
+        // No session port calls should have been made
+        assert!(
+            session.transition_steps().is_empty(),
+            "no session calls expected when epoch drifted"
+        );
+    }
+
+    /// Without epoch drift, switch proceeds normally (regression guard).
+    #[tokio::test]
+    async fn switch_no_drift_proceeds_normally() {
+        let f = default_fixture();
+        let (epoch, snapshot) = f.switcher.switch(by_name("demo")).await.unwrap();
+        assert_eq!(epoch, 1);
+        assert_eq!(snapshot.target.project_name, "demo");
     }
 }

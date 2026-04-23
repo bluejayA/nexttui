@@ -63,6 +63,10 @@ pub struct App {
     /// successful commit, and a stamped `ApiError` on failure. Kept
     /// optional for tests that don't exercise the async switch path.
     event_tx: Option<tokio::sync::mpsc::UnboundedSender<crate::context::VersionedEvent<AppEvent>>>,
+    /// Per-cloud project directory cache. When wired, `ContextChanged`
+    /// events invalidate the relevant cloud's entries so the next
+    /// `list_projects` call reflects the new token. (BL-P2-080 D2.)
+    directory_cache: Option<Arc<crate::adapter::auth::DirectoryCache>>,
     config: Arc<Config>,
     layout: LayoutManager,
     sidebar: Sidebar,
@@ -108,6 +112,7 @@ impl App {
             current_epoch,
             switcher: None,
             event_tx: None,
+            directory_cache: None,
             config: Arc::new(config),
             layout: LayoutManager::new(),
             sidebar: Sidebar::new(Vec::new()),
@@ -152,6 +157,7 @@ impl App {
             current_epoch,
             switcher: None,
             event_tx: None,
+            directory_cache: None,
             config: Arc::new(config),
             layout: LayoutManager::new(),
             sidebar: Sidebar::new(parts.sidebar_items),
@@ -628,6 +634,11 @@ impl App {
             // (global shortcuts / command mode become unreachable) and the
             // UI is effectively stuck until quit.
             self.set_input_mode(InputMode::Normal);
+            // Invalidate cached project lists for the new cloud so the next
+            // `list_projects` call fetches with the fresh token. (BL-P2-080 D2.)
+            if let Some(cache) = &self.directory_cache {
+                cache.invalidate_cloud(&target.cloud);
+            }
             self.context_indicator.set_target(target, true);
             for component in self.components.values_mut() {
                 component.on_context_changed();
@@ -1616,6 +1627,14 @@ impl App {
     ) {
         self.switcher = Some(switcher);
         self.event_tx = Some(event_tx);
+    }
+
+    /// Wire the project directory cache post-construction. When wired,
+    /// `ContextChanged` events invalidate the relevant cloud's entries so
+    /// subsequent `list_projects` calls see the new token's project list.
+    /// (BL-P2-080 D2.)
+    pub fn wire_directory_cache(&mut self, cache: Arc<crate::adapter::auth::DirectoryCache>) {
+        self.directory_cache = Some(cache);
     }
 
     /// Spawn an async switch. Emits `ContextChanged` on success or an
@@ -3515,6 +3534,8 @@ mod tests {
         let resolver = Arc::new(ContextTargetResolver::new(
             Arc::new(FakeClouds),
             Arc::new(FakeDirectory),
+            None,
+            None,
         ));
         let switcher = Arc::new(ContextSwitcher::new(
             state,
@@ -3647,5 +3668,60 @@ mod tests {
             }
             other => panic!("expected ApiError, got {other:?}"),
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // BL-P2-080 D2: directory_cache invalidation hook tests
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn handle_context_changed_invalidates_directory_cache() {
+        use crate::adapter::auth::DirectoryCache;
+        use crate::context::ContextTarget;
+        use std::time::Duration;
+
+        let mut app = make_app();
+
+        // Wire a real DirectoryCache with some pre-seeded entries.
+        let cache = Arc::new(DirectoryCache::new(Duration::from_secs(300)));
+        // Seed entries for "devstack" and "prod"
+        cache.put("devstack", "fp-1", vec![]);
+        cache.put("prod", "fp-2", vec![]);
+        app.wire_directory_cache(cache.clone());
+
+        // Fire a ContextChanged for "devstack"
+        let target = ContextTarget {
+            cloud: "devstack".into(),
+            project_id: "id-1".into(),
+            project_name: "admin".into(),
+            domain: "default".into(),
+        };
+        app.handle_event(AppEvent::ContextChanged { target });
+
+        // "devstack" entries should be gone; "prod" should remain.
+        assert!(
+            cache.get("devstack", "fp-1").is_none(),
+            "devstack cache entry must be invalidated on ContextChanged"
+        );
+        assert!(
+            cache.get("prod", "fp-2").is_some(),
+            "prod cache entry must not be affected"
+        );
+    }
+
+    #[test]
+    fn handle_context_changed_without_wired_cache_no_panic() {
+        use crate::context::ContextTarget;
+
+        let mut app = make_app();
+        // directory_cache is None — must not panic
+        let target = ContextTarget {
+            cloud: "devstack".into(),
+            project_id: "id-1".into(),
+            project_name: "admin".into(),
+            domain: "default".into(),
+        };
+        app.handle_event(AppEvent::ContextChanged { target });
+        // If we reach here without panicking, the test passes.
     }
 }
