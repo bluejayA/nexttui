@@ -279,3 +279,5 @@
 [2026-04-22T13:11:31Z] unit-1-completed | bl=BL-P2-080 | commits=cd1f54d+d294cee | tests=1355 | R1-verdict=PASS(conditional->fixed)
 [2026-04-22T13:45:45Z] unit-2-implemented | bl=BL-P2-080 | commits=7dce166+197f261+5a1d371 | tests=1363 | clippy=clean
 - 2026-04-23T02:23:45Z — file-edit — devflow-docs/backlog.md
+[2026-04-23T03:36:39Z] pr-merged | bl=BL-P2-080 | pr=80 | squash-sha=733d88f | state=archived
+[2026-04-23T03:36:39Z] flow-finished | bl=BL-P2-080 | mode=A-local-merged-worktree-removed
