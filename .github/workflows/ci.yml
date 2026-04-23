@@ -58,6 +58,10 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
+  # Ownership: BL-P2-080 and BL-P2-081 share this job. Whichever PR merges
+  # first is the job owner — the other PR only needs `needs: devstack-integration`.
+  # The `if: false` placeholder below is removed once an actual devstack image
+  # digest is pinned (see BL-P2-081 activation checklist in backlog.md).
   devstack-integration:
     name: Devstack integration gate (BL-P2-080 FR-8)
     runs-on: ubuntu-latest

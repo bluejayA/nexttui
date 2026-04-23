@@ -164,10 +164,6 @@ async fn t1_pagination_forced_real_fetch() {
 
     const CLOUD: &str = "devstack";
 
-    // Append `?limit=1` to force per-page=1 pagination.
-    let paginated_auth_url = format!("{}/v3", devstack_url.trim_end_matches('/'));
-
-    let _config = make_devstack_config(CLOUD, &paginated_auth_url);
     let cache = Arc::new(DirectoryCache::new(Duration::from_secs(60)));
     let token = make_devstack_token(&devstack_token);
     let auth = FixedTokenAuth::with_token(token);
@@ -175,12 +171,11 @@ async fn t1_pagination_forced_real_fetch() {
         cloud: CLOUD.to_string(),
     });
 
-    // Build a custom client that injects `limit=1` via a base URL override.
+    // Append `?limit=1` to auth_url to force per-page=1 pagination.
     // KeystoneProjectDirectory constructs the initial URL as
-    // `{auth_url}/auth/projects`, so we encode the query param via
-    // `auth_url`.  We set `auth_url` to include the `?limit=1` suffix.
-    // Note: the SSRF validator checks scheme+host+port only — query params
-    // are not part of the check, so this is safe and expected.
+    // `{auth_url}/auth/projects`, so we encode the query param via auth_url.
+    // The SSRF validator checks scheme+host+port only — query params are not
+    // part of the check, so this is safe and expected.
     let limited_auth_url = format!(
         "{}/v3?limit=1",
         devstack_url.trim_end_matches('/')
