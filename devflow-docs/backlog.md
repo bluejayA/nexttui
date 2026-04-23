@@ -33,6 +33,7 @@
 **Ref**: BL-P2-080 Unit 1 R1 Stage 3 security review (2026-04-22) — high 2 + Important 1은 Unit 1 내 d294cee로 해결, 본 BL은 medium 3 fast-follow.
 
 ### BL-P2-080: Same-cloud HTTP ProjectDirectory (real UUID via `/v3/auth/projects`) — P0
+**Status**: 🟡 PR #80 open (pending merge, 2026-04-23). 머지 후 이 항목 제거 + 이력 이동.
 **Priority**: Critical (`:switch-project` 실동작 전제, `:switch-cloud`는 BL-P2-081과 결합해서 완결)
 **Category**: Auth / Resolver
 
