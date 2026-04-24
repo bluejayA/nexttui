@@ -24,6 +24,38 @@ use self::view_model::{
     server_to_row_full,
 };
 
+/// Builds dropdown `SelectOption`s from project-scoped resources, appending a
+/// short project suffix when two items share the same name. Without this,
+/// admin users see colliding "default" SGs across projects and can submit a
+/// CreateServer with a UUID that nova-compute fails to resolve in the
+/// instance's project scope.
+fn build_disambiguated_opts<T>(
+    items: &[T],
+    id_fn: impl Fn(&T) -> &str,
+    name_fn: impl Fn(&T) -> &str,
+    tenant_fn: impl Fn(&T) -> Option<&str>,
+) -> Vec<SelectOption> {
+    use std::collections::HashMap;
+    let mut name_count: HashMap<&str, usize> = HashMap::new();
+    for item in items {
+        *name_count.entry(name_fn(item)).or_insert(0) += 1;
+    }
+    items
+        .iter()
+        .map(|item| {
+            let name = name_fn(item);
+            let display = match (name_count.get(name).copied().unwrap_or(0), tenant_fn(item)) {
+                (count, Some(tid)) if count > 1 => {
+                    let suffix = &tid[..tid.len().min(8)];
+                    format!("{name} (proj: {suffix})")
+                }
+                _ => name.to_string(),
+            };
+            SelectOption::new(id_fn(item), display)
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone)]
 pub struct ResizePendingInfo {
     pub server_id: String,
@@ -975,6 +1007,14 @@ impl Component for ServerModule {
         self.select_popup = None;
         self.popup_kind = None;
         self.form = None;
+        // BL-P2-085 hotfix: dropdown options cached from the previous
+        // project's resource list would otherwise pre-fill the next
+        // CreateServer form with stale UUIDs (e.g. demo's "default" SG
+        // selected while scoped to admin → SecurityGroupNotFound).
+        self.cached_flavor_opts.clear();
+        self.cached_image_opts.clear();
+        self.cached_network_opts.clear();
+        self.cached_sg_opts.clear();
     }
 
     fn set_context_state(
@@ -1060,20 +1100,24 @@ impl Component for ServerModule {
                 }
             }
             AppEvent::NetworksLoaded(networks) => {
-                let opts: Vec<SelectOption> = networks
-                    .iter()
-                    .map(|n| SelectOption::new(&n.id, &n.name))
-                    .collect();
+                let opts: Vec<SelectOption> = build_disambiguated_opts(
+                    networks,
+                    |n| n.id.as_str(),
+                    |n| n.name.as_str(),
+                    |n| n.tenant_id.as_deref(),
+                );
                 self.cached_network_opts = opts.clone();
                 if let Some(form) = &mut self.form {
                     form.set_field_options("Network", opts);
                 }
             }
             AppEvent::SecurityGroupsLoaded(sgs) => {
-                let opts: Vec<SelectOption> = sgs
-                    .iter()
-                    .map(|sg| SelectOption::new(&sg.id, &sg.name))
-                    .collect();
+                let opts: Vec<SelectOption> = build_disambiguated_opts(
+                    sgs,
+                    |sg| sg.id.as_str(),
+                    |sg| sg.name.as_str(),
+                    |sg| sg.tenant_id.as_deref(),
+                );
                 self.cached_sg_opts = opts.clone();
                 if let Some(form) = &mut self.form {
                     form.set_field_options("Security Group", opts);
@@ -1323,6 +1367,129 @@ mod tests {
         let module = ServerModule::new(tx);
         assert_eq!(*module.view_state(), ViewState::List);
         assert!(module.servers().is_empty());
+    }
+
+    #[test]
+    fn test_on_context_changed_clears_dropdown_caches() {
+        // Cross-project bug (BL-P2-085 hotfix): after `:switch-project`, the
+        // previous project's dropdown options must NOT persist. Selecting a
+        // stale option (e.g. demo's "default" SG while scoped to admin)
+        // produces a CreateServer that nova-compute rejects with
+        // SecurityGroupNotFound, leaving an ERROR-state instance behind.
+        let (mut module, _rx) = setup();
+        module.cached_flavor_opts = vec![SelectOption::new("flv-1", "m1.small")];
+        module.cached_image_opts = vec![SelectOption::new("img-1", "cirros")];
+        module.cached_network_opts = vec![SelectOption::new("net-1", "private")];
+        module.cached_sg_opts = vec![SelectOption::new("sg-1", "default")];
+
+        module.on_context_changed();
+
+        assert!(
+            module.cached_flavor_opts.is_empty(),
+            "flavor opts must clear"
+        );
+        assert!(module.cached_image_opts.is_empty(), "image opts must clear");
+        assert!(
+            module.cached_network_opts.is_empty(),
+            "network opts must clear"
+        );
+        assert!(module.cached_sg_opts.is_empty(), "SG opts must clear");
+    }
+
+    #[test]
+    fn test_security_group_dropdown_disambiguates_by_project() {
+        // Admin tokens see SGs across projects; two "default" SGs (one per
+        // project) collide in the dropdown. Display must surface the owner
+        // project so the user can distinguish them — otherwise the wrong
+        // UUID lands in CreateServer (the bug actually observed).
+        let (mut module, _rx) = setup();
+        let sgs = vec![
+            crate::models::neutron::SecurityGroup {
+                id: "sg-admin".into(),
+                name: "default".into(),
+                description: None,
+                security_group_rules: vec![],
+                tenant_id: Some("1be0296196724ae6b2e303e154a72f5b".into()),
+            },
+            crate::models::neutron::SecurityGroup {
+                id: "sg-demo".into(),
+                name: "default".into(),
+                description: None,
+                security_group_rules: vec![],
+                tenant_id: Some("157d7ff68ce346a89e9cd746074406a4".into()),
+            },
+        ];
+        module.handle_event(&AppEvent::SecurityGroupsLoaded(sgs));
+
+        assert_eq!(module.cached_sg_opts.len(), 2);
+        let displays: Vec<&str> = module
+            .cached_sg_opts
+            .iter()
+            .map(|o| o.display.as_str())
+            .collect();
+        assert_ne!(
+            displays[0], displays[1],
+            "two SGs with same name must have distinct displays after disambiguation; got {displays:?}"
+        );
+        // Project suffix should appear when tenant_id is present.
+        assert!(
+            displays.iter().all(|d| d.contains("proj:")),
+            "displays should include project suffix; got {displays:?}"
+        );
+    }
+
+    #[test]
+    fn test_network_dropdown_disambiguates_by_project() {
+        let (mut module, _rx) = setup();
+        let networks = vec![
+            crate::models::neutron::Network {
+                id: "net-admin".into(),
+                name: "private".into(),
+                status: "ACTIVE".into(),
+                description: None,
+                admin_state_up: true,
+                external: false,
+                shared: false,
+                mtu: None,
+                port_security_enabled: None,
+                subnets: vec![],
+                provider_network_type: None,
+                provider_physical_network: None,
+                provider_segmentation_id: None,
+                tenant_id: Some("1be0296196724ae6b2e303e154a72f5b".into()),
+            },
+            crate::models::neutron::Network {
+                id: "net-demo".into(),
+                name: "private".into(),
+                status: "ACTIVE".into(),
+                description: None,
+                admin_state_up: true,
+                external: false,
+                shared: false,
+                mtu: None,
+                port_security_enabled: None,
+                subnets: vec![],
+                provider_network_type: None,
+                provider_physical_network: None,
+                provider_segmentation_id: None,
+                tenant_id: Some("157d7ff68ce346a89e9cd746074406a4".into()),
+            },
+        ];
+        module.handle_event(&AppEvent::NetworksLoaded(networks));
+
+        let displays: Vec<&str> = module
+            .cached_network_opts
+            .iter()
+            .map(|o| o.display.as_str())
+            .collect();
+        assert_ne!(
+            displays[0], displays[1],
+            "duplicate-name networks must have distinct displays; got {displays:?}"
+        );
+        assert!(
+            displays.iter().all(|d| d.contains("proj:")),
+            "network displays should include project suffix; got {displays:?}"
+        );
     }
 
     #[test]
