@@ -167,20 +167,23 @@
 
 ### Phase 4 — RBAC 확장
 
-- [ ] **Step 5**: `RbacGuard::check_project_scope()`
-  - [ ] RED: `test_check_project_scope_match_allows` / `test_check_project_scope_mismatch_blocks` / `test_check_project_scope_none_scope_fail_safe` / `test_can_perform_in_scope_matrix_admin_match` 등 role×scope 매트릭스 (admin/member/reader × match/mismatch)
-  - [ ] Verify RED
-  - [ ] GREEN: 메서드 추가, reason 정확히 `role_tier`/`project_scope`/`both` 반환
-  - [ ] Verify GREEN
+- [x] **Step 5**: `RbacGuard::check_project_scope()` — 7 tests passed
+  - [x] RED (admin match/mismatch / unscoped fail-safe / reader create match/mismatch / member admin-only action / reader read match): 23 compile errors (enum + 2 methods 미존재)
+  - [x] Verify RED
+  - [x] GREEN: `RbacScopeDecision { Allow, Deny { reason: RbacDenialReason } }` + `RbacDenialReason { RoleTier, ProjectScope, Both } + as_str()` + `check_project_scope(target, action) -> RbacScopeDecision` (`is_some_and(|p| p == target)`로 None=fail-safe)
+  - [x] Verify GREEN: reason 정확히 `role_tier`/`project_scope`/`both` 반환
 
-- [ ] **Step 6**: `RbacGuard::update_roles_preserve_project()`
-  - [ ] RED:
-    - `test_preserve_project_keeps_existing_project_id` — scope=A에서 호출 전/후 project_id 불변
-    - `test_preserve_project_updates_roles_only` — roles는 새 값, project_id는 old 값
-    - `test_update_roles_vs_preserve_diff` — 기존 update_roles는 여전히 둘 다 갱신 (회귀 방지)
-  - [ ] Verify RED
-  - [ ] GREEN: 신규 메서드 추가, 내부에서 self.state write lock 잡고 roles + capabilities만 갱신
-  - [ ] Verify GREEN
+- [x] **Step 6**: `RbacGuard::update_roles_preserve_project()` — 4 tests passed (Step 5와 동일 commit)
+  - [x] RED:
+    - [x] `test_preserve_project_keeps_existing_project_id`
+    - [x] `test_preserve_project_updates_roles_and_effective`
+    - [x] `test_update_roles_vs_preserve_diff` (회귀 방지)
+    - [x] `test_preserve_project_clears_capabilities_parity_with_update_roles` (parity)
+  - [x] Verify RED
+  - [x] GREEN: `update_roles_preserve_project(roles)` 신규 — `self.state.write()` 잡고 `roles + effective_role` 갱신 + `capabilities.clear()` (update_roles와 parity), `project_id` 보존
+  - [x] Verify GREEN: 회귀 0 (1390 → 1401, +11), clippy clean
+
+  **사전 검증 결과** (rbac.rs 5분 점검): plan 가정 모두 정확. RbacGuard structure / RwLock / can_perform 매트릭스 / TokenRole role(name) helper 패턴 그대로 채용.
 
 ### Phase 5 — Action 분류 exhaustive
 
