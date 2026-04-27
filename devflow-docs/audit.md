@@ -372,3 +372,7 @@
 - 2026-04-27T08:18:51Z — file-edit — devflow-docs/construction/bl-p2-085/review-step4-codex.md
 - 2026-04-27T08:25:28Z — file-edit — devflow-docs/construction/bl-p2-085/code-plan.md
 - 2026-04-27T08:50:08Z — file-edit — devflow-docs/construction/bl-p2-085/code-plan.md
+
+[2026-04-27T11:30:00Z] session-end | reason=user-requested | phase=CONSTRUCTION | stage=code-generation | last-completed=Step-7-action_to_kind-exhaustive | next-resume=Phase-6-Step-8-ScopeProvider-trait | tests=1406 | regression=0 | commits-on-branch=5 (ca2ec2a/e68d50b/53d7292/626cd64/482af90) | uncommitted=0 | sot=devflow-docs/construction/bl-p2-085/code-plan.md
+[2026-04-27T11:30:00Z] cross-session-handoff | resume-instructions: (1) cd .worktrees/bl-p2-085-cross-project-scoping (2) verify HEAD == 482af90 (3) read project_nexttui.md memory for full context (4) optional: /codex:review --scope branch --base 53d7292 to validate Phase 4+5 before entering Phase 6 (5) Phase 6 Step 8 = ScopeProvider trait in src/context/action_channel.rs — small, but Step 9-10 are signature-breaking and require user confirmation
+[2026-04-27T11:30:00Z] flake-tracking | test=adapter::auth::keystone_project_directory::tests::max_pages_cap_trips_error | source=BL-P2-080 | freq=~1/8 runs | mitigation=re-run | recommendation=신규 BL-P2-086으로 등록하여 mock 격리 또는 #[serial] attr 도입
