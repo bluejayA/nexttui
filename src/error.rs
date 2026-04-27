@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use thiserror::Error;
 
+use crate::infra::cross_project_guard::{CrossProjectReason, GuardLayer};
+
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum AppError {
@@ -38,6 +40,16 @@ pub enum AppError {
         source: std::io::Error,
     },
 
+    #[error(
+        "Cross-project operation blocked: {r} (layer: {l})",
+        r = reason.as_str(),
+        l = guard_layer.as_str()
+    )]
+    CrossProjectBlocked {
+        reason: CrossProjectReason,
+        guard_layer: GuardLayer,
+    },
+
     #[error("{0}")]
     Other(String),
 }
@@ -47,6 +59,43 @@ pub type Result<T> = std::result::Result<T, AppError>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::infra::cross_project_guard::{CrossProjectReason, GuardLayer};
+
+    #[test]
+    fn test_cross_project_blocked_error_display() {
+        let err = AppError::CrossProjectBlocked {
+            reason: CrossProjectReason::OriginScopeMismatch {
+                origin: "admin-uuid".to_string(),
+                active: "demo-uuid".to_string(),
+            },
+            guard_layer: GuardLayer::Fr2Worker,
+        };
+        let msg = err.to_string();
+        assert!(
+            msg.to_lowercase().contains("cross-project"),
+            "missing cross-project label: {msg}"
+        );
+        assert!(msg.to_lowercase().contains("blocked"), "missing 'blocked': {msg}");
+        assert!(
+            msg.contains("origin_scope_mismatch"),
+            "missing reason as_str(): {msg}"
+        );
+        assert!(msg.contains("fr2_worker"), "missing guard layer as_str(): {msg}");
+
+        let err = AppError::CrossProjectBlocked {
+            reason: CrossProjectReason::FormSelectionMismatch {
+                selected: "demo-uuid".to_string(),
+                active: "admin-uuid".to_string(),
+            },
+            guard_layer: GuardLayer::Fr4Form,
+        };
+        let msg = err.to_string();
+        assert!(
+            msg.contains("form_selection_mismatch"),
+            "form mismatch reason missing: {msg}"
+        );
+        assert!(msg.contains("fr4_form"), "fr4 layer missing: {msg}");
+    }
 
     #[test]
     fn test_app_error_display() {

@@ -281,3 +281,87 @@
 - 2026-04-23T02:23:45Z — file-edit — devflow-docs/backlog.md
 [2026-04-23T03:36:39Z] pr-merged | bl=BL-P2-080 | pr=80 | squash-sha=733d88f | state=archived
 [2026-04-23T03:36:39Z] flow-finished | bl=BL-P2-080 | mode=A-local-merged-worktree-removed
+
+[2026-04-24T01:34:48Z] new-flow | mode=clean-start | previous-inception=bl-p2-074 | archived-to=.archive/inception-20260424T102911,.archive/construction-20260424T102911 | workspace-preserved=yes
+[2026-04-24T01:34:48Z] new-session-started | user-intent="BL-P2-085 정식 cycle: Cross-project scoping 전면 fix"
+- 2026-04-24T01:36:58Z — file-edit — devflow-docs/inception/workspace.md
+[2026-04-24T01:37:47Z] stage-complete | stage=workspace-detection | gate=C | note="브라운필드 유지, delta update. 경로 정정 (src/adapter/openstack→src/adapter/http, rbac→src/infra/rbac.rs)" | commit=c4590ab
+[2026-04-24T01:38:39Z] stage-complete | stage=complexity-declaration | value=Standard | reason="4축 변경(adapter/worker/rbac/test) 얽혔지만 아키텍처 재설계 없음"
+- 2026-04-24T02:07:00Z — file-edit — devflow-docs/inception/requirements.md
+- 2026-04-24T02:17:33Z — file-edit — devflow-docs/inception/requirements.md
+- 2026-04-24T04:02:04Z — file-edit — devflow-docs/inception/requirements.md
+- 2026-04-24T04:46:54Z — file-edit — devflow-docs/inception/requirements.md
+- 2026-04-24T06:29:40Z — file-edit — devflow-docs/inception/requirements.md
+- 2026-04-24T06:30:23Z — file-edit — devflow-docs/inception/requirements.md
+- 2026-04-24T06:32:45Z — file-edit — devflow-docs/inception/requirements.md
+- 2026-04-24T06:33:19Z — file-edit — devflow-docs/inception/requirements.md
+- 2026-04-24T06:34:52Z — file-edit — devflow-docs/inception/requirements.md
+- 2026-04-24T06:40:00Z — file-edit — devflow-docs/inception/requirements.md
+[2026-04-24T06:40:35Z] stage-artifact-saved | stage=requirements-analysis | path=devflow-docs/inception/requirements.md
+[2026-04-24T06:40:35Z] stage-review | stage=requirements-analysis | reviewer=aidlc:spec-reviewer | verdict=Approve-with-notes | must-fix-addressed=3 | should-consider-addressed=5
+[2026-04-24T07:05:51Z] stage-complete | stage=requirements-analysis | gate=B | open-questions=4(deferred) | assumptions-flagged=3
+[2026-04-24T07:10:03Z] stage-complete | stage=pre-planning | gate=C | note="Bug-fix BL, User Stories/NFR 추가 심화 불필요"
+- 2026-04-24T07:48:08Z — file-edit — devflow-docs/inception/workflow-plan.md
+- 2026-04-24T07:51:22Z — file-edit — devflow-docs/inception/workflow-plan.md
+[2026-04-24T07:51:24Z] stage-complete | stage=workflow-planning-approach | selected=A | reason="P0 atomic security fix, 5 FR 상호 의존"
+[2026-04-24T07:52:11Z] branch-name-confirmed | branch=feature/bl-p2-085-cross-project-scoping | env=worktree
+- 2026-04-24T08:19:37Z — file-edit — devflow-docs/inception/application-design.md
+[2026-04-24T08:19:47Z] worktree-sync | action=rsync-main-to-worktree+restore-main-clean | cwd=worktree
+[2026-04-24T08:19:47Z] assumption-check | A1=verified(TokenScope/ScopedAuthSession/RbacGuard.project_id) | A2=negative(no-mock-http-crate) | A3=verified(pure-fn)
+[2026-04-24T08:19:47Z] stage-artifact-saved | stage=application-design | mode=LIST | path=devflow-docs/inception/application-design.md | components=9(4-new-5-extended)
+[2026-04-24T08:30:04Z] decision | topic=A2-mitigation | choice=pure-fn-extraction | reason="dev-dep 도입은 BL 스코프 외출, 보안 fix 집중, 기존 serde body 패턴과 일관"
+[2026-04-24T08:30:04Z] stage-complete | stage=application-design-list | gate=approve | next=DETAIL
+- 2026-04-24T08:30:12Z — file-edit — devflow-docs/inception/application-design.md
+- 2026-04-24T08:53:49Z — file-edit — devflow-docs/inception/requirements.md
+- 2026-04-24T08:54:09Z — file-edit — devflow-docs/inception/requirements.md
+- 2026-04-24T09:01:21Z — file-edit — devflow-docs/inception/application-design.md
+- 2026-04-24T13:11:34Z — file-edit — devflow-docs/inception/application-design.md
+[2026-04-24T13:12:17Z] stage-artifact-updated | stage=application-design | mode=DETAIL | fr2-semantic=stamped-origin-2b | q1-resolved=endpoint-matrix | q3-resolved=AppError-extension
+- 2026-04-24T13:32:40Z — file-edit — devflow-docs/inception/design-review-raw/synthesis.md
+[2026-04-24T13:32:50Z] council-review-complete | mode=full | members=codex,gemini | chairman=claude | codex=Approve-with-major-revisions | gemini=Approve-with-notes | synthesis-path=devflow-docs/inception/design-review-raw/synthesis.md | must-fix=7 | should-consider=7 | future-bl=5
+- 2026-04-24T13:34:54Z — file-edit — devflow-docs/inception/application-design.md
+- 2026-04-24T13:35:18Z — file-edit — devflow-docs/inception/application-design.md
+- 2026-04-24T13:36:12Z — file-edit — devflow-docs/inception/application-design.md
+- 2026-04-24T13:37:57Z — file-edit — devflow-docs/inception/application-design.md
+- 2026-04-24T13:39:41Z — file-edit — devflow-docs/inception/application-design.md
+- 2026-04-24T13:40:25Z — file-edit — devflow-docs/inception/application-design.md
+- 2026-04-24T13:42:02Z — file-edit — devflow-docs/inception/application-design.md
+- 2026-04-24T13:43:02Z — file-edit — devflow-docs/inception/application-design.md
+- 2026-04-24T13:43:56Z — file-edit — devflow-docs/inception/application-design.md
+- 2026-04-24T13:44:17Z — file-edit — devflow-docs/inception/application-design.md
+- 2026-04-24T13:45:53Z — file-edit — devflow-docs/inception/application-design.md
+- 2026-04-24T13:46:54Z — file-edit — devflow-docs/inception/application-design.md
+[2026-04-24T13:48:38Z] stage-artifact-revised | stage=application-design | mode=COUNCIL-REVISION | must-fix-addressed=8 | should-consider-addressed=5 | changed: C1 is_mutation 폐기→action_to_kind 재사용 / C2 StampedAction 폐기→DispatchedAction+ActionSender / C4-bis 신규 / C6 response refilter / C8 Glance pre-check / C9 canonicalization+schema / C10 Warning level
+[2026-04-24T13:52:55Z] stage-complete | stage=application-design-detail | gate=B | verdict=approved-after-council-revision | commit=c4590ab
+[2026-04-24T13:52:55Z] gate-skip | gate=held-revisit | reason=no-held-items
+[2026-04-24T13:52:55Z] inception-phase-review | status=complete
+[2026-04-24T13:55:44Z] phase-transition | from=INCEPTION | to=CONSTRUCTION | commit=c4590ab
+- 2026-04-24T14:02:45Z — file-edit — devflow-docs/construction/bl-p2-085/code-plan.md
+[2026-04-24T14:04:28Z] stage-artifact-saved | stage=code-generation | mode=PLAN | unit=bl-p2-085 | path=devflow-docs/construction/bl-p2-085/code-plan.md | steps=17 | new-files=6 | modify-files=14 | expected-tests=~60
+- 2026-04-24T14:06:33Z — file-edit — devflow-docs/construction/bl-p2-085/code-plan.md
+- 2026-04-24T14:07:08Z — file-edit — devflow-docs/construction/bl-p2-085/code-plan.md
+- 2026-04-24T14:07:32Z — file-edit — devflow-docs/construction/bl-p2-085/code-plan.md
+- 2026-04-24T14:07:52Z — file-edit — devflow-docs/construction/bl-p2-085/code-plan.md
+- 2026-04-24T14:08:41Z — file-edit — devflow-docs/construction/bl-p2-085/code-plan.md
+- 2026-04-24T14:08:57Z — file-edit — devflow-docs/construction/bl-p2-085/code-plan.md
+- 2026-04-24T14:09:20Z — file-edit — devflow-docs/construction/bl-p2-085/code-plan.md
+- 2026-04-24T14:09:43Z — file-edit — devflow-docs/construction/bl-p2-085/code-plan.md
+- 2026-04-24T14:10:22Z — file-edit — devflow-docs/construction/bl-p2-085/code-plan.md
+[2026-04-24T14:10:45Z] plan-review-complete | reviewer=aidlc:spec-reviewer | verdict=Approve-with-notes | must-fix=4 | should-consider=5 | addressed: Step-11 guard_layer+correlation_id / Step-13 adapter_filter event / Step-16 adapter surface verified / Step-18 background-task audit added / Step-7 RBAC parity / Step-9 worker raw mpsc / Step-14 HasTenantId for Server-Volume-Snapshot / e2e defer justified
+[2026-04-27T00:56:09Z] stage-complete | stage=code-generation-plan | gate=B | next=GENERATE
+[2026-04-27T00:57:59Z] discovery | existing-infra | AuditLogger=src/infra/audit.rs(331-LoC,actively-used,rotation+masking) | CrossTenantGuard=src/infra/cross_tenant.rs(175-LoC,UNUSED-dead-code,break-glass-mode) | impact: Step 4 audit subdir 폐기→ src/infra/cross_project_audit.rs 단일파일 + AuditLogger 재사용. CrossTenantGuard는 이번 BL 무시 (semantically misaligned, 후속 BL에서 정리)
+- 2026-04-27T00:58:10Z — file-edit — devflow-docs/construction/bl-p2-085/code-plan.md
+[2026-04-27T01:02:03Z] tdd-step-complete | step=1 | unit=cross_project_guard | tests-added=9 | total=1379 | regression=0
+[2026-04-27T01:02:03Z] tdd-step-complete | step=2 | unit=dispatched_action | tests-added=2 | total=1381 | regression=0
+- 2026-04-27T01:02:05Z — file-edit — devflow-docs/construction/bl-p2-085/code-plan.md
+- 2026-04-27T01:02:05Z — file-edit — devflow-docs/construction/bl-p2-085/code-plan.md
+- 2026-04-27T01:08:29Z — file-edit — devflow-docs/construction/bl-p2-085/code-plan.md
+- 2026-04-27T01:09:13Z — file-edit — devflow-docs/construction/bl-p2-085/code-plan.md
+- 2026-04-27T01:10:01Z — file-edit — devflow-docs/construction/bl-p2-085/code-plan.md
+- 2026-04-27T01:11:05Z — file-edit — devflow-docs/construction/bl-p2-085/code-plan.md
+- 2026-04-27T01:40:20Z — file-edit — devflow-docs/construction/bl-p2-085/code-plan.md
+- 2026-04-27T01:41:00Z — file-edit — devflow-docs/construction/bl-p2-085/code-plan.md
+- 2026-04-27T01:42:02Z — file-edit — devflow-docs/construction/bl-p2-085/code-plan.md
+[2026-04-27T01:42:47Z] plan-revised | trigger=user-deeper-impact-check | sections=Step-4-AuditLogger-integration,Step-11-AuditLogger-injection,Step-12-Neutron-filter-IGNORE-fix,Step-13-refilter-skip-when-all-tenants,Step-14-Nova-Cinder-defense-in-depth-only,Policy-Clarification-section-added | discoveries: AuditLogger-actively-used,all_tenants-Arc-AtomicBool-widespread,Neutron-_filter-IGNORE-bug-confirmed,Nova-Cinder-already-correct,CrossTenantGuard-truly-dead
+[2026-04-27T01:48:12Z] session-pause | reason=user-requested | phase=CONSTRUCTION | stage=code-generation | last-completed=Step-2-DispatchedAction | next-resume=Step-3-AppError-CrossProjectBlocked | tests=1381 | regression=0 | sot=devflow-docs/construction/bl-p2-085/code-plan.md
+- 2026-04-27T02:08:05Z — file-edit — devflow-docs/construction/bl-p2-085/code-plan.md

@@ -1,19 +1,20 @@
 # Workspace Analysis
 
 **Detected**: Brownfield
-**Timestamp**: 2026-04-18T22:40:00+09:00
-**Source**: 이전 분석(2026-04-16T12:30:00+09:00) 기반 + 델타 업데이트
+**Timestamp**: 2026-04-24T10:35:00+09:00
+**Source**: 이전 분석(2026-04-18T22:40:00+09:00) 기반 + 델타 업데이트 (PR#78/#80/#81/#82 반영)
 **Project Root**: /Users/jay.ahn/projects/infra/nexttui
 **Requires Path Confirmation**: false
 
 ## Project Structure
-Rust TUI 애플리케이션. Component-Based + TEA 하이브리드 아키텍처, Port/Adapter 패턴, ModuleRegistry 기반. 17개 도메인 모듈(+HostModule), 128 .rs files, 1314 tests (PR#76 기준). PR#68에서 `src/context/` switch orchestration 추가, PR#75에서 main.rs runtime wire, PR#76에서 Commands & Safety UI (Unit 4.5 + Unit 5) 완료.
+Rust TUI 애플리케이션. Component-Based + TEA 하이브리드 아키텍처, Port/Adapter 패턴, ModuleRegistry 기반. 17개 도메인 모듈(+HostModule), **132 .rs files**, **1370 tests** (PR#82 기준). 최근: PR#78 SwitchCloud wire, PR#80 same-cloud HTTP ProjectDirectory, PR#82 BL-P2-085 hotfix.
 
 ## Key Files Found
 - Cargo.toml, src/main.rs, src/lib.rs
-- 128 .rs files across src/
-- .github/workflows/ci.yml (CI: fmt, test, clippy, audit)
+- 132 .rs files across src/
+- .github/workflows/ci.yml (CI: fmt, test, clippy, audit, devstack-integration placeholder)
 - rust-toolchain.toml, .git-blame-ignore-revs
+- tests/devstack_directory.rs (integration test)
 
 ## Pre-specified Tech Stack
 - **Source**: ~/CLAUDE.md (프로젝트 루트에는 CLAUDE.md 없음)
@@ -25,13 +26,18 @@ Rust TUI 애플리케이션. Component-Based + TEA 하이브리드 아키텍처,
 - **Language**: Rust (edition 2024)
 - **Framework**: ratatui 0.30 + crossterm 0.29
 - **Package Manager**: Cargo
-- **Test Framework**: built-in (#[cfg(test)])
-- **Key Dependencies**: tokio, tokio-util (CancellationToken), reqwest, serde, tracing, chrono, async-trait, thiserror, http, **unicode-width 0.2** (신규 — PR#76 BL-P2-077)
+- **Test Framework**: built-in (#[cfg(test)]) + integration (tests/)
+- **Key Dependencies**: tokio, tokio-util (CancellationToken), reqwest, serde, tracing, chrono, async-trait, thiserror, http, unicode-width 0.2
 
 ## Git Activity
-- **Last Commit**: 2026-04-18 — 프로젝트 활성
-- **Recent Focus**: src/app.rs, src/context/*, src/ui/command_bar*, src/ui/context_indicator*, src/ui/confirm.rs, devflow-docs/backlog.md
-- **Recent Commits**: chore(hooks) devflow-guard loosen (3735929), PR#76 머지 후 state 정리 (e7216ce), **PR#76 BL-P2-031 PR3 Commands & Safety UI** (d76e578), **PR#75 BL-P2-031 T3 runtime wire** (a00c044), BL-P2-064 backlog mark (82e9dc4)
+- **Last Commit**: 2026-04-24 — 프로젝트 활성
+- **Recent Focus**: src/app.rs, src/module/server/mod.rs, src/module/user/mod.rs, src/module/project/mod.rs, src/module/host/mod.rs, devflow-docs/*
+- **Recent Commits** (top 5):
+  - c4590ab PR#82 BL-P2-085 hotfix: server dropdown cache + cross-project disambiguation
+  - c0d20e2 PR#81 chore: devflow session-scoped artifacts gitignored
+  - 733d88f PR#80 BL-P2-080: same-cloud HTTP ProjectDirectory via /v3/auth/projects
+  - aca622c PR#79 chore(backlog) BL-P2-074 완료 마킹
+  - af03fd9 PR#78 BL-P2-074 SwitchCloud wire
 
 ## Existing Documentation
 - README.md: 프로젝트 개요
@@ -39,10 +45,13 @@ Rust TUI 애플리케이션. Component-Based + TEA 하이브리드 아키텍처,
 - docs/git-blame-hygiene-in-ai-devflow.md: AI 협업 blame 위생 가이드
 
 ## Code Structure
-- **Directory Layout**: src/ (app, component, context, models, module, adapter, port, ui, infra, input)
+- **Directory Layout**: src/ (app, component, context, models, module, adapter, port, ui, infra, input, router, event_loop, worker, background, action, demo, registry)
 - **Entry Points**: src/main.rs, src/lib.rs
-- **Observed Patterns**: src 레이아웃, Port/Adapter (src/port/ + src/adapter/), Module 기반 도메인 분리 (src/module/), Context Switch Orchestration (src/context/)
-- **New since 2026-04-16 analysis**: PR#75 — main.rs `wire_production_mode` 영역 확장 (switch-core 실제 연결). PR#76 — src/ui/command_bar.rs + command_bar_table.rs (Unit 4.5), src/ui/context_indicator.rs (Unit 5 Step 2), src/ui/confirm.rs 확장 (TypeToConfirm + fingerprint), src/ui/input_bar.rs 리팩터 (InputMode 단일화 BL-P2-073), src/app.rs Command parser/executor + SwitchCloud stub
+- **Observed Patterns**: src 레이아웃, Port/Adapter (src/port/ + src/adapter/), Module 기반 도메인 분리 (src/module/), Context Switch Orchestration (src/context/), 워커 기반 mutation (src/worker.rs)
+- **Adapter 레이아웃 (중요 — 이전 분석 기록 정정)**:
+  - `src/adapter/auth/` — Keystone auth/project directory/domain resolver/token cache/scoped session/rescope (10개 파일)
+  - `src/adapter/http/` — OpenStack API 어댑터: `keystone.rs`, `neutron.rs`, `nova.rs`, `cinder.rs`, `glance.rs`, `base.rs`, `endpoint_invalidator.rs`, `mod.rs`
+  - **⚠️ BL-P2-085 실제 대상은 `src/adapter/http/*.rs`** (인자에 있던 `src/adapter/openstack/*`는 부정확한 경로. inception에서 spec화 시 교정 필요)
 
 ## Coding Patterns (Sampled)
 - **Source**: src/component.rs
@@ -51,9 +60,21 @@ Rust TUI 애플리케이션. Component-Based + TEA 하이브리드 아키텍처,
 - **Error Handling**: Result + thiserror, clippy deny unwrap/expect
 - **Comments**: 영어 doc comments, 한국어 인라인 주석
 
-## BL-P2-074 관련 현재 상태
-- `:switch-cloud <name>` 파서: `Command::SwitchCloud(String)` 생성 (src/input/command.rs)
-- 실행부: src/app.rs:1771-1780 — toast-only stub (ContextRequest에 CloudOnly variant 부재)
-- ContextRequest (src/context/types.rs:19): ByName / ById 두 variant, 둘 다 `project: String` 필수
-- ContextTargetResolver::list_projects(cloud) (src/context/resolver.rs:91) — 이미 존재, 옵션 (a)/(b) 공통 재사용 가능
-- Unit 6 ContextPicker: **미구현** (src/ui/에 없음, app.rs에서 "(picker: Ctrl+P — Unit 6)" toast로 announce만)
+## BL-P2-085 관련 현재 상태 (2026-04-24 추가)
+
+### 건드릴 주요 파일 (크기 / 역할)
+| 파일 | LoC | 현재 역할 | 예상 변경 축 |
+|------|-----|----------|-----------|
+| `src/adapter/http/neutron.rs` | 849 | SG / Network / FloatingIP List 빌더 | `tenant_id` 필터 auth scope 주입 (Critical) |
+| `src/adapter/http/nova.rs` | 1147 | 서버/플레이버/키페어 API | `all_tenants` 플래그 모델 통일 (Critical) |
+| `src/adapter/http/cinder.rs` | 567 | 볼륨/스냅샷/백업 API | `all_tenants` 통일 + form-selected ID 검증 (High) |
+| `src/worker.rs` | 1269 | Action dispatch / mutation 실행 | 모든 mutation 직전 `target.project_id == active_scope` 가드 (Critical) |
+| `src/infra/rbac.rs` | — | 역할 기반 정책 | project-mismatch 차단 정책 추가 (Critical) |
+| `src/module/server/mod.rs` (PR#82) | — | 서버 폼 드롭다운 | `build_disambiguated_opts` 헬퍼 — **재사용 검토** (다른 module 폼에도 확장 가능) |
+
+### 테스트 스캐폴드
+- `tests/devstack_directory.rs` — PR#80이 도입한 통합 테스트. BL-P2-085 회귀 테스트(두 project에 동명 SG 배치 시나리오)는 이 파일 또는 신규 `tests/devstack_cross_project.rs`에 추가 예상.
+
+### 관련 타입
+- `active_scope` 참조 지점: main.rs, app.rs, context/state_machine, context/switcher, context/history, context/resolver, adapter/auth/*
+- `TokenScopeFingerprint` (adapter/auth/token_scope_fingerprint.rs) — Unit 1 결과물, project 범위 식별자
