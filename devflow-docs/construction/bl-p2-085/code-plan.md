@@ -187,16 +187,18 @@
 
 ### Phase 5 — Action 분류 exhaustive
 
-- [ ] **Step 7**: `action_to_kind()` exhaustive + RBAC parity 테스트 (Reviewer Should-consider #1 반영)
-  - [ ] RED:
-    - `test_action_to_kind_all_fetch_variants_return_none` — 모든 `Fetch*`, `Navigate`, `Back` variant
-    - `test_action_to_kind_all_mutation_variants_return_some` — 모든 Create/Delete/Update/Reboot/Start/Stop/Resize/Migrate/Evacuate/EnableDisable
-    - `test_action_is_mutation_helper` — `action_to_kind(a).is_some() == action_is_mutation(a)`
-    - **`test_action_to_kind_rbac_mapping_lockstep`** — 각 mutation variant가 정확한 `ActionKind` (Create/Delete/ForceDelete/Resize/Migrate/Evacuate/EnableDisable/ManageQuota)로 매핑되는지 명시 assertion (synthesis Should-consider #1: RBAC와 lockstep)
-    - 가급적 Action의 전체 variant를 열거하는 제네레이션 테스트 (match exhaustive로)
-  - [ ] Verify RED
-  - [ ] GREEN: `_ => None` fallthrough 제거하고 모든 Fetch/Nav variant를 명시. 신규 `pub fn action_is_mutation(a: &Action) -> bool` 도입
-  - [ ] Verify GREEN: 기존 `test_action_to_kind_cud_actions` + 신규 parity 테스트 통과
+- [x] **Step 7**: `action_to_kind()` exhaustive + RBAC parity 테스트 (Reviewer Should-consider #1 반영) — 5 tests passed, total **1406** (+5)
+  - [x] RED:
+    - [x] `test_action_to_kind_fetch_and_nav_variants_return_none` — 28개 None variant 일괄 (Fetch*/Navigate/Back/UI/system/SwitchBack)
+    - [x] `test_action_to_kind_all_mutations_have_kind` — 38개 mutation variant 일괄 (param shape 사전 점검 필요했음)
+    - [x] `test_action_is_mutation_helper_parity` — `action_to_kind.is_some() == action_is_mutation`
+    - [x] `test_action_to_kind_rbac_mapping_lockstep` — 11 mutation × ActionKind 명시 매핑 (Create/Delete/ForceDelete/Resize/Migrate/Evacuate/EnableDisable/ManageQuota/Attach/Detach)
+    - [x] `test_action_to_kind_switch_context_returns_none` — orchestration vs mutation 구분
+  - [x] Verify RED (3 errors: `action_is_mutation` 미존재. param shape mismatch 13건은 사전점검 누락분으로 즉시 수정)
+  - [x] GREEN: `_ => None` fallthrough 제거 + 모든 Fetch/Nav/UI/System/Context variant 명시. `pub(crate) fn action_to_kind` + `pub(crate) fn action_is_mutation(action: &Action) -> bool` 도입. `#[allow(dead_code)]` on action_is_mutation (Phase 6 Step 9에서 ActionSender가 wire)
+  - [x] Verify GREEN: 1406 stable, clippy `-D warnings` clean
+
+  **컴파일타임 안전망 확보**: 새 Action variant 추가 시 `action_to_kind` 컴파일 실패 — silent miss 불가능
 
 ### Phase 6 — Envelope 교체 (가장 침습적)
 

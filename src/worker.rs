@@ -148,7 +148,12 @@ pub async fn run_worker(
 
 /// Map an Action to its RBAC ActionKind for permission checking.
 /// Returns None for read-only/UI actions that need no guard.
-fn action_to_kind(action: &Action) -> Option<ActionKind> {
+/// Map an [`Action`] to its RBAC [`ActionKind`]. Returns `None` for read-only,
+/// UI, system, and orchestration actions that do not pass through RBAC gating.
+///
+/// Exhaustive match — adding a new `Action` variant breaks compilation here
+/// (BL-P2-085 Step 7), forcing a deliberate classification decision.
+pub(crate) fn action_to_kind(action: &Action) -> Option<ActionKind> {
     match action {
         // Create (member-level)
         Action::CreateServer(_)
@@ -221,9 +226,51 @@ fn action_to_kind(action: &Action) -> Option<ActionKind> {
             Some(ActionKind::ForceDelete)
         }
 
-        // Read / UI / System — no guard
-        _ => None,
+        // --- Explicit None: not RBAC-gated mutations ---
+        // Read-only fetches
+        Action::FetchServers
+        | Action::FetchFlavors
+        | Action::FetchAggregates
+        | Action::FetchComputeServices
+        | Action::FetchHypervisors
+        | Action::FetchNetworks
+        | Action::FetchSecurityGroups
+        | Action::FetchFloatingIps
+        | Action::FetchSubnets { .. }
+        | Action::FetchAgents
+        | Action::FetchVolumes
+        | Action::FetchSnapshots
+        | Action::FetchImages
+        | Action::FetchProjects
+        | Action::FetchUsers
+        | Action::FetchUsage { .. }
+        | Action::FetchMigrationProgress { .. }
+        | Action::FetchPorts { .. } => None,
+
+        // Navigation / UI helpers
+        Action::Navigate(_)
+        | Action::Back
+        | Action::FocusSidebar
+        | Action::EnterFormMode
+        | Action::ExitFormMode
+        | Action::SelectResource { .. }
+        | Action::NavigateToResource { .. }
+        | Action::ShowToast { .. } => None,
+
+        // System / global state
+        Action::RefreshAll | Action::Quit | Action::ToggleAllTenants => None,
+
+        // Context switch — orchestration, not RBAC mutation
+        Action::SwitchContext(_) | Action::SwitchBack => None,
     }
+}
+
+/// Wrapper over [`action_to_kind`]: true if the action is an RBAC-gated
+/// mutation. Wired up by [`crate::context::ActionSender`] in BL-P2-085 Phase 6
+/// Step 9 to decide whether to stamp `origin_project_id`.
+#[allow(dead_code)] // wired up in BL-P2-085 Phase 6 Step 9 (ActionSender)
+pub(crate) fn action_is_mutation(action: &Action) -> bool {
+    action_to_kind(action).is_some()
 }
 
 /// Human-readable name for an Action, used in PermissionDenied messages.
@@ -1022,6 +1069,367 @@ mod tests {
             }),
             None,
         );
+    }
+
+    // --- BL-P2-085 Step 7: action_to_kind exhaustive + action_is_mutation ---
+
+    #[test]
+    fn test_action_to_kind_fetch_and_nav_variants_return_none() {
+        // Fetch* + Navigate/Back + UI helpers + system + context switch all
+        // must return None — they are not RBAC-gated mutations.
+        let none_actions = vec![
+            Action::Navigate(crate::models::common::Route::Servers),
+            Action::Back,
+            Action::FetchServers,
+            Action::FetchFlavors,
+            Action::FetchAggregates,
+            Action::FetchComputeServices,
+            Action::FetchHypervisors,
+            Action::FetchNetworks,
+            Action::FetchSecurityGroups,
+            Action::FetchFloatingIps,
+            Action::FetchSubnets {
+                network_id: "n1".into(),
+            },
+            Action::FetchAgents,
+            Action::FetchVolumes,
+            Action::FetchSnapshots,
+            Action::FetchImages,
+            Action::FetchProjects,
+            Action::FetchUsers,
+            Action::FetchUsage {
+                start: "s".into(),
+                end: "e".into(),
+            },
+            Action::FetchPorts {
+                server_id: "s1".into(),
+            },
+            Action::FocusSidebar,
+            Action::EnterFormMode,
+            Action::ExitFormMode,
+            Action::SelectResource { id: "x".into() },
+            Action::NavigateToResource {
+                route: crate::models::common::Route::Volumes,
+                id: "v1".into(),
+            },
+            Action::ToggleAllTenants, // UI state toggle, not backend mutation
+            Action::ShowToast {
+                message: "hi".into(),
+            },
+            Action::RefreshAll,
+            Action::Quit,
+            Action::SwitchBack, // orchestration, not RBAC mutation
+        ];
+        for a in &none_actions {
+            assert_eq!(
+                action_to_kind(a),
+                None,
+                "{:?} must return None (not a mutation)",
+                std::mem::discriminant(a)
+            );
+        }
+    }
+
+    #[test]
+    fn test_action_to_kind_all_mutations_have_kind() {
+        use crate::port::types::*;
+        let mutations: Vec<Action> = vec![
+            Action::CreateServer(ServerCreateParams {
+                name: "t".into(),
+                image_id: "i".into(),
+                flavor_id: "f".into(),
+                networks: vec![],
+                security_groups: None,
+                key_name: None,
+                availability_zone: None,
+            }),
+            Action::DeleteServer {
+                id: "s".into(),
+                name: "n".into(),
+            },
+            Action::RebootServer {
+                id: "s".into(),
+                hard: false,
+            },
+            Action::StartServer { id: "s".into() },
+            Action::StopServer { id: "s".into() },
+            Action::CreateServerSnapshot {
+                server_id: "s".into(),
+                name: "snap".into(),
+            },
+            Action::CreateFlavor(FlavorCreateParams {
+                name: "f".into(),
+                vcpus: 1,
+                ram_mb: 1,
+                disk_gb: 1,
+                is_public: true,
+            }),
+            Action::DeleteFlavor { id: "f".into() },
+            Action::CreateNetwork(NetworkCreateParams {
+                name: "n".into(),
+                admin_state_up: true,
+                shared: None,
+                external: None,
+                mtu: None,
+                port_security_enabled: None,
+            }),
+            Action::CreateSecurityGroup(SecurityGroupCreateParams {
+                name: "sg".into(),
+                description: None,
+            }),
+            Action::DeleteSecurityGroup { id: "sg".into() },
+            Action::CreateSecurityGroupRule(SecurityGroupRuleCreateParams {
+                security_group_id: "sg".into(),
+                direction: RuleDirection::Ingress,
+                protocol: None,
+                port_range_min: None,
+                port_range_max: None,
+                remote_ip_prefix: None,
+                remote_group_id: None,
+                ethertype: None,
+            }),
+            Action::DeleteSecurityGroupRule {
+                rule_id: "r".into(),
+            },
+            Action::CreateFloatingIp {
+                network_id: "n".into(),
+            },
+            Action::DeleteFloatingIp { id: "f".into() },
+            Action::CreateVolume(VolumeCreateParams {
+                name: "v".into(),
+                size_gb: 1,
+                volume_type: None,
+                description: None,
+                availability_zone: None,
+            }),
+            Action::DeleteVolume {
+                id: "v".into(),
+                force: false,
+            },
+            Action::ExtendVolume {
+                id: "v".into(),
+                new_size: 2,
+            },
+            Action::CreateSnapshot(SnapshotCreateParams {
+                name: "sn".into(),
+                volume_id: "v".into(),
+                description: None,
+                force: false,
+            }),
+            Action::DeleteSnapshot { id: "s".into() },
+            Action::CreateImage(ImageCreateParams {
+                name: "img".into(),
+                disk_format: "qcow2".into(),
+                container_format: "bare".into(),
+                visibility: None,
+                min_disk: None,
+                min_ram: None,
+            }),
+            Action::DeleteImage { id: "i".into() },
+            Action::CreateProject(ProjectCreateParams {
+                name: "p".into(),
+                description: None,
+                domain_id: "default".into(),
+                enabled: Some(true),
+            }),
+            Action::DeleteProject { id: "p".into() },
+            Action::CreateUser(UserCreateParams {
+                name: "u".into(),
+                password: "pw".into(),
+                email: None,
+                domain_id: "default".into(),
+                enabled: Some(true),
+                default_project_id: None,
+            }),
+            Action::DeleteUser { id: "u".into() },
+            Action::ResizeServer {
+                id: "s".into(),
+                flavor_id: "f".into(),
+            },
+            Action::ConfirmResize { id: "s".into() },
+            Action::RevertResize { id: "s".into() },
+            Action::LiveMigrateServer {
+                id: "s".into(),
+                host: None,
+            },
+            Action::ColdMigrateServer { id: "s".into() },
+            Action::ConfirmMigration { id: "s".into() },
+            Action::RevertMigration { id: "s".into() },
+            Action::EvacuateServer {
+                id: "s".into(),
+                params: EvacuateParams::default(),
+            },
+            Action::DisableComputeService {
+                service_id: "svc".into(),
+                hostname: "h".into(),
+            },
+            Action::EnableComputeService {
+                service_id: "svc".into(),
+                hostname: "h".into(),
+            },
+            Action::AttachVolume {
+                volume_id: "v".into(),
+                server_id: "s".into(),
+                device: None,
+            },
+            Action::DetachVolume {
+                volume_id: "v".into(),
+                server_id: "s".into(),
+                attachment_id: "a".into(),
+            },
+            Action::ForceDetachVolume {
+                volume_id: "v".into(),
+                server_id: "s".into(),
+                attachment_id: "a".into(),
+            },
+            Action::ForceResetVolumeState {
+                volume_id: "v".into(),
+                target_state: "available".into(),
+            },
+            Action::AssociateFloatingIp {
+                fip_id: "f".into(),
+                port_id: "p".into(),
+            },
+            Action::DisassociateFloatingIp { fip_id: "f".into() },
+        ];
+        for a in &mutations {
+            assert!(
+                action_to_kind(a).is_some(),
+                "{:?} must map to Some(ActionKind)",
+                std::mem::discriminant(a)
+            );
+        }
+    }
+
+    #[test]
+    fn test_action_to_kind_rbac_mapping_lockstep() {
+        // Explicit lockstep — each mutation variant maps to the documented
+        // ActionKind. Catches accidental reclassification.
+        use crate::infra::rbac::ActionKind;
+        use crate::port::types::*;
+
+        let cases: Vec<(Action, ActionKind)> = vec![
+            (
+                Action::CreateServer(ServerCreateParams {
+                    name: "t".into(),
+                    image_id: "i".into(),
+                    flavor_id: "f".into(),
+                    networks: vec![],
+                    security_groups: None,
+                    key_name: None,
+                    availability_zone: None,
+                }),
+                ActionKind::Create,
+            ),
+            (
+                Action::DeleteVolume {
+                    id: "v".into(),
+                    force: true,
+                },
+                ActionKind::ForceDelete,
+            ),
+            (
+                Action::DeleteVolume {
+                    id: "v".into(),
+                    force: false,
+                },
+                ActionKind::Delete,
+            ),
+            (
+                Action::ResizeServer {
+                    id: "s".into(),
+                    flavor_id: "f".into(),
+                },
+                ActionKind::Resize,
+            ),
+            (
+                Action::LiveMigrateServer {
+                    id: "s".into(),
+                    host: None,
+                },
+                ActionKind::Migrate,
+            ),
+            (
+                Action::EvacuateServer {
+                    id: "s".into(),
+                    params: EvacuateParams::default(),
+                },
+                ActionKind::Evacuate,
+            ),
+            (
+                Action::DisableComputeService {
+                    service_id: "svc".into(),
+                    hostname: "h".into(),
+                },
+                ActionKind::EnableDisable,
+            ),
+            (
+                Action::CreateProject(ProjectCreateParams {
+                    name: "p".into(),
+                    description: None,
+                    domain_id: "default".into(),
+                    enabled: Some(true),
+                }),
+                ActionKind::ManageQuota,
+            ),
+            (
+                Action::AttachVolume {
+                    volume_id: "v".into(),
+                    server_id: "s".into(),
+                    device: None,
+                },
+                ActionKind::Attach,
+            ),
+            (
+                Action::DetachVolume {
+                    volume_id: "v".into(),
+                    server_id: "s".into(),
+                    attachment_id: "a".into(),
+                },
+                ActionKind::Detach,
+            ),
+            (
+                Action::ForceDetachVolume {
+                    volume_id: "v".into(),
+                    server_id: "s".into(),
+                    attachment_id: "a".into(),
+                },
+                ActionKind::ForceDelete,
+            ),
+        ];
+        for (action, expected) in &cases {
+            assert_eq!(
+                action_to_kind(action),
+                Some(*expected),
+                "RBAC lockstep mismatch for {:?}",
+                std::mem::discriminant(action)
+            );
+        }
+    }
+
+    #[test]
+    fn test_action_is_mutation_helper_parity() {
+        let m = Action::DeleteServer {
+            id: "s".into(),
+            name: "n".into(),
+        };
+        let r = Action::FetchServers;
+        assert!(action_is_mutation(&m));
+        assert!(!action_is_mutation(&r));
+        // Wrapper parity: action_is_mutation == action_to_kind.is_some()
+        for a in [&m, &r] {
+            assert_eq!(action_is_mutation(a), action_to_kind(a).is_some());
+        }
+    }
+
+    #[test]
+    fn test_action_to_kind_switch_context_returns_none() {
+        // Context switch is orchestration (Keystone rescope), not an RBAC-gated
+        // mutation. Worker handles it via a different path.
+        let action = Action::SwitchContext(crate::context::ContextRequest::CloudOnly {
+            cloud: "devstack".into(),
+        });
+        assert_eq!(action_to_kind(&action), None);
     }
 
     #[test]
