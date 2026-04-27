@@ -86,10 +86,23 @@ impl CrossProjectBlockEvent {
 /// Best-effort emit. If `logger` is provided and `log_entry` succeeds, the
 /// event is persisted to the audit log; otherwise the event is recorded via
 /// `tracing::warn!` so it still surfaces in process logs. Never panics.
+///
+/// Rotation parity: matches `App::record_audit` (src/app.rs:780) by invoking
+/// `rotate_if_needed` after a successful write so cross-project events stay
+/// within `MAX_LOG_SIZE`/`MAX_ROTATED_FILES` even under sustained block storms.
 pub fn emit(event: &CrossProjectBlockEvent, logger: Option<&AuditLogger>) {
     if let Some(logger) = logger {
         match logger.log_entry(event.to_audit_entry()) {
-            Ok(()) => return,
+            Ok(()) => {
+                if let Err(e) = logger.rotate_if_needed() {
+                    tracing::warn!(
+                        error = %e,
+                        fingerprint = %event.fingerprint(),
+                        "cross_project_block: AuditLogger.rotate_if_needed failed",
+                    );
+                }
+                return;
+            }
             Err(e) => {
                 tracing::warn!(
                     error = %e,

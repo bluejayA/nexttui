@@ -155,6 +155,7 @@
   - [x] Verify RED (4 compile errors: struct + emit fn 미존재)
   - [x] GREEN: 위 설계 구현. `chrono::DateTime<Utc>`, `sha2::Sha256` (신규 dep `sha2 = "0.10"`), `serde_json::Value` 활용. `write!` macro로 hex encode (clippy `unwrap_used = deny` 회피)
   - [x] Verify GREEN: 회귀 0, clippy `-D warnings` clean
+  - [x] **Codex P2 review fix** (2026-04-27): `emit()` success branch에 `logger.rotate_if_needed()` 추가. `App::record_audit` (src/app.rs:780)의 패턴과 parity 확보 — `MAX_LOG_SIZE`(10MB)/`MAX_ROTATED_FILES`(5) 정책이 cross_project_block 폭발 시에도 작동. 회귀 0 (1390 stable, 5/5 runs).
 
   **사전 검증 결과** (audit.rs 5분 점검, plan과 차이):
   - `AuditEntry.timestamp`: plan `DateTime<Utc>` → 실제 `String` (ISO). `to_rfc3339()`로 변환.
