@@ -113,7 +113,7 @@
 
 ### Phase 3 — Audit infrastructure
 
-- [ ] **Step 4**: `CrossProjectBlockEvent` builder → AuditLogger 통합 (RED-time 발견 반영)
+- [x] **Step 4**: `CrossProjectBlockEvent` builder → AuditLogger 통합 (RED-time 발견 반영) — 8 tests passed, total **1390** (+8). `sha2 = "0.10"` dep 추가. 5분 audit.rs 시그니처 사전 검증으로 매핑 정확도 확보.
   - **위치**: `src/infra/cross_project_audit.rs` (단일 파일. 기존 `src/infra/audit.rs::AuditLogger` 재사용)
   - **설계**:
     ```rust
@@ -143,18 +143,26 @@
         // 없거나 실패 시 tracing::warn! fallback (best-effort)
     }
     ```
-  - [ ] RED:
-    - `test_event_to_audit_entry_field_mapping` — AuditEntry의 timestamp/cloud/user/project/action/resource_type/resource_id/resource_name 매핑 확인
-    - `test_audit_entry_details_contains_fingerprint_guard_layer_correlation_id` — details JSON에 모든 specialized 필드 존재
-    - `test_audit_entry_result_is_failed_with_reason_string` — `result == AuditResult::Failed("cross_project_block:origin_scope_mismatch")` 등
-    - `test_fingerprint_v1_canonical_format` — 알려진 입력 → 알려진 sha256[:12]
-    - `test_fingerprint_boundary_collision_free` — `("ab", "")` vs `("a", "b")` → 다른 fingerprint (delimiter 효과)
-    - `test_fingerprint_none_resource_id_uses_empty` — None vs "" 일관성
-    - `test_emit_with_logger_writes_audit_entry` — temp AuditLogger로 실제 기록 검증 (audit.rs 패턴 재사용)
-    - `test_emit_without_logger_fallback_to_tracing` — Option=None 시에도 panic 없음
-  - [ ] Verify RED
-  - [ ] GREEN: 위 설계 구현. `chrono::DateTime<Utc>`, `sha2::Sha256`(이미 deps), `serde_json::Value` 활용
-  - [ ] Verify GREEN: 회귀 0
+  - [x] RED:
+    - [x] `test_event_to_audit_entry_field_mapping`
+    - [x] `test_audit_entry_details_contains_fingerprint_guard_layer_correlation_id`
+    - [x] `test_audit_entry_result_is_failed_with_reason_string`
+    - [x] `test_fingerprint_v1_canonical_format` — canonical 문자열 재유도 + sha256[..6] hex 비교 (impl과 독립)
+    - [x] `test_fingerprint_boundary_collision_free`
+    - [x] `test_fingerprint_none_resource_id_uses_empty`
+    - [x] `test_emit_with_logger_writes_audit_entry` — `tempfile::TempDir` 패턴
+    - [x] `test_emit_without_logger_fallback_to_tracing`
+  - [x] Verify RED (4 compile errors: struct + emit fn 미존재)
+  - [x] GREEN: 위 설계 구현. `chrono::DateTime<Utc>`, `sha2::Sha256` (신규 dep `sha2 = "0.10"`), `serde_json::Value` 활용. `write!` macro로 hex encode (clippy `unwrap_used = deny` 회피)
+  - [x] Verify GREEN: 회귀 0, clippy `-D warnings` clean
+
+  **사전 검증 결과** (audit.rs 5분 점검, plan과 차이):
+  - `AuditEntry.timestamp`: plan `DateTime<Utc>` → 실제 `String` (ISO). `to_rfc3339()`로 변환.
+  - `AuditEntry.resource_id`: plan `Option<String>` → 실제 `String` (NOT Option). `unwrap_or_default()` 사용.
+  - 필드 rename: `action_type → action`, `resource_kind → resource_type`.
+  - `sha2`는 plan이 "이미 deps"라고 잘못 가정 — Cargo.toml에 부재. 옵션 (a) `sha2 = "0.10"` 추가로 결정.
+  - `AuditLogger.log_entry(&self, entry) -> Result<()>` sync. emit best-effort 패턴 그대로 적용.
+  - 자동 sensitive masking 작동 — 우리 details 키는 충돌 0.
 
 ### Phase 4 — RBAC 확장
 
