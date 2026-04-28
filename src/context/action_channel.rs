@@ -15,9 +15,34 @@ use std::sync::Arc;
 use tokio::sync::mpsc::{self, error::SendError, error::TryRecvError};
 
 use crate::action::Action;
+use crate::infra::rbac::RbacGuard;
 
 use super::epoch::ContextEpoch;
 use super::versioned::VersionedEvent;
+
+/// Read-only view of the currently active project scope, supplied to
+/// `ActionSender` for FR2 origin stamping (BL-P2-085 Step 8).
+///
+/// `ActionSender` invokes `current_project_id()` at *send time* (not
+/// construction time) so the stamp reflects the scope live at the moment a
+/// mutating action is dispatched. Implementations must therefore read live
+/// state — never a captured snapshot.
+///
+/// `Send + Sync` lets the sender be cloned across tasks (Tokio worker fanout)
+/// while still calling the provider concurrently. The trait object form
+/// (`Arc<dyn ScopeProvider>`) is what `ActionSender` will store in Step 9.
+pub trait ScopeProvider: Send + Sync {
+    /// Active project_id at the moment of the call. `None` means "unscoped"
+    /// (e.g. before first auth) — the caller decides how to treat it
+    /// (FR2 stamping uses `None` origin → no origin guard, no audit emit).
+    fn current_project_id(&self) -> Option<String>;
+}
+
+impl ScopeProvider for Arc<RbacGuard> {
+    fn current_project_id(&self) -> Option<String> {
+        self.project_id()
+    }
+}
 
 #[derive(Clone)]
 pub struct ActionSender {
@@ -110,6 +135,56 @@ impl ActionSender {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::infra::rbac::RbacGuard;
+    use crate::port::types::TokenRole;
+
+    fn role(name: &str) -> TokenRole {
+        TokenRole {
+            id: format!("{name}-id"),
+            name: name.to_string(),
+        }
+    }
+
+    // --- BL-P2-085 Step 8: ScopeProvider trait ---
+
+    #[test]
+    fn test_scope_provider_returns_current_project_id() {
+        let guard = Arc::new(RbacGuard::new());
+        guard.update_roles(vec![role("admin")], Some("proj-A".into()));
+        assert_eq!(
+            ScopeProvider::current_project_id(&guard),
+            Some("proj-A".to_string()),
+            "Arc<RbacGuard> impl must read project_id() from current snapshot"
+        );
+    }
+
+    #[test]
+    fn test_scope_provider_returns_none_when_unscoped() {
+        let guard: Arc<RbacGuard> = Arc::new(RbacGuard::new());
+        assert_eq!(
+            ScopeProvider::current_project_id(&guard),
+            None,
+            "Unscoped guard must yield None — caller (ActionSender) treats as no origin stamp"
+        );
+    }
+
+    #[test]
+    fn test_scope_provider_reflects_post_update_change() {
+        // FR2 invariant: ActionSender stamps using *current* scope at send time.
+        // Therefore ScopeProvider must read live state, not a captured snapshot.
+        let guard = Arc::new(RbacGuard::new());
+        guard.update_roles(vec![role("admin")], Some("proj-A".into()));
+        assert_eq!(
+            ScopeProvider::current_project_id(&guard),
+            Some("proj-A".to_string())
+        );
+        guard.update_roles(vec![role("admin")], Some("proj-B".into()));
+        assert_eq!(
+            ScopeProvider::current_project_id(&guard),
+            Some("proj-B".to_string()),
+            "Provider must reflect live state for FR2 stamping correctness"
+        );
+    }
 
     #[tokio::test]
     async fn send_stamps_with_current_epoch() {
