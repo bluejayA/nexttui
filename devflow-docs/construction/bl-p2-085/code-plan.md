@@ -202,11 +202,12 @@
 
 ### Phase 6 — Envelope 교체 (가장 침습적)
 
-- [ ] **Step 8**: `ScopeProvider` trait
-  - [ ] RED: `tests::test_scope_provider_returns_current_project_id` / `test_scope_provider_returns_none_when_unscoped` — `src/context/action_channel.rs`에 trait 정의 + 테스트용 mock 구현
-  - [ ] Verify RED
-  - [ ] GREEN: `pub trait ScopeProvider: Send + Sync { fn current_project_id(&self) -> Option<String>; }` + `impl ScopeProvider for Arc<RbacGuard>` (reads `project_id()`)
-  - [ ] Verify GREEN
+- [x] **Step 8**: `ScopeProvider` trait — 3 tests passed, total **1410** (+3). commit `73b347d`
+  - [x] RED: 3 tests in `src/context/action_channel.rs::tests` — fails to compile (ScopeProvider undeclared)
+  - [x] Verify RED (E0433: cannot find type `ScopeProvider`)
+  - [x] GREEN: `pub trait ScopeProvider: Send + Sync { fn current_project_id(&self) -> Option<String>; }` + `impl ScopeProvider for Arc<RbacGuard>` (delegates to `RbacGuard::project_id()` which is single-snapshot atomic post-Codex P1 hotfix `b4b4c44`)
+  - [x] Verify GREEN — cargo test 1410 pass, clippy -D warnings clean
+  - [x] Bonus test `test_scope_provider_reflects_post_update_change` — locks in *live read* contract (FR2 stamping requires live state, not captured snapshot)
 
 - [ ] **Step 9**: `ActionSender` 타입 교체 + 스탬핑
   - [ ] RED:
