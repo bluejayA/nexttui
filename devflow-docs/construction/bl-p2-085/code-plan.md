@@ -209,7 +209,7 @@
   - [x] Verify GREEN — cargo test 1410 pass, clippy -D warnings clean
   - [x] Bonus test `test_scope_provider_reflects_post_update_change` — locks in *live read* contract (FR2 stamping requires live state, not captured snapshot)
 
-- [ ] **Step 9**: `ActionSender` 타입 교체 + 스탬핑
+- [x] **Step 9**: `ActionSender` 타입 교체 + 스탬핑 — 3 tests passed, total 1413 (+3). commit `1f80968` (Step 9+10 단일 atomic)
   - [ ] RED:
     - `test_sender_stamps_mutation_with_current_scope` — scope=A에서 send(CreateServer) → envelope.payload.origin_project_id == Some("A")
     - `test_sender_leaves_readonly_unstamped` — send(FetchServers) → origin == None
@@ -223,7 +223,7 @@
     - **Worker 수신 경로 명시 (Reviewer Should-consider #2)**: `run_worker`는 **ActionReceiver를 쓰지 않고 raw `mpsc::UnboundedReceiver<VersionedEvent<DispatchedAction>>`를 직접 소비**해야 origin_project_id에 접근 가능. ActionReceiver는 테스트 호환 목적으로만 유지. Step 11에서 worker 측 raw 소비 코드로 전환.
   - [ ] Verify GREEN: 새 테스트 통과 + 기존 ActionReceiver 테스트 통과
 
-- [ ] **Step 10**: `app.rs` + 테스트 헬퍼 갱신
+- [x] **Step 10**: `app.rs` + 테스트 헬퍼 갱신 — Step 9와 단일 commit `1f80968`. main.rs RbacGuard Arc 공유, ActionReceiver 외부 API 보존하여 ~100 module 테스트 무수정 무회귀.
   - [ ] RED: 컴파일 에러로 드러나는 위치들 정리. 기존 테스트가 ActionSender를 생성하는 곳마다 ScopeProvider 주입 필요
   - [ ] Verify RED (compile fail)
   - [ ] GREEN: `ActionSender::new(...)` 생성자에 scope_provider 인자 추가. `App::new()` 등에서 RbacGuard arc 전달. 테스트 헬퍼 `FakeActionSender` / `FakeScopeProvider` 추가
