@@ -88,6 +88,40 @@ struct RbacState {
     capabilities: HashSet<Capability>,
 }
 
+impl RbacState {
+    /// Snapshot-based scope decision. Operates purely on `&self` field reads
+    /// so that callers holding a single `RwLock` read guard get an atomic
+    /// (role × scope) decision — preventing the BL-P2-085 Codex P1 race
+    /// where role and project_id could be sampled from different snapshots.
+    fn scope_decision(
+        &self,
+        target_project_id: &str,
+        action: ActionKind,
+    ) -> RbacScopeDecision {
+        let role_ok = match self.effective_role {
+            EffectiveRole::Admin => true,
+            EffectiveRole::Member => !RbacGuard::is_admin_only_action(action),
+            EffectiveRole::Reader => action == ActionKind::Read,
+        };
+        let scope_ok = self
+            .project_id
+            .as_deref()
+            .is_some_and(|p| p == target_project_id);
+        match (role_ok, scope_ok) {
+            (true, true) => RbacScopeDecision::Allow,
+            (false, true) => RbacScopeDecision::Deny {
+                reason: RbacDenialReason::RoleTier,
+            },
+            (true, false) => RbacScopeDecision::Deny {
+                reason: RbacDenialReason::ProjectScope,
+            },
+            (false, false) => RbacScopeDecision::Deny {
+                reason: RbacDenialReason::Both,
+            },
+        }
+    }
+}
+
 /// Role-based access control guard.
 /// Phase 1 (current): 3-tier role-based filtering (Admin/Member/Reader).
 /// Phase 2: Capability-based extension via `has_capability()` / `update_capabilities()`.
@@ -183,27 +217,23 @@ impl RbacGuard {
     /// reason so audit consumers and toasts can disambiguate role-tier vs
     /// scope-mismatch denials. Unscoped guard (`project_id == None`) is
     /// treated as a scope-mismatch fail-safe.
+    ///
+    /// Atomicity (Codex P1, 2026-04-28): role and project_id are read from a
+    /// single `state.read()` snapshot via `RbacState::scope_decision`, so a
+    /// concurrent `update_roles*` cannot interleave between the two reads.
+    /// On a poisoned lock the decision falls back to `Deny { Both }`
+    /// (fail-safe — no privilege should be granted on corrupt state).
     pub fn check_project_scope(
         &self,
         target_project_id: &str,
         action: ActionKind,
     ) -> RbacScopeDecision {
-        let role_ok = self.can_perform(action);
-        let scope_ok = self
-            .project_id()
-            .is_some_and(|p| p == target_project_id);
-        match (role_ok, scope_ok) {
-            (true, true) => RbacScopeDecision::Allow,
-            (false, true) => RbacScopeDecision::Deny {
-                reason: RbacDenialReason::RoleTier,
-            },
-            (true, false) => RbacScopeDecision::Deny {
-                reason: RbacDenialReason::ProjectScope,
-            },
-            (false, false) => RbacScopeDecision::Deny {
+        self.state
+            .read()
+            .map(|s| s.scope_decision(target_project_id, action))
+            .unwrap_or(RbacScopeDecision::Deny {
                 reason: RbacDenialReason::Both,
-            },
-        }
+            })
     }
 
     /// Capability-based permission check.
@@ -735,6 +765,63 @@ mod tests {
         assert!(
             !guard.has_capability("server", "delete"),
             "preserve must clear capabilities for parity with update_roles"
+        );
+    }
+
+    // --- BL-P2-085 Codex P1: atomic scope decision over single state snapshot ---
+
+    #[test]
+    fn test_rbac_state_scope_decision_atomic_snapshot() {
+        // Codex P1 fix: check_project_scope must read role + project_id from
+        // a single RwLock snapshot. This test exercises RbacState::scope_decision
+        // directly (no lock involved) to lock in the snapshot-based contract:
+        // any future race-fix refactor must keep the decision derivable from
+        // a single &RbacState reference.
+        let state = RbacState {
+            roles: vec![role("admin")],
+            project_id: Some("proj-a".into()),
+            effective_role: EffectiveRole::Admin,
+            capabilities: HashSet::new(),
+        };
+        assert_eq!(
+            state.scope_decision("proj-a", ActionKind::Create),
+            RbacScopeDecision::Allow,
+            "admin in matching scope must Allow"
+        );
+        assert_eq!(
+            state.scope_decision("proj-b", ActionKind::Create),
+            RbacScopeDecision::Deny {
+                reason: RbacDenialReason::ProjectScope
+            },
+            "admin in mismatched scope must Deny ProjectScope"
+        );
+
+        let unscoped = RbacState {
+            roles: vec![role("admin")],
+            project_id: None,
+            effective_role: EffectiveRole::Admin,
+            capabilities: HashSet::new(),
+        };
+        assert_eq!(
+            unscoped.scope_decision("proj-a", ActionKind::Create),
+            RbacScopeDecision::Deny {
+                reason: RbacDenialReason::ProjectScope
+            },
+            "unscoped guard must fail-safe to ProjectScope denial"
+        );
+
+        let reader = RbacState {
+            roles: vec![role("reader")],
+            project_id: Some("proj-a".into()),
+            effective_role: EffectiveRole::Reader,
+            capabilities: HashSet::new(),
+        };
+        assert_eq!(
+            reader.scope_decision("proj-b", ActionKind::Create),
+            RbacScopeDecision::Deny {
+                reason: RbacDenialReason::Both
+            },
+            "role-tier + scope mismatch must Deny Both"
         );
     }
 }
