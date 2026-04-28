@@ -12,7 +12,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
-use crate::action::Action;
+use crate::action::{Action, DispatchedAction};
 use crate::adapter::registry::AdapterRegistry;
 use crate::context::{Epoch, VersionedEvent};
 use crate::event::AppEvent;
@@ -54,14 +54,18 @@ pub async fn run_worker(
     registry: Arc<AdapterRegistry>,
     rbac: Arc<RbacGuard>,
     all_tenants: Arc<AtomicBool>,
-    mut action_rx: mpsc::UnboundedReceiver<VersionedEvent<Action>>,
+    mut action_rx: mpsc::UnboundedReceiver<VersionedEvent<DispatchedAction>>,
     event_tx: mpsc::UnboundedSender<VersionedEvent<AppEvent>>,
 ) {
     let polling_servers: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
     let in_flight_fetches: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
 
     while let Some(envelope) = action_rx.recv().await {
-        let (action, action_epoch) = envelope.into_parts();
+        let (dispatched, action_epoch) = envelope.into_parts();
+        // BL-P2-085 Step 11 will read `dispatched.origin_project_id` to gate
+        // mutations against the live active scope. Until then we just
+        // unwrap the `Action` payload and continue with existing behavior.
+        let action = dispatched.action;
 
         // RBAC guard: check CUD permissions before API call
         if let Some(kind) = action_to_kind(&action)
@@ -267,8 +271,8 @@ pub(crate) fn action_to_kind(action: &Action) -> Option<ActionKind> {
 
 /// Wrapper over [`action_to_kind`]: true if the action is an RBAC-gated
 /// mutation. Wired up by [`crate::context::ActionSender`] in BL-P2-085 Phase 6
-/// Step 9 to decide whether to stamp `origin_project_id`.
-#[allow(dead_code)] // wired up in BL-P2-085 Phase 6 Step 9 (ActionSender)
+/// Wired by `ActionSender::send` (Step 9) to decide whether to stamp
+/// `origin_project_id` on the outgoing `DispatchedAction`.
 pub(crate) fn action_is_mutation(action: &Action) -> bool {
     action_to_kind(action).is_some()
 }

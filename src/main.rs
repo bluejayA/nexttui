@@ -91,9 +91,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tracing::warn!(warning = %w, "config warning");
         }
 
+        // RbacGuard is created up-front so the same Arc can be shared between
+        // ActionSender (FR2 origin stamping, BL-P2-085 Step 9) and the App /
+        // worker downstream. The token-derived role/project_id update
+        // happens later (after auth_provider returns the token).
+        let rbac = std::sync::Arc::new(nexttui::infra::rbac::RbacGuard::new());
+
         let current_epoch = Arc::new(nexttui::context::ContextEpoch::new());
         let (action_raw_tx, action_rx) = mpsc::unbounded_channel();
-        let action_tx = nexttui::context::ActionSender::new(action_raw_tx, current_epoch.clone());
+        let action_tx = nexttui::context::ActionSender::new(
+            action_raw_tx,
+            current_epoch.clone(),
+            rbac.clone(),
+        );
         let (event_tx, event_rx) = mpsc::unbounded_channel();
 
         // Build auth credential from config
@@ -141,7 +151,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let endpoint_caches = registry.endpoint_caches().to_vec();
 
         // Trigger initial authentication, then initialize RBAC from token roles
-        let rbac = std::sync::Arc::new(nexttui::infra::rbac::RbacGuard::new());
+        // (the `rbac` Arc was constructed earlier so ActionSender already holds
+        // a clone for FR2 stamping — `update_roles` here is observed live by
+        // the sender's `ScopeProvider` impl).
         let _ = auth_provider.get_token().await; // force auth before reading roles
         if let Ok(token) = auth_provider.get_token_info().await {
             rbac.update_roles(token.roles, Some(token.project.id));
