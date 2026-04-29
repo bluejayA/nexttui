@@ -77,7 +77,7 @@ pub struct App {
     activity_log: ActivityLog,
     activity_popup: ActivityLogPopup,
     show_activity_log: bool,
-    audit_logger: Option<AuditLogger>,
+    audit_logger: Option<Arc<AuditLogger>>,
     /// Command bar input widget (`:`-triggered). Paired with `command_parser`.
     pub(crate) input_bar: InputBar,
     pub(crate) command_parser: CommandParser,
@@ -201,7 +201,7 @@ impl App {
     /// Inject an audit logger for testing.
     #[cfg(test)]
     pub fn set_audit_logger(&mut self, logger: AuditLogger) {
-        self.audit_logger = Some(logger);
+        self.audit_logger = Some(Arc::new(logger));
     }
 
     /// Handle key input. Returns true if a re-render is needed.
@@ -758,7 +758,10 @@ impl App {
     }
 
     /// Initialize audit logger. Returns None on failure (non-fatal).
-    fn init_audit_logger() -> Option<AuditLogger> {
+    /// Wrapped in `Arc` so the worker (BL-P2-085 Step 11b) can share the same
+    /// instance — two `AuditLogger` instances on the same path would interleave
+    /// writes through their independent `BufWriter`s.
+    fn init_audit_logger() -> Option<Arc<AuditLogger>> {
         #[cfg(test)]
         {
             // In tests, do not create audit logger by default
@@ -768,13 +771,19 @@ impl App {
         {
             let path = crate::config::nexttui_config_dir().join("audit.log");
             match AuditLogger::new(path) {
-                Ok(logger) => Some(logger),
+                Ok(logger) => Some(Arc::new(logger)),
                 Err(e) => {
                     tracing::warn!("Failed to initialize audit logger: {e}");
                     None
                 }
             }
         }
+    }
+
+    /// FR2 Step 11b: handle to the audit logger so the worker can share the
+    /// same `Arc` and emit `CrossProjectBlockEvent` entries through it.
+    pub fn audit_logger_arc(&self) -> Option<Arc<AuditLogger>> {
+        self.audit_logger.clone()
     }
 
     /// Record a CUD event to the audit log. Errors are logged as warnings, never propagated.

@@ -16,7 +16,9 @@ use crate::action::{Action, DispatchedAction};
 use crate::adapter::registry::AdapterRegistry;
 use crate::context::{Epoch, VersionedEvent};
 use crate::event::AppEvent;
-use crate::infra::cross_project_guard::{self, GuardDecision};
+use crate::infra::audit::AuditLogger;
+use crate::infra::cross_project_audit::{self, CrossProjectBlockEvent};
+use crate::infra::cross_project_guard::{self, CrossProjectReason, GuardDecision, GuardLayer};
 use crate::infra::rbac::{ActionKind, RbacGuard};
 use crate::port::types::*;
 
@@ -50,6 +52,12 @@ where
 /// Run the background worker loop.
 /// Receives Actions from `action_rx`, calls the appropriate API via `registry`,
 /// and sends resulting AppEvents to `event_tx`.
+///
+/// `audit_logger` and `actor_*` are FR2 (BL-P2-085) wiring: when an origin
+/// guard rejects a mutation, the worker emits a structured
+/// `CrossProjectBlockEvent` through the shared `AuditLogger` instance. Both
+/// are best-effort — `None`/empty values fall back to `tracing::warn!`.
+#[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all)]
 pub async fn run_worker(
     registry: Arc<AdapterRegistry>,
@@ -57,6 +65,9 @@ pub async fn run_worker(
     all_tenants: Arc<AtomicBool>,
     mut action_rx: mpsc::UnboundedReceiver<VersionedEvent<DispatchedAction>>,
     event_tx: mpsc::UnboundedSender<VersionedEvent<AppEvent>>,
+    audit_logger: Option<Arc<AuditLogger>>,
+    actor_cloud: String,
+    actor_user_id: String,
 ) {
     let polling_servers: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
     let in_flight_fetches: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
@@ -64,9 +75,19 @@ pub async fn run_worker(
     while let Some(envelope) = action_rx.recv().await {
         let (dispatched, action_epoch) = envelope.into_parts();
 
-        // BL-P2-085 Step 11a: gate mutations against the live active scope.
-        // Step 11b wires audit emission on `Block`; Step 11c wires the toast.
-        if let GuardDecision::Block { .. } = check_dispatched_origin(&dispatched, &rbac) {
+        // BL-P2-085 Step 11a/b: gate mutations against the live active scope
+        // and emit a structured audit entry on Block. Step 11c will add the
+        // user-facing toast emission here.
+        if let GuardDecision::Block { reason } = check_dispatched_origin(&dispatched, &rbac) {
+            emit_origin_block_audit(
+                reason,
+                &dispatched,
+                &rbac,
+                audit_logger.as_deref(),
+                &actor_cloud,
+                &actor_user_id,
+                action_epoch,
+            );
             continue;
         }
 
@@ -288,7 +309,7 @@ pub(crate) fn action_is_mutation(action: &Action) -> bool {
 /// Read-only (unstamped) actions return [`GuardDecision::Allow`]. Stamped
 /// actions defer to [`cross_project_guard::check_origin_scope`], which
 /// fail-safe blocks empty/unscoped values. Sync — callable in unit tests
-/// without spawning the worker loop. Step 11b will wire `AuditLogger::emit`
+/// without spawning the worker loop. Step 11b wires `AuditLogger::emit`
 /// on `Block`; Step 11c will add toast emission.
 pub(crate) fn check_dispatched_origin(
     dispatched: &DispatchedAction,
@@ -301,6 +322,40 @@ pub(crate) fn check_dispatched_origin(
         }
         None => GuardDecision::Allow,
     }
+}
+
+/// FR2 (BL-P2-085 Step 11b): build a [`CrossProjectBlockEvent`] from a worker
+/// origin-mismatch decision and emit it via [`cross_project_audit::emit`].
+///
+/// Best-effort: when `audit_logger` is `None`, `emit` falls back to
+/// `tracing::warn!` so the block still surfaces in process logs. Sync —
+/// callable in unit tests without spawning the worker loop.
+///
+/// `resource_kind`/`resource_id`/`target_project_id` are left blank/None for
+/// now; Step 11c (toast) and a follow-up enrichment pass will populate them
+/// per-action. Audit consumers grep on `action_type` + `details.guard_layer`
+/// today and gain richer slicing once enrichment lands.
+pub(crate) fn emit_origin_block_audit(
+    reason: CrossProjectReason,
+    dispatched: &DispatchedAction,
+    rbac: &RbacGuard,
+    audit_logger: Option<&AuditLogger>,
+    actor_cloud: &str,
+    actor_user_id: &str,
+    correlation_id: u64,
+) {
+    let event = CrossProjectBlockEvent::new(
+        reason,
+        GuardLayer::Fr2Worker,
+        action_name(&dispatched.action),
+        "", // resource_kind: enriched in Step 11c follow-up
+        actor_cloud,
+        actor_user_id,
+        rbac.project_id(),
+        dispatched.origin_project_id.clone(),
+        correlation_id,
+    );
+    cross_project_audit::emit(&event, audit_logger);
 }
 
 /// Human-readable name for an Action, used in PermissionDenied messages.
@@ -1510,6 +1565,83 @@ mod tests {
             }
             other => panic!("expected OriginScopeMismatch Block, got {other:?}"),
         }
+    }
+
+    // --- BL-P2-085 Step 11b: AuditLogger integration on Block ---
+
+    #[test]
+    fn test_emit_origin_block_audit_writes_entry_when_logger_present() {
+        use crate::infra::audit::AuditLogger;
+        use crate::infra::cross_project_guard::CrossProjectReason;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("audit.log");
+        let logger = AuditLogger::new(path.clone()).unwrap();
+
+        let rbac = rbac_with_project("p-active");
+        let dispatched = DispatchedAction::stamped(
+            Action::DeleteServer {
+                id: "s1".into(),
+                name: "n".into(),
+            },
+            "p-stale".into(),
+        );
+        let reason = CrossProjectReason::OriginScopeMismatch {
+            origin: "p-stale".into(),
+            active: "p-active".into(),
+        };
+
+        emit_origin_block_audit(
+            reason,
+            &dispatched,
+            &rbac,
+            Some(&logger),
+            "devstack",
+            "user-uuid",
+            42,
+        );
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !content.is_empty(),
+            "audit log must contain entry after Block emit"
+        );
+        let parsed: serde_json::Value = serde_json::from_str(content.trim()).unwrap();
+        assert_eq!(parsed["action"], "DeleteServer");
+        assert_eq!(parsed["cloud"], "devstack");
+        assert_eq!(parsed["user"], "user-uuid");
+        assert_eq!(parsed["project"], "p-active");
+        assert_eq!(
+            parsed["result"],
+            serde_json::json!({ "failed": "cross_project_block:origin_scope_mismatch" }),
+        );
+        assert_eq!(parsed["details"]["guard_layer"], "fr2_worker");
+        assert_eq!(parsed["details"]["correlation_id"], 42);
+        assert_eq!(parsed["details"]["asserted_origin_project_id"], "p-stale");
+    }
+
+    #[test]
+    fn test_emit_origin_block_audit_does_not_panic_when_logger_none() {
+        use crate::infra::cross_project_guard::CrossProjectReason;
+
+        let rbac = rbac_with_project("p-active");
+        let dispatched = DispatchedAction::stamped(
+            Action::DeleteServer {
+                id: "s1".into(),
+                name: "n".into(),
+            },
+            "p-stale".into(),
+        );
+        let reason = CrossProjectReason::OriginScopeMismatch {
+            origin: "p-stale".into(),
+            active: "p-active".into(),
+        };
+
+        // logger=None must remain best-effort — the worker must still block,
+        // and emit() falls back to tracing without panicking.
+        emit_origin_block_audit(
+            reason, &dispatched, &rbac, None, "devstack", "user-uuid", 7,
+        );
     }
 
     #[test]

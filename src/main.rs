@@ -163,13 +163,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (mut app, initial_actions) =
             App::from_registry(config, action_tx.clone(), module_registry, rbac.clone());
 
-        // Spawn background worker
+        // Spawn background worker.
+        // BL-P2-085 Step 11b: share the same `Arc<AuditLogger>` with `App` so
+        // both worker-side block events and app-side success entries land in
+        // a single rotated log. `actor_cloud`/`actor_user_id` are best-effort
+        // — `actor_user_id` falls back to the configured username (matches
+        // `App::build_audit_entry`); a follow-up will resolve the Keystone UUID
+        // from the live `Token` and rewire when context-switching.
+        let audit_logger_for_worker = app.audit_logger_arc();
+        let actor_cloud = config_for_wire.active_cloud_name().to_string();
+        let actor_user_id = config_for_wire
+            .active_cloud_config()
+            .auth
+            .username
+            .clone()
+            .unwrap_or_default();
         tokio::spawn(run_worker(
             registry,
             rbac,
             app.all_tenants.clone(),
             action_rx,
             event_tx.clone(),
+            audit_logger_for_worker,
+            actor_cloud,
+            actor_user_id,
         ));
 
         // Trigger initial data load

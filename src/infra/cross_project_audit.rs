@@ -38,6 +38,44 @@ pub struct CrossProjectBlockEvent {
 }
 
 impl CrossProjectBlockEvent {
+    /// Convenience constructor (BL-P2-085 Step 11b). Stamps `timestamp = Utc::now()`,
+    /// fills required fields from the worker's view of the dispatched action,
+    /// and leaves resource-bound optional fields (`target_project_id`,
+    /// `resource_id`, `resource_name`) as `None`. Callers with a resource-bound
+    /// action can mutate them directly after construction.
+    ///
+    /// `resource_kind` is a free-form string (e.g. `"server"`, `"volume"`); the
+    /// worker enriches it at the call site so this struct stays decoupled from
+    /// the `Action` enum.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        reason: CrossProjectReason,
+        guard_layer: GuardLayer,
+        action_type: impl Into<String>,
+        resource_kind: impl Into<String>,
+        actor_cloud: impl Into<String>,
+        actor_user_id: impl Into<String>,
+        active_project_id: Option<String>,
+        asserted_origin_project_id: Option<String>,
+        correlation_id: u64,
+    ) -> Self {
+        Self {
+            timestamp: Utc::now(),
+            actor_user_id: actor_user_id.into(),
+            actor_cloud: actor_cloud.into(),
+            active_project_id,
+            asserted_origin_project_id,
+            target_project_id: None,
+            action_type: action_type.into(),
+            resource_kind: resource_kind.into(),
+            resource_id: None,
+            resource_name: None,
+            reason,
+            guard_layer,
+            correlation_id,
+        }
+    }
+
     /// v1 canonical fingerprint. Schema-stable: any change must bump to v2
     /// and migrate downstream audit analysts.
     pub fn fingerprint(&self) -> String {
@@ -282,5 +320,45 @@ mod tests {
         let event = sample_event();
         // Must not panic. Tracing subscriber is not asserted (no tracing-test dep).
         emit(&event, None);
+    }
+
+    // --- BL-P2-085 Step 11b: convenience constructor ---
+
+    #[test]
+    fn test_new_convenience_constructor_fills_required_fields_and_now_timestamp() {
+        let before = Utc::now();
+        let event = CrossProjectBlockEvent::new(
+            CrossProjectReason::OriginScopeMismatch {
+                origin: "p-stale".into(),
+                active: "p-active".into(),
+            },
+            GuardLayer::Fr2Worker,
+            "DeleteServer",
+            "server",
+            "devstack",
+            "user-uuid",
+            Some("p-active".into()),
+            Some("p-stale".into()),
+            7,
+        );
+        let after = Utc::now();
+
+        assert_eq!(event.actor_cloud, "devstack");
+        assert_eq!(event.actor_user_id, "user-uuid");
+        assert_eq!(event.action_type, "DeleteServer");
+        assert_eq!(event.resource_kind, "server");
+        assert_eq!(event.active_project_id.as_deref(), Some("p-active"));
+        assert_eq!(event.asserted_origin_project_id.as_deref(), Some("p-stale"));
+        assert_eq!(event.guard_layer, GuardLayer::Fr2Worker);
+        assert_eq!(event.correlation_id, 7);
+        // Optional fields default to None — caller can override after construction.
+        assert!(event.target_project_id.is_none());
+        assert!(event.resource_id.is_none());
+        assert!(event.resource_name.is_none());
+        // Timestamp is "now" — within the call window.
+        assert!(
+            event.timestamp >= before && event.timestamp <= after,
+            "timestamp must reflect Utc::now() at construction"
+        );
     }
 }
