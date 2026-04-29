@@ -1434,6 +1434,16 @@ impl App {
                 operation.clone(),
                 String::new(),
             ),
+            // BL-P2-085 Step 11c: cross-project block surfaced from the worker.
+            // Worker has already written the structured audit entry; the toast
+            // is the user-visible counterpart and uses Error level (parity with
+            // PermissionDenied) so it inherits the longer Error TTL.
+            AppEvent::CrossProjectBlocked { reason, action } => (
+                format!("Cross-project block: {action} ({reason})"),
+                ToastLevel::Error,
+                action.clone(),
+                String::new(),
+            ),
             // Data loaded / system events — no toast or activity log
             _ => return,
         };
@@ -3066,6 +3076,29 @@ mod tests {
         assert!(!entry.success);
         assert_eq!(entry.operation, "CreateServer");
         assert!(entry.message.contains("quota exceeded"));
+    }
+
+    // --- BL-P2-085 Step 11c: cross-project block toast ---
+
+    #[test]
+    fn test_generate_toast_for_cross_project_blocked_pushes_error() {
+        let mut app = make_app();
+        app.handle_event(AppEvent::CrossProjectBlocked {
+            reason: "origin_scope_mismatch".into(),
+            action: "DeleteServer".into(),
+        });
+        assert_eq!(app.activity_log.entries().len(), 1);
+        let entry = &app.activity_log.entries()[0];
+        assert!(
+            !entry.success,
+            "cross-project block must surface as a failure in the activity log",
+        );
+        assert_eq!(entry.operation, "DeleteServer");
+        assert!(
+            entry.message.contains("origin_scope_mismatch"),
+            "toast message must include the reason: {msg}",
+            msg = entry.message,
+        );
     }
 
     #[test]

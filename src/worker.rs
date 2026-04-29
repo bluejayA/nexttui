@@ -75,10 +75,14 @@ pub async fn run_worker(
     while let Some(envelope) = action_rx.recv().await {
         let (dispatched, action_epoch) = envelope.into_parts();
 
-        // BL-P2-085 Step 11a/b: gate mutations against the live active scope
-        // and emit a structured audit entry on Block. Step 11c will add the
-        // user-facing toast emission here.
+        // BL-P2-085 Step 11a/b/c: gate mutations against the live active
+        // scope, emit a structured audit entry, and surface a UI toast via
+        // `AppEvent::CrossProjectBlocked`. Audit is emitted first so it lands
+        // even when the receiver has been dropped; the UI event follows on
+        // the same epoch so any concurrent `ApiError` for this dispatch is
+        // preceded by the block notification.
         if let GuardDecision::Block { reason } = check_dispatched_origin(&dispatched, &rbac) {
+            let block_event = make_cross_project_blocked_event(&reason, &dispatched.action);
             emit_origin_block_audit(
                 reason,
                 &dispatched,
@@ -88,6 +92,7 @@ pub async fn run_worker(
                 &actor_user_id,
                 action_epoch,
             );
+            let _ = event_tx.send(VersionedEvent::new(block_event, action_epoch));
             continue;
         }
 
@@ -321,6 +326,20 @@ pub(crate) fn check_dispatched_origin(
             cross_project_guard::check_origin_scope(origin, &active)
         }
         None => GuardDecision::Allow,
+    }
+}
+
+/// FR2 (BL-P2-085 Step 11c): build the user-facing `AppEvent::CrossProjectBlocked`
+/// payload from a guard reason and the offending action. The String fields
+/// keep the variant decoupled from `cross_project_guard` so the UI layer
+/// doesn't need to import the guard module.
+pub(crate) fn make_cross_project_blocked_event(
+    reason: &CrossProjectReason,
+    action: &Action,
+) -> AppEvent {
+    AppEvent::CrossProjectBlocked {
+        reason: reason.as_str().to_string(),
+        action: action_name(action).to_string(),
     }
 }
 
@@ -1642,6 +1661,58 @@ mod tests {
         emit_origin_block_audit(
             reason, &dispatched, &rbac, None, "devstack", "user-uuid", 7,
         );
+    }
+
+    // --- BL-P2-085 Step 11c: read-only bypass + AppEvent::CrossProjectBlocked ---
+
+    #[test]
+    fn test_worker_allows_readonly_without_guard() {
+        use crate::infra::cross_project_guard::GuardDecision;
+
+        // Read-only (unstamped) actions carry `origin_project_id = None`. The
+        // worker must let them through without invoking the origin guard, even
+        // if `RbacGuard.project_id()` is `None` (pre-auth state).
+        let rbac = RbacGuard::new(); // no project_id set
+        let dispatched = DispatchedAction::unstamped(Action::FetchServers);
+        assert_eq!(
+            check_dispatched_origin(&dispatched, &rbac),
+            GuardDecision::Allow,
+            "unstamped actions must skip the origin guard",
+        );
+
+        // Even when `RbacGuard` has an active project, an unstamped action
+        // still bypasses (the guard only fires on stamped envelopes).
+        let scoped = rbac_with_project("p-active");
+        let dispatched_scoped = DispatchedAction::unstamped(Action::FetchServers);
+        assert_eq!(
+            check_dispatched_origin(&dispatched_scoped, &scoped),
+            GuardDecision::Allow,
+        );
+    }
+
+    #[test]
+    fn test_make_cross_project_blocked_event_carries_reason_and_action() {
+        use crate::infra::cross_project_guard::CrossProjectReason;
+
+        let action = Action::DeleteServer {
+            id: "s1".into(),
+            name: "web".into(),
+        };
+        let reason = CrossProjectReason::OriginScopeMismatch {
+            origin: "p-stale".into(),
+            active: "p-active".into(),
+        };
+        let event = make_cross_project_blocked_event(&reason, &action);
+        match event {
+            AppEvent::CrossProjectBlocked {
+                reason: ev_reason,
+                action: ev_action,
+            } => {
+                assert_eq!(ev_reason, "origin_scope_mismatch");
+                assert_eq!(ev_action, "DeleteServer");
+            }
+            other => panic!("expected CrossProjectBlocked, got {other:?}"),
+        }
     }
 
     #[test]
