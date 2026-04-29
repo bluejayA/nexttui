@@ -231,14 +231,18 @@
 
 ### Phase 7 — Worker hook
 
-- [ ] **Step 11**: `run_worker` C5 pseudo-flow + AuditLogger 통합 (RED-time 발견 반영)
-  - **Worker signature 확장**: `run_worker(...)`가 `Option<Arc<AuditLogger>>` 추가 인자 (test 호환). 기존 worker는 audit_logger 부재로도 동작 가능 (best-effort).
-  - [ ] RED:
-    - `test_worker_allows_mutation_when_origin_matches`
-    - `test_worker_blocks_mutation_when_origin_mismatch` — emit된 AuditEntry가 `result == AuditResult::Failed("cross_project_block:origin_scope_mismatch")` + details에 `guard_layer="fr2_worker"` + `correlation_id == envelope.epoch()` 포함
-    - `test_worker_allows_readonly_without_guard`
-    - `test_worker_emits_toast_before_any_api_error` — Warning 토스트 동기 emit 순서
-    - `test_worker_block_works_without_audit_logger` — logger=None일 때도 차단 동작
+- [ ] **Step 11**: `run_worker` C5 pseudo-flow + AuditLogger 통합 (RED-time 발견 반영) — **3-cycle 분할 진행 중 (11a/11b/11c)**
+  - **분할 근거**: worker FR2 hook는 시그니처 +3 인자, `AppEvent` variant 신규, `CrossProjectBlockEvent::new` 편의 생성자, main wire 등 영향범위가 큼. 토큰 분산 + 외부 리뷰 주기 확보를 위해 11a→11b→11c 순차 진행.
+  - **Worker signature 확장 (전체 11 끝나면 도달할 모습)**: `run_worker(...)`가 `Option<Arc<AuditLogger>>` 추가 인자 (test 호환). 기존 worker는 audit_logger 부재로도 동작 가능 (best-effort).
+  - [x] **Step 11a (완료)** — origin guard hook 단일 레이어. signature 미변경 (rbac/dispatched로 충분). `pub(crate) fn check_dispatched_origin(&DispatchedAction, &RbacGuard) -> GuardDecision` 추가, `run_worker` recv loop에 `if Block { continue; }` 1줄 hook. audit/toast 없이 silent block. **2 RED tests** (allow_match / block_mismatch). 1413 → **1415 pass**, clippy clean.
+  - [ ] **Step 11b** — AuditLogger 통합 + `CrossProjectBlockEvent::new` 편의 생성자 + 1 test (`test_worker_block_works_without_audit_logger` — logger=None일 때도 차단 동작 + `result == AuditResult::Failed("cross_project_block:origin_scope_mismatch")` + details `guard_layer="fr2_worker"` + `correlation_id == envelope.epoch()` 포함). signature: `audit_logger: Option<Arc<AuditLogger>>` 추가.
+  - [ ] **Step 11c** — `AppEvent::CrossProjectBlocked` variant + `App::generate_toast` 매핑 + 2 tests (`test_worker_emits_toast_before_any_api_error` Warning 토스트 동기 emit 순서 / `test_worker_allows_readonly_without_guard` unstamped 통과).
+  - [ ] RED (legacy — 11a/11b/11c 분리됨):
+    - `test_worker_allows_mutation_when_origin_matches` (11a — done)
+    - `test_worker_blocks_mutation_when_origin_mismatch` (11a — done. Step 11b에서 audit assertion 추가)
+    - `test_worker_allows_readonly_without_guard` (11c)
+    - `test_worker_emits_toast_before_any_api_error` (11c)
+    - `test_worker_block_works_without_audit_logger` (11b)
   - [ ] Verify RED
   - [ ] GREEN:
     ```rust

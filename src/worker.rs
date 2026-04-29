@@ -16,6 +16,7 @@ use crate::action::{Action, DispatchedAction};
 use crate::adapter::registry::AdapterRegistry;
 use crate::context::{Epoch, VersionedEvent};
 use crate::event::AppEvent;
+use crate::infra::cross_project_guard::{self, GuardDecision};
 use crate::infra::rbac::{ActionKind, RbacGuard};
 use crate::port::types::*;
 
@@ -62,9 +63,13 @@ pub async fn run_worker(
 
     while let Some(envelope) = action_rx.recv().await {
         let (dispatched, action_epoch) = envelope.into_parts();
-        // BL-P2-085 Step 11 will read `dispatched.origin_project_id` to gate
-        // mutations against the live active scope. Until then we just
-        // unwrap the `Action` payload and continue with existing behavior.
+
+        // BL-P2-085 Step 11a: gate mutations against the live active scope.
+        // Step 11b wires audit emission on `Block`; Step 11c wires the toast.
+        if let GuardDecision::Block { .. } = check_dispatched_origin(&dispatched, &rbac) {
+            continue;
+        }
+
         let action = dispatched.action;
 
         // RBAC guard: check CUD permissions before API call
@@ -275,6 +280,27 @@ pub(crate) fn action_to_kind(action: &Action) -> Option<ActionKind> {
 /// `origin_project_id` on the outgoing `DispatchedAction`.
 pub(crate) fn action_is_mutation(action: &Action) -> bool {
     action_to_kind(action).is_some()
+}
+
+/// FR2 (BL-P2-085 Step 11a): compare a dispatched action's `origin_project_id`
+/// against the live active scope on `RbacGuard`.
+///
+/// Read-only (unstamped) actions return [`GuardDecision::Allow`]. Stamped
+/// actions defer to [`cross_project_guard::check_origin_scope`], which
+/// fail-safe blocks empty/unscoped values. Sync — callable in unit tests
+/// without spawning the worker loop. Step 11b will wire `AuditLogger::emit`
+/// on `Block`; Step 11c will add toast emission.
+pub(crate) fn check_dispatched_origin(
+    dispatched: &DispatchedAction,
+    rbac: &RbacGuard,
+) -> GuardDecision {
+    match &dispatched.origin_project_id {
+        Some(origin) => {
+            let active = rbac.project_id().unwrap_or_default();
+            cross_project_guard::check_origin_scope(origin, &active)
+        }
+        None => GuardDecision::Allow,
+    }
 }
 
 /// Human-readable name for an Action, used in PermissionDenied messages.
@@ -1423,6 +1449,66 @@ mod tests {
         // Wrapper parity: action_is_mutation == action_to_kind.is_some()
         for a in [&m, &r] {
             assert_eq!(action_is_mutation(a), action_to_kind(a).is_some());
+        }
+    }
+
+    // --- BL-P2-085 Step 11a: worker origin/active guard hook ---
+
+    fn rbac_with_project(project_id: &str) -> RbacGuard {
+        use crate::port::types::TokenRole;
+        let guard = RbacGuard::new();
+        guard.update_roles(
+            vec![TokenRole {
+                id: "member-id".into(),
+                name: "member".into(),
+            }],
+            Some(project_id.into()),
+        );
+        guard
+    }
+
+    #[test]
+    fn test_worker_allows_mutation_when_origin_matches() {
+        use crate::infra::cross_project_guard::GuardDecision;
+
+        let rbac = rbac_with_project("p-active");
+        let dispatched = DispatchedAction::stamped(
+            Action::DeleteServer {
+                id: "s1".into(),
+                name: "n".into(),
+            },
+            "p-active".into(),
+        );
+        assert_eq!(
+            check_dispatched_origin(&dispatched, &rbac),
+            GuardDecision::Allow,
+        );
+    }
+
+    #[test]
+    fn test_worker_blocks_mutation_when_origin_mismatch() {
+        use crate::infra::cross_project_guard::{CrossProjectReason, GuardDecision};
+
+        let rbac = rbac_with_project("p-active");
+        let dispatched = DispatchedAction::stamped(
+            Action::DeleteServer {
+                id: "s1".into(),
+                name: "n".into(),
+            },
+            "p-stale".into(),
+        );
+        match check_dispatched_origin(&dispatched, &rbac) {
+            GuardDecision::Block {
+                reason:
+                    CrossProjectReason::OriginScopeMismatch {
+                        ref origin,
+                        ref active,
+                    },
+            } => {
+                assert_eq!(origin, "p-stale");
+                assert_eq!(active, "p-active");
+            }
+            other => panic!("expected OriginScopeMismatch Block, got {other:?}"),
         }
     }
 
