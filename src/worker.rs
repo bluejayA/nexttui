@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use chrono::{DateTime, Utc};
 use tokio::sync::mpsc;
@@ -53,10 +53,11 @@ where
 /// Receives Actions from `action_rx`, calls the appropriate API via `registry`,
 /// and sends resulting AppEvents to `event_tx`.
 ///
-/// `audit_logger` and `actor_*` are FR2 (BL-P2-085) wiring: when an origin
+/// `audit_logger` and `actor_ctx` are FR2 (BL-P2-085) wiring: when an origin
 /// guard rejects a mutation, the worker emits a structured
-/// `CrossProjectBlockEvent` through the shared `AuditLogger` instance. Both
-/// are best-effort — `None`/empty values fall back to `tracing::warn!`.
+/// `CrossProjectBlockEvent` through the shared `AuditLogger` instance.
+/// `actor_ctx` is read live at each emit so a runtime cloud-switch is
+/// reflected in subsequent audit entries.
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all)]
 pub async fn run_worker(
@@ -66,8 +67,7 @@ pub async fn run_worker(
     mut action_rx: mpsc::UnboundedReceiver<VersionedEvent<DispatchedAction>>,
     event_tx: mpsc::UnboundedSender<VersionedEvent<AppEvent>>,
     audit_logger: Option<Arc<AuditLogger>>,
-    actor_cloud: String,
-    actor_user_id: String,
+    actor_ctx: Arc<RwLock<ActorContext>>,
 ) {
     let polling_servers: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
     let in_flight_fetches: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
@@ -88,8 +88,7 @@ pub async fn run_worker(
                 &dispatched,
                 &rbac,
                 audit_logger.as_deref(),
-                &actor_cloud,
-                &actor_user_id,
+                &actor_ctx,
                 action_epoch,
             );
             let _ = event_tx.send(VersionedEvent::new(block_event, action_epoch));
@@ -329,6 +328,21 @@ pub(crate) fn check_dispatched_origin(
     }
 }
 
+/// FR2 (BL-P2-085 Phase 7 폴리싱): live actor identity used by the worker when
+/// emitting `CrossProjectBlockEvent`s. Wrapped in `Arc<RwLock<...>>` so a
+/// runtime cloud-switch (BL-P2-074) can update the active cloud without
+/// re-spawning the worker. Without this, audit entries stay anchored to the
+/// startup cloud forever.
+///
+/// `user_id` falls back to `"unknown"` (matches `App::build_audit_entry` line
+/// 814) when the configured credential lacks an explicit username — empty
+/// strings would silently break audit attribution.
+#[derive(Debug, Clone)]
+pub struct ActorContext {
+    pub cloud: String,
+    pub user_id: String,
+}
+
 /// FR2 (BL-P2-085 Step 11c): build the user-facing `AppEvent::CrossProjectBlocked`
 /// payload from a guard reason and the offending action. The String fields
 /// keep the variant decoupled from `cross_project_guard` so the UI layer
@@ -343,33 +357,43 @@ pub(crate) fn make_cross_project_blocked_event(
     }
 }
 
-/// FR2 (BL-P2-085 Step 11b): build a [`CrossProjectBlockEvent`] from a worker
-/// origin-mismatch decision and emit it via [`cross_project_audit::emit`].
+/// FR2 (BL-P2-085 Step 11b, 폴리싱): build a [`CrossProjectBlockEvent`] from a
+/// worker origin-mismatch decision and emit it via
+/// [`cross_project_audit::emit`].
+///
+/// Reads `actor_ctx` at call time so a cloud-switch landing between worker
+/// spawn and the next block is reflected in the audit entry.
 ///
 /// Best-effort: when `audit_logger` is `None`, `emit` falls back to
 /// `tracing::warn!` so the block still surfaces in process logs. Sync —
 /// callable in unit tests without spawning the worker loop.
 ///
-/// `resource_kind`/`resource_id`/`target_project_id` are left blank/None for
-/// now; Step 11c (toast) and a follow-up enrichment pass will populate them
-/// per-action. Audit consumers grep on `action_type` + `details.guard_layer`
-/// today and gain richer slicing once enrichment lands.
+/// `resource_kind` / `resource_id` / `target_project_id` are left blank/None
+/// for now; a follow-up enrichment pass will populate them per-action so
+/// audit consumers can slice on `details.resource_kind`. Until then they
+/// grep on `action_type` + `details.guard_layer`.
 pub(crate) fn emit_origin_block_audit(
     reason: CrossProjectReason,
     dispatched: &DispatchedAction,
     rbac: &RbacGuard,
     audit_logger: Option<&AuditLogger>,
-    actor_cloud: &str,
-    actor_user_id: &str,
+    actor_ctx: &Arc<RwLock<ActorContext>>,
     correlation_id: u64,
 ) {
+    let actor = actor_ctx
+        .read()
+        .map(|guard| (guard.cloud.clone(), guard.user_id.clone()))
+        .unwrap_or_else(|e| {
+            let guard = e.into_inner();
+            (guard.cloud.clone(), guard.user_id.clone())
+        });
     let event = CrossProjectBlockEvent::new(
         reason,
         GuardLayer::Fr2Worker,
         action_name(&dispatched.action),
-        "", // resource_kind: enriched in Step 11c follow-up
-        actor_cloud,
-        actor_user_id,
+        "", // resource_kind: enriched in follow-up pass
+        actor.0,
+        actor.1,
         rbac.project_id(),
         dispatched.origin_project_id.clone(),
         correlation_id,
@@ -1541,6 +1565,13 @@ mod tests {
         guard
     }
 
+    fn actor_ctx_with(cloud: &str, user_id: &str) -> Arc<RwLock<ActorContext>> {
+        Arc::new(RwLock::new(ActorContext {
+            cloud: cloud.into(),
+            user_id: user_id.into(),
+        }))
+    }
+
     #[test]
     fn test_worker_allows_mutation_when_origin_matches() {
         use crate::infra::cross_project_guard::GuardDecision;
@@ -1609,16 +1640,9 @@ mod tests {
             origin: "p-stale".into(),
             active: "p-active".into(),
         };
+        let actor = actor_ctx_with("devstack", "user-uuid");
 
-        emit_origin_block_audit(
-            reason,
-            &dispatched,
-            &rbac,
-            Some(&logger),
-            "devstack",
-            "user-uuid",
-            42,
-        );
+        emit_origin_block_audit(reason, &dispatched, &rbac, Some(&logger), &actor, 42);
 
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(
@@ -1655,11 +1679,67 @@ mod tests {
             origin: "p-stale".into(),
             active: "p-active".into(),
         };
+        let actor = actor_ctx_with("devstack", "user-uuid");
 
         // logger=None must remain best-effort — the worker must still block,
         // and emit() falls back to tracing without panicking.
-        emit_origin_block_audit(
-            reason, &dispatched, &rbac, None, "devstack", "user-uuid", 7,
+        emit_origin_block_audit(reason, &dispatched, &rbac, None, &actor, 7);
+    }
+
+    #[test]
+    fn test_emit_origin_block_audit_picks_up_actor_context_mutation() {
+        use crate::infra::audit::AuditLogger;
+        use crate::infra::cross_project_guard::CrossProjectReason;
+
+        // Phase 7 폴리싱: a runtime cloud-switch (BL-P2-074) mutates
+        // `ActorContext.cloud` in place via the shared `RwLock`. The next
+        // worker block emit must reflect the new cloud — without live read,
+        // audit entries stay anchored to the worker's spawn cloud forever.
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("audit.log");
+        let logger = AuditLogger::new(path.clone()).unwrap();
+
+        let rbac = rbac_with_project("p-active");
+        let dispatched = || {
+            DispatchedAction::stamped(
+                Action::DeleteServer {
+                    id: "s1".into(),
+                    name: "n".into(),
+                },
+                "p-stale".into(),
+            )
+        };
+        let reason_a = CrossProjectReason::OriginScopeMismatch {
+            origin: "p-stale".into(),
+            active: "p-active".into(),
+        };
+        let reason_b = reason_a.clone();
+        let actor = actor_ctx_with("cloud-A", "user-uuid");
+
+        emit_origin_block_audit(reason_a, &dispatched(), &rbac, Some(&logger), &actor, 1);
+
+        // Cloud-switch arrives between dispatches — App's ContextChanged
+        // handler updates the shared RwLock.
+        actor
+            .write()
+            .expect("actor_ctx write lock")
+            .cloud
+            .replace_range(.., "cloud-B");
+
+        emit_origin_block_audit(reason_b, &dispatched(), &rbac, Some(&logger), &actor, 2);
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(lines.len(), 2, "expected 2 audit lines, got: {content}");
+        let first: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+        let second: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+        assert_eq!(
+            first["cloud"], "cloud-A",
+            "first emit must use the spawn-time cloud"
+        );
+        assert_eq!(
+            second["cloud"], "cloud-B",
+            "second emit must reflect post-switch cloud (live RwLock read)"
         );
     }
 

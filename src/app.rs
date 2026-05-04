@@ -78,6 +78,10 @@ pub struct App {
     activity_popup: ActivityLogPopup,
     show_activity_log: bool,
     audit_logger: Option<Arc<AuditLogger>>,
+    /// Phase 7 폴리싱: shared with the background worker so a runtime
+    /// cloud-switch updates the next `CrossProjectBlockEvent`'s `cloud`
+    /// field. Wired post-construction via `set_actor_ctx`.
+    actor_ctx: Option<Arc<std::sync::RwLock<crate::worker::ActorContext>>>,
     /// Command bar input widget (`:`-triggered). Paired with `command_parser`.
     pub(crate) input_bar: InputBar,
     pub(crate) command_parser: CommandParser,
@@ -124,6 +128,7 @@ impl App {
             activity_popup: ActivityLogPopup::new(),
             show_activity_log: false,
             audit_logger,
+            actor_ctx: None,
             input_bar: InputBar::new(),
             command_parser,
             context_indicator: ContextIndicator::new(std::time::Duration::from_secs(2)),
@@ -169,6 +174,7 @@ impl App {
             activity_popup: ActivityLogPopup::new(),
             show_activity_log: false,
             audit_logger,
+            actor_ctx: None,
             input_bar: InputBar::new(),
             command_parser,
             context_indicator: ContextIndicator::new(std::time::Duration::from_secs(2)),
@@ -639,6 +645,15 @@ impl App {
             if let Some(cache) = &self.directory_cache {
                 cache.invalidate_cloud(&target.cloud);
             }
+            // BL-P2-085 Phase 7 폴리싱: the worker reads `actor_ctx` live at
+            // each block emit. Without this update, audit entries from the
+            // worker stay anchored to the spawn-time cloud after the user
+            // switches.
+            if let Some(ref ctx) = self.actor_ctx
+                && let Ok(mut guard) = ctx.write()
+            {
+                guard.cloud = target.cloud.clone();
+            }
             self.context_indicator.set_target(target, true);
             for component in self.components.values_mut() {
                 component.on_context_changed();
@@ -784,6 +799,17 @@ impl App {
     /// same `Arc` and emit `CrossProjectBlockEvent` entries through it.
     pub fn audit_logger_arc(&self) -> Option<Arc<AuditLogger>> {
         self.audit_logger.clone()
+    }
+
+    /// Phase 7 폴리싱: install the shared actor context so `ContextChanged`
+    /// updates land in the worker's next audit entry. The Arc is held by
+    /// both the worker and this `App`; mutations through the `RwLock` are
+    /// visible to both sides without re-spawning the worker.
+    pub fn set_actor_ctx(
+        &mut self,
+        ctx: Arc<std::sync::RwLock<crate::worker::ActorContext>>,
+    ) {
+        self.actor_ctx = Some(ctx);
     }
 
     /// Record a CUD event to the audit log. Errors are logged as warnings, never propagated.

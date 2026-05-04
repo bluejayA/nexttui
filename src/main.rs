@@ -164,29 +164,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             App::from_registry(config, action_tx.clone(), module_registry, rbac.clone());
 
         // Spawn background worker.
-        // BL-P2-085 Step 11b: share the same `Arc<AuditLogger>` with `App` so
+        // BL-P2-085 Phase 7: share the same `Arc<AuditLogger>` with `App` so
         // both worker-side block events and app-side success entries land in
-        // a single rotated log. `actor_cloud`/`actor_user_id` are best-effort
-        // — `actor_user_id` falls back to the configured username (matches
-        // `App::build_audit_entry`); a follow-up will resolve the Keystone UUID
-        // from the live `Token` and rewire when context-switching.
-        let audit_logger_for_worker = app.audit_logger_arc();
-        let actor_cloud = config_for_wire.active_cloud_name().to_string();
-        let actor_user_id = config_for_wire
-            .active_cloud_config()
-            .auth
-            .username
-            .clone()
-            .unwrap_or_default();
+        // a single rotated log. `actor_ctx` lives behind an `Arc<RwLock<...>>`
+        // so a runtime cloud-switch (BL-P2-074) updates the next audit entry
+        // — `App::handle_event` writes the new cloud on `ContextChanged`.
+        // `user_id` falls back to `"unknown"` (matches `App::build_audit_entry`)
+        // when the credential lacks an explicit username; a follow-up resolves
+        // the Keystone UUID from the live `Token`.
+        let audit_logger = app.audit_logger_arc();
+        let initial_user_id = if wire_username.is_empty() {
+            "unknown".to_string()
+        } else {
+            wire_username.clone()
+        };
+        let actor_ctx = Arc::new(std::sync::RwLock::new(nexttui::worker::ActorContext {
+            cloud: config_for_wire.active_cloud_name().to_string(),
+            user_id: initial_user_id,
+        }));
+        app.set_actor_ctx(actor_ctx.clone());
         tokio::spawn(run_worker(
             registry,
             rbac,
             app.all_tenants.clone(),
             action_rx,
             event_tx.clone(),
-            audit_logger_for_worker,
-            actor_cloud,
-            actor_user_id,
+            audit_logger,
+            actor_ctx,
         ));
 
         // Trigger initial data load
