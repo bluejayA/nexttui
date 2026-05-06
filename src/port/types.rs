@@ -232,16 +232,19 @@ pub struct ImageListFilter {
 #[derive(Debug, Clone, Default)]
 pub struct NetworkListFilter {
     pub all_tenants: bool,
+    pub tenant_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct SecurityGroupListFilter {
     pub all_tenants: bool,
+    pub tenant_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct FloatingIpListFilter {
     pub all_tenants: bool,
+    pub tenant_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]

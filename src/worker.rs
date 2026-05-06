@@ -127,13 +127,18 @@ pub async fn run_worker(
         let polling_servers = polling_servers.clone();
         let in_flight_fetches = in_flight_fetches.clone();
 
+        // BL-P2-085 Step 12: snapshot active project once per dispatch and
+        // pass it to handle_action so Neutron list builders inject
+        // `tenant_id={scope}` when `all_tenants=false`.
+        let active_tenant = rbac.project_id();
+
         let poll_migration_id = poll_migration_server_id(&action);
         let poll_status_id = poll_server_id_for_status(&action);
 
         let span = tracing::info_span!("worker_task", action = action_name(&action));
         tokio::spawn(
             async move {
-                let event = handle_action(&registry, &all_tenants, action).await;
+                let event = handle_action(&registry, &all_tenants, active_tenant, action).await;
                 let success = event
                     .as_ref()
                     .is_some_and(|ev| !matches!(ev, AppEvent::ApiError { .. }));
@@ -456,12 +461,17 @@ fn action_name(action: &Action) -> &str {
 async fn handle_action(
     registry: &AdapterRegistry,
     all_tenants: &AtomicBool,
+    active_tenant: Option<String>,
     action: Action,
 ) -> Option<AppEvent> {
     let action_label = action_name(&action);
     tracing::info!(action = action_label, "handling action");
     let default_pagination = PaginationParams::default();
     let at = all_tenants.load(Ordering::Relaxed);
+    // BL-P2-085 Step 12: when admin explicitly toggled `all_tenants` we omit
+    // tenant_id; otherwise inject the live active scope so server-side scoping
+    // matches the worker mutation guard's view of the world.
+    let scoped_tenant_id = if at { None } else { active_tenant.clone() };
 
     match action {
         // -- Nova: Servers --------------------------------------------------
@@ -655,7 +665,13 @@ async fn handle_action(
         Action::FetchNetworks => {
             match registry
                 .neutron
-                .list_networks(&NetworkListFilter { all_tenants: at }, &default_pagination)
+                .list_networks(
+                    &NetworkListFilter {
+                        all_tenants: at,
+                        tenant_id: scoped_tenant_id.clone(),
+                    },
+                    &default_pagination,
+                )
                 .await
             {
                 Ok(resp) => Some(AppEvent::NetworksLoaded(resp.items)),
@@ -681,7 +697,10 @@ async fn handle_action(
             match registry
                 .neutron
                 .list_security_groups(
-                    &SecurityGroupListFilter { all_tenants: at },
+                    &SecurityGroupListFilter {
+                        all_tenants: at,
+                        tenant_id: scoped_tenant_id.clone(),
+                    },
                     &default_pagination,
                 )
                 .await
@@ -720,7 +739,10 @@ async fn handle_action(
             match registry
                 .neutron
                 .list_floating_ips(
-                    &FloatingIpListFilter { all_tenants: at },
+                    &FloatingIpListFilter {
+                        all_tenants: at,
+                        tenant_id: scoped_tenant_id.clone(),
+                    },
                     &default_pagination,
                 )
                 .await
