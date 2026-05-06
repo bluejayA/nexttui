@@ -5,6 +5,7 @@ pub mod glance;
 pub mod keystone;
 pub mod neutron;
 pub mod nova;
+pub mod scope_refilter;
 
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
