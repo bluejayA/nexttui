@@ -141,14 +141,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             AuthMethod::ApplicationCredential { id, .. } => id.clone(),
         };
 
-        let auth_provider = Arc::new(KeystoneAuthAdapter::new(credential)?);
-        let registry = Arc::new(AdapterRegistry::new_http(
-            auth_provider.clone(),
-            cloud.region_name.clone(),
-        )?);
+        // Capture owned copies so the `cloud` borrow can be released before
+        // `config` is moved into `App::from_registry`. Step 13b-3 deferred
+        // the `AdapterRegistry::new_http` call until after the App is built,
+        // and the registry constructor still needs `region_name`.
+        let cloud_region = cloud.region_name.clone();
 
-        // === Phase B: collect endpoint caches before worker consumes registry ===
-        let endpoint_caches = registry.endpoint_caches().to_vec();
+        let auth_provider = Arc::new(KeystoneAuthAdapter::new(credential)?);
 
         // Trigger initial authentication, then initialize RBAC from token roles
         // (the `rbac` Arc was constructed earlier so ActionSender already holds
@@ -163,7 +162,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (mut app, initial_actions) =
             App::from_registry(config, action_tx.clone(), module_registry, rbac.clone());
 
-        // Spawn background worker.
         // BL-P2-085 Phase 7: share the same `Arc<AuditLogger>` with `App` so
         // both worker-side block events and app-side success entries land in
         // a single rotated log. `actor_ctx` lives behind an `Arc<RwLock<...>>`
@@ -183,6 +181,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             user_id: initial_user_id,
         }));
         app.set_actor_ctx(actor_ctx.clone());
+
+        // BL-P2-085 Step 13b-3: build the Neutron audit context once
+        // `audit_logger`, `rbac` (live ScopeProvider), and `actor_ctx` are
+        // all available, then hand it to the registry so every Neutron
+        // `list_*` runs response-side `refilter_by_scope` and emits an
+        // `AdapterFilterViolation` event per dropped row.
+        let neutron_audit = audit_logger
+            .clone()
+            .map(|logger| {
+                Arc::new(nexttui::adapter::http::neutron_audit::NeutronAuditCtx {
+                    logger,
+                    scope_provider: rbac.clone()
+                        as Arc<dyn nexttui::context::action_channel::ScopeProvider>,
+                    actor_ctx: actor_ctx.clone(),
+                })
+            });
+
+        let registry = Arc::new(AdapterRegistry::new_http(
+            auth_provider.clone(),
+            cloud_region,
+            neutron_audit,
+        )?);
+
+        // === Phase B: collect endpoint caches before worker consumes registry ===
+        let endpoint_caches = registry.endpoint_caches().to_vec();
+
         tokio::spawn(run_worker(
             registry,
             rbac,

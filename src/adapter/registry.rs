@@ -5,6 +5,7 @@ use crate::adapter::http::cinder::CinderHttpAdapter;
 use crate::adapter::http::glance::GlanceHttpAdapter;
 use crate::adapter::http::keystone::KeystoneHttpAdapter;
 use crate::adapter::http::neutron::NeutronHttpAdapter;
+use crate::adapter::http::neutron_audit::NeutronAuditCtx;
 use crate::adapter::http::nova::NovaHttpAdapter;
 use crate::port::auth::AuthProvider;
 use crate::port::cinder::CinderPort;
@@ -44,7 +45,17 @@ impl AdapterRegistry {
     }
 
     /// Create all HTTP adapters from the given auth provider and region.
-    pub fn new_http(auth: Arc<dyn AuthProvider>, region: Option<String>) -> Result<Self, ApiError> {
+    ///
+    /// `neutron_audit` (BL-P2-085 Step 13b-3) attaches a per-row
+    /// `AdapterFilterViolation` audit context to the Neutron adapter. Pass
+    /// `None` for environments without an audit logger (mock registries,
+    /// integration tests that don't care about audit emission); the Neutron
+    /// adapter then behaves as a pre-Step-13b passthrough.
+    pub fn new_http(
+        auth: Arc<dyn AuthProvider>,
+        region: Option<String>,
+        neutron_audit: Option<Arc<NeutronAuditCtx>>,
+    ) -> Result<Self, ApiError> {
         let nova_base = Self::make_base(auth.clone(), "compute", region.clone())?;
         let neutron_base = Self::make_base(auth.clone(), "network", region.clone())?;
         let cinder_base = Self::make_base(auth.clone(), "block-storage", region.clone())?;
@@ -59,9 +70,14 @@ impl AdapterRegistry {
             keystone_base.clone(),
         ];
 
+        let mut neutron = NeutronHttpAdapter::from_base(neutron_base);
+        if let Some(ctx) = neutron_audit {
+            neutron = neutron.with_audit(ctx);
+        }
+
         Ok(Self {
             nova: Arc::new(NovaHttpAdapter::from_base(nova_base)),
-            neutron: Arc::new(NeutronHttpAdapter::from_base(neutron_base)),
+            neutron: Arc::new(neutron),
             cinder: Arc::new(CinderHttpAdapter::from_base(cinder_base)),
             glance: Arc::new(GlanceHttpAdapter::from_base(glance_base)),
             keystone: Arc::new(KeystoneHttpAdapter::from_base(keystone_base)),
