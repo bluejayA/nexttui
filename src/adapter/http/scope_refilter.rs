@@ -41,6 +41,64 @@ pub trait HasTenantId {
     fn resource_id(&self) -> Option<&str>;
 }
 
+/// Encodes the (active, all_tenants) invariant for [`refilter_by_scope`] in
+/// three ctor-validated states. Constructed via [`RefilterScope::strict`],
+/// [`RefilterScope::all_tenants`], [`RefilterScope::unscoped`], or
+/// [`RefilterScope::from_parts`]; raw fields are kept private so an invalid
+/// combination (e.g. `active=Some + all_tenants=true`) cannot be expressed.
+#[derive(Debug, Clone, Copy)]
+pub struct RefilterScope<'a> {
+    active: Option<&'a str>,
+    all_tenants: bool,
+}
+
+impl<'a> RefilterScope<'a> {
+    /// Strict refilter: drop everything not matching `active`.
+    pub fn strict(active: &'a str) -> Self {
+        Self {
+            active: Some(active),
+            all_tenants: false,
+        }
+    }
+
+    /// Admin opt-out: keep every row regardless of project.
+    pub fn all_tenants() -> Self {
+        Self {
+            active: None,
+            all_tenants: true,
+        }
+    }
+
+    /// No scope to compare against (worker-side guard handles mutations).
+    pub fn unscoped() -> Self {
+        Self {
+            active: None,
+            all_tenants: false,
+        }
+    }
+
+    /// Adapter from the legacy 2-arg shape. Normalizes `all_tenants=true` by
+    /// clearing `active`, so the resulting scope always satisfies the
+    /// ctor-validated invariant.
+    pub fn from_parts(active: Option<&'a str>, all_tenants: bool) -> Self {
+        if all_tenants {
+            Self::all_tenants()
+        } else if let Some(a) = active {
+            Self::strict(a)
+        } else {
+            Self::unscoped()
+        }
+    }
+
+    pub fn active(&self) -> Option<&'a str> {
+        self.active
+    }
+
+    pub fn is_all_tenants(&self) -> bool {
+        self.all_tenants
+    }
+}
+
 /// Partition `items` into `(kept, dropped)` according to the scope policy
 /// described in the module-level docstring. The function is allocation-
 /// minimal — `kept` is pre-sized to match `items`, and `dropped` only
@@ -49,13 +107,12 @@ pub trait HasTenantId {
 /// for the common path (large list, zero drops).
 pub fn refilter_by_scope<T: HasTenantId>(
     items: Vec<T>,
-    active: Option<&str>,
-    all_tenants: bool,
+    scope: &RefilterScope<'_>,
 ) -> (Vec<T>, Vec<T>) {
-    if all_tenants {
+    if scope.is_all_tenants() {
         return (items, Vec::new());
     }
-    let Some(active) = active else {
+    let Some(active) = scope.active() else {
         return (items, Vec::new());
     };
     let mut kept = Vec::with_capacity(items.len());
@@ -140,7 +197,7 @@ mod tests {
                 tenant: Some("A"),
             },
         ];
-        let (kept, dropped) = refilter_by_scope(items, Some("A"), false);
+        let (kept, dropped) = refilter_by_scope(items, &RefilterScope::strict("A"));
         assert_eq!(kept.len(), 2, "two A-tenant items should be kept");
         assert_eq!(dropped.len(), 1);
         assert_eq!(dropped[0].id, "b");
@@ -158,7 +215,7 @@ mod tests {
                 tenant: Some("B"),
             },
         ];
-        let (kept, dropped) = refilter_by_scope(items, Some("A"), true);
+        let (kept, dropped) = refilter_by_scope(items, &RefilterScope::all_tenants());
         assert_eq!(kept.len(), 2, "all_tenants=true must short-circuit");
         assert!(dropped.is_empty());
     }
@@ -175,7 +232,7 @@ mod tests {
                 tenant: Some("A"),
             },
         ];
-        let (kept, dropped) = refilter_by_scope(items, Some("A"), false);
+        let (kept, dropped) = refilter_by_scope(items, &RefilterScope::strict("A"));
         assert_eq!(kept.len(), 2);
         assert!(dropped.is_empty());
     }
@@ -194,7 +251,7 @@ mod tests {
                 tenant: Some("A"),
             },
         ];
-        let (kept, dropped) = refilter_by_scope(items, Some("A"), false);
+        let (kept, dropped) = refilter_by_scope(items, &RefilterScope::strict("A"));
         assert_eq!(kept.len(), 1);
         assert_eq!(kept[0].id, "a");
         assert_eq!(dropped.len(), 1);
@@ -213,9 +270,80 @@ mod tests {
                 tenant: Some("B"),
             },
         ];
-        let (kept, dropped) = refilter_by_scope(items, None, false);
+        let (kept, dropped) = refilter_by_scope(items, &RefilterScope::unscoped());
         assert_eq!(kept.len(), 2, "active=None must short-circuit (no-op)");
         assert!(dropped.is_empty());
+    }
+
+    // --- BL-P2-085 Step-14-precedent-refactor-cycle (refactor-1) ---
+    // RefilterScope encodes the (active, all_tenants) invariant in three
+    // ctor-validated states: strict / all_tenants / unscoped. Replaces the
+    // previous 2-arg call shape so 5+ Step-14 callers cannot accidentally
+    // pass active=Some + all_tenants=true (a meaningless combination).
+
+    #[test]
+    fn test_refilter_scope_strict_drops_cross_project_items() {
+        let items = vec![
+            FakeItem {
+                id: "a",
+                tenant: Some("A"),
+            },
+            FakeItem {
+                id: "b",
+                tenant: Some("B"),
+            },
+        ];
+        let scope = RefilterScope::strict("A");
+        let (kept, dropped) = refilter_by_scope(items, &scope);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].id, "a");
+        assert_eq!(dropped.len(), 1);
+        assert_eq!(dropped[0].id, "b");
+    }
+
+    #[test]
+    fn test_refilter_scope_all_tenants_short_circuits() {
+        let items = vec![
+            FakeItem {
+                id: "a",
+                tenant: Some("A"),
+            },
+            FakeItem {
+                id: "b",
+                tenant: Some("B"),
+            },
+        ];
+        let scope = RefilterScope::all_tenants();
+        let (kept, dropped) = refilter_by_scope(items, &scope);
+        assert_eq!(kept.len(), 2);
+        assert!(dropped.is_empty());
+    }
+
+    #[test]
+    fn test_refilter_scope_unscoped_short_circuits() {
+        let items = vec![FakeItem {
+            id: "a",
+            tenant: Some("A"),
+        }];
+        let scope = RefilterScope::unscoped();
+        let (kept, dropped) = refilter_by_scope(items, &scope);
+        assert_eq!(kept.len(), 1);
+        assert!(dropped.is_empty());
+    }
+
+    #[test]
+    fn test_refilter_scope_from_parts_normalizes_invalid_combinations() {
+        let strict = RefilterScope::from_parts(Some("A"), false);
+        assert_eq!(strict.active(), Some("A"));
+        assert!(!strict.is_all_tenants());
+
+        let admin = RefilterScope::from_parts(Some("A"), true);
+        assert_eq!(admin.active(), None, "all_tenants=true must clear active");
+        assert!(admin.is_all_tenants());
+
+        let unscoped = RefilterScope::from_parts(None, false);
+        assert_eq!(unscoped.active(), None);
+        assert!(!unscoped.is_all_tenants());
     }
 
     // --- BL-P2-085 Step 13b: HasTenantId impl for Neutron models ---

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use super::{Link, append_pagination_parts, encode_param, extract_next_marker, paginated_list};
 use crate::adapter::http::base::BaseHttpClient;
 use crate::adapter::http::neutron_audit::NeutronAuditCtx;
-use crate::adapter::http::scope_refilter::refilter_by_scope;
+use crate::adapter::http::scope_refilter::{RefilterScope, refilter_by_scope};
 use crate::models::neutron::{
     FloatingIp, Network, NetworkAgent, Port, SecurityGroup, SecurityGroupRule,
 };
@@ -69,8 +69,8 @@ impl NeutronHttpAdapter {
             return resp;
         };
         let active = ctx.scope_provider.current_project_id();
-        let (kept, dropped) =
-            refilter_by_scope(resp.items, active.as_deref(), all_tenants);
+        let scope = RefilterScope::from_parts(active.as_deref(), all_tenants);
+        let (kept, dropped) = refilter_by_scope(resp.items, &scope);
         // correlation_id=0: list_* are not bound to a worker dispatch,
         // and the canonical fingerprint already disambiguates per-row
         // events via `resource_id`. Replace with the dispatch epoch
