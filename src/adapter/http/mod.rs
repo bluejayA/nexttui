@@ -4,6 +4,7 @@ pub mod endpoint_invalidator;
 pub mod glance;
 pub mod keystone;
 pub mod neutron;
+pub mod neutron_audit;
 pub mod nova;
 pub mod scope_refilter;
 

@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{Link, append_pagination_parts, encode_param, extract_next_marker, paginated_list};
 use crate::adapter::http::base::BaseHttpClient;
+use crate::adapter::http::neutron_audit::NeutronAuditCtx;
+use crate::adapter::http::scope_refilter::refilter_by_scope;
 use crate::models::neutron::{
     FloatingIp, Network, NetworkAgent, Port, SecurityGroup, SecurityGroupRule,
 };
@@ -15,6 +17,7 @@ use crate::port::types::*;
 
 pub struct NeutronHttpAdapter {
     base: Arc<BaseHttpClient>,
+    audit_ctx: Option<Arc<NeutronAuditCtx>>,
 }
 
 impl NeutronHttpAdapter {
@@ -26,11 +29,54 @@ impl NeutronHttpAdapter {
                 EndpointInterface::Public,
                 region,
             )?),
+            audit_ctx: None,
         })
     }
 
     pub fn from_base(base: Arc<BaseHttpClient>) -> Self {
-        Self { base }
+        Self {
+            base,
+            audit_ctx: None,
+        }
+    }
+
+    /// BL-P2-085 Step 13b: attach a `NeutronAuditCtx` so every `list_*` call
+    /// runs `refilter_by_scope` against the response and emits an
+    /// `AdapterFilterViolation` audit event per dropped row. Wired by
+    /// `registry::new_http` (Step 13b-3).
+    pub fn with_audit(mut self, ctx: Arc<NeutronAuditCtx>) -> Self {
+        self.audit_ctx = Some(ctx);
+        self
+    }
+
+    /// Apply response-side scope refiltering to a `PaginatedResponse`.
+    /// No-op when `audit_ctx` is None (pre-Step-13b-3 adapters), preserving
+    /// the original response shape. When attached, runs `refilter_by_scope`
+    /// against the active project from `scope_provider` and emits one
+    /// `AdapterFilterViolation` event per dropped row before returning the
+    /// kept items in a fresh `PaginatedResponse`.
+    fn refilter_response<T>(
+        &self,
+        resp: PaginatedResponse<T>,
+        all_tenants: bool,
+        action_type: &str,
+        resource_kind: &str,
+    ) -> PaginatedResponse<T>
+    where
+        T: crate::adapter::http::scope_refilter::HasTenantId,
+    {
+        let Some(ctx) = self.audit_ctx.as_ref() else {
+            return resp;
+        };
+        let active = ctx.scope_provider.current_project_id();
+        let (kept, dropped) =
+            refilter_by_scope(resp.items, active.as_deref(), all_tenants);
+        ctx.emit_filter_violations(&dropped, action_type, resource_kind, 0);
+        PaginatedResponse {
+            items: kept,
+            next_marker: resp.next_marker,
+            has_more: resp.has_more,
+        }
     }
 }
 
@@ -272,7 +318,7 @@ impl NeutronPort for NeutronHttpAdapter {
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<Network>> {
         let query = build_network_query(filter, pagination);
-        paginated_list(
+        let resp = paginated_list(
             &self.base,
             "/v2.0/networks",
             &query,
@@ -281,7 +327,8 @@ impl NeutronPort for NeutronHttpAdapter {
                 (resp.networks, next)
             },
         )
-        .await
+        .await?;
+        Ok(self.refilter_response(resp, filter.all_tenants, "FetchNetworks", "network"))
     }
 
     async fn get_network(&self, network_id: &str) -> ApiResult<Network> {
@@ -359,7 +406,7 @@ impl NeutronPort for NeutronHttpAdapter {
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<SecurityGroup>> {
         let query = build_security_group_query(filter, pagination);
-        paginated_list(
+        let resp = paginated_list(
             &self.base,
             "/v2.0/security-groups",
             &query,
@@ -371,7 +418,13 @@ impl NeutronPort for NeutronHttpAdapter {
                 (resp.security_groups, next)
             },
         )
-        .await
+        .await?;
+        Ok(self.refilter_response(
+            resp,
+            filter.all_tenants,
+            "FetchSecurityGroups",
+            "security_group",
+        ))
     }
 
     async fn get_security_group(&self, sg_id: &str) -> ApiResult<SecurityGroup> {
@@ -472,7 +525,7 @@ impl NeutronPort for NeutronHttpAdapter {
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<FloatingIp>> {
         let query = build_floating_ip_query(filter, pagination);
-        paginated_list(
+        let resp = paginated_list(
             &self.base,
             "/v2.0/floatingips",
             &query,
@@ -484,7 +537,8 @@ impl NeutronPort for NeutronHttpAdapter {
                 (resp.floatingips, next)
             },
         )
-        .await
+        .await?;
+        Ok(self.refilter_response(resp, filter.all_tenants, "FetchFloatingIps", "floating_ip"))
     }
 
     async fn create_floating_ip(&self, params: &FloatingIpCreateParams) -> ApiResult<FloatingIp> {
