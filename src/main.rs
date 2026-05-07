@@ -18,9 +18,11 @@ use nexttui::adapter::auth::scoped_session::ScopedAuthSession;
 use nexttui::adapter::auth::token_cache::{self as token_cache, TokenCacheStore};
 use nexttui::adapter::auth::{DirectoryCache, DomainNameResolver, KeystoneProjectDirectory};
 use nexttui::adapter::http::endpoint_invalidator::EndpointCatalogInvalidator;
+use nexttui::adapter::http::neutron_audit::NeutronAuditCtx;
 use nexttui::adapter::registry::AdapterRegistry;
 use nexttui::app::App;
 use nexttui::config::Config;
+use nexttui::context::action_channel::ScopeProvider;
 use nexttui::context::{
     CancellationRegistry, ConfigCloudDirectory, ContextHistoryStore, ContextSwitcher,
     ContextTargetResolver, SwitchStateMachine,
@@ -187,16 +189,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // all available, then hand it to the registry so every Neutron
         // `list_*` runs response-side `refilter_by_scope` and emits an
         // `AdapterFilterViolation` event per dropped row.
-        let neutron_audit = audit_logger
-            .clone()
-            .map(|logger| {
-                Arc::new(nexttui::adapter::http::neutron_audit::NeutronAuditCtx {
-                    logger,
-                    scope_provider: rbac.clone()
-                        as Arc<dyn nexttui::context::action_channel::ScopeProvider>,
-                    actor_ctx: actor_ctx.clone(),
-                })
-            });
+        let neutron_audit = audit_logger.clone().map(|logger| {
+            Arc::new(NeutronAuditCtx {
+                logger,
+                scope_provider: rbac.clone() as Arc<dyn ScopeProvider>,
+                actor_ctx: actor_ctx.clone(),
+            })
+        });
 
         let registry = Arc::new(AdapterRegistry::new_http(
             auth_provider.clone(),

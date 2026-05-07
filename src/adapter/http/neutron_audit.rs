@@ -32,8 +32,18 @@ use crate::worker::ActorContext;
 /// non-empty `dropped` set. See module docstring for the rationale behind
 /// each `Arc`-shared field.
 pub struct NeutronAuditCtx {
+    /// Production audit logger (rotation + sensitive masking). The same
+    /// `Arc` is shared with `App` and the worker so all three writers
+    /// land in a single `BufWriter` rotation, avoiding interleaving.
     pub logger: Arc<AuditLogger>,
+    /// Source of the current active project id, read live at each emit.
+    /// Backed by `RbacGuard` in production; `None` from the provider
+    /// means the user is unscoped (rare; refilter then short-circuits).
     pub scope_provider: Arc<dyn ScopeProvider>,
+    /// Cloud / user_id snapshot, mutated by `App::handle_event` on
+    /// `ContextChanged` (BL-P2-074 cloud switch). Read under the lock
+    /// once per `emit_filter_violations` call so the entire dropped set
+    /// gets a consistent attribution.
     pub actor_ctx: Arc<RwLock<ActorContext>>,
 }
 
@@ -64,6 +74,13 @@ impl NeutronAuditCtx {
         for item in dropped {
             let resource_id = item.resource_id().unwrap_or("?").to_string();
             let project_id = item.tenant_id().unwrap_or("").to_string();
+            // `CrossProjectBlockEvent::new` (Step 11b ctor) leaves the
+            // top-level `resource_id` as `None` because the worker path
+            // doesn't always know one. The adapter path always does, so
+            // we promote it into the fingerprint-relevant slot after
+            // construction. Same value as the one packed inside
+            // `AdapterFilterViolation::resource_id`; no semantic
+            // duplication, just two views of the same row.
             let mut event = CrossProjectBlockEvent::new(
                 CrossProjectReason::AdapterFilterViolation {
                     resource_id: resource_id.clone(),

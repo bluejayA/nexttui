@@ -71,6 +71,12 @@ impl NeutronHttpAdapter {
         let active = ctx.scope_provider.current_project_id();
         let (kept, dropped) =
             refilter_by_scope(resp.items, active.as_deref(), all_tenants);
+        // correlation_id=0: list_* are not bound to a worker dispatch,
+        // and the canonical fingerprint already disambiguates per-row
+        // events via `resource_id`. Replace with the dispatch epoch
+        // when worker→adapter epoch propagation lands (post-Step-14
+        // refactor cycle is the natural slot — see Phase 8 cumulative
+        // cargo-review verdict).
         ctx.emit_filter_violations(&dropped, action_type, resource_kind, 0);
         PaginatedResponse {
             items: kept,

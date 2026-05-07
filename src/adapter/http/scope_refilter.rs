@@ -104,6 +104,7 @@ impl HasTenantId for FloatingIp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::neutron::{FloatingIp, Network, SecurityGroup};
 
     /// Test fixture mirroring the minimal shape required for refilter
     /// (id + optional tenant). Real impls (Network / SecurityGroup /
@@ -217,13 +218,10 @@ mod tests {
         assert!(dropped.is_empty());
     }
 
-    // --- BL-P2-085 Step 13b RED: HasTenantId impl for Neutron models ---
+    // --- BL-P2-085 Step 13b: HasTenantId impl for Neutron models ---
     // These tests assert that Network / SecurityGroup / FloatingIp implement
     // HasTenantId in a way that maps `tenant_id: Option<String>` →
-    // `tenant_id()` and `id: String` → `resource_id()`. Step 13b GREEN will
-    // add the impls (current tree has none, so these compile-fail today).
-
-    use crate::models::neutron::{FloatingIp, Network, SecurityGroup};
+    // `tenant_id()` and `id: String` → `resource_id()`.
 
     fn sample_network(id: &str, tenant: Option<&str>) -> Network {
         Network {
