@@ -273,6 +273,7 @@ fn action_name(action: &Action) -> &str {
         Action::AssociateFloatingIp { .. } => "AssociateFloatingIp",
         Action::DisassociateFloatingIp { .. } => "DisassociateFloatingIp",
         Action::FetchPorts { .. } => "FetchPorts",
+        Action::FetchPortBindingsForServer { .. } => "FetchPortBindingsForServer",
         Action::FetchUsage { .. } => "FetchUsage",
         _ => "Unknown",
     }
@@ -368,7 +369,7 @@ async fn handle_action(
             let params = LiveMigrateParams { host };
             match registry.nova.live_migrate_server(&id, &params).await {
                 Ok(()) => Some(AppEvent::ServerLiveMigrated { id }),
-                Err(e) => Some(api_error("LiveMigrateServer", e)),
+                Err(e) => Some(api_error("LiveMigrateServer", enrich_live_migrate_error(e))),
             }
         }
         Action::ColdMigrateServer { id } => match registry.nova.cold_migrate_server(&id).await {
@@ -767,6 +768,35 @@ async fn handle_action(
             Ok(ports) => Some(AppEvent::PortsLoaded { server_id, ports }),
             Err(e) => Some(api_error("FetchPorts", e)),
         },
+        Action::FetchPortBindingsForServer { server_id } => {
+            // Two-step: list ports for the server, then for each port fetch
+            // its bindings concurrently. We swallow per-port binding errors
+            // (e.g. 403 on non-admin clouds) so a single failure doesn't
+            // black out the whole section — the user still sees the ports
+            // that did succeed.
+            match registry.neutron.list_ports(&server_id).await {
+                Ok(ports) => {
+                    let mut futs = Vec::with_capacity(ports.len());
+                    for p in &ports {
+                        let port_id = p.id.clone();
+                        let neutron = registry.neutron.clone();
+                        futs.push(async move {
+                            let bindings = neutron
+                                .list_port_bindings(&port_id)
+                                .await
+                                .unwrap_or_default();
+                            (port_id, bindings)
+                        });
+                    }
+                    let port_bindings = futures::future::join_all(futs).await;
+                    Some(AppEvent::PortBindingsLoaded {
+                        server_id,
+                        port_bindings,
+                    })
+                }
+                Err(e) => Some(api_error("FetchPortBindingsForServer", e)),
+            }
+        }
 
         // -- UI-only actions (handled by App::dispatch_action, not worker) --
         Action::Navigate(_)
@@ -928,6 +958,23 @@ fn api_error(operation: &str, error: crate::port::error::ApiError) -> AppEvent {
     AppEvent::ApiError {
         operation: operation.to_string(),
         message: error.to_string(),
+    }
+}
+
+// Nova returns "No valid host was found" generically when any conductor-side
+// step makes scheduling fail. A common cause is a stale Neutron port binding
+// left over from a prior failed live-migration attempt — invisible to the
+// nexttui user without controller log access. We append a one-line hint
+// pointing to the 'Port bindings' section we render in the Server Detail.
+fn enrich_live_migrate_error(error: crate::port::error::ApiError) -> crate::port::error::ApiError {
+    use crate::port::error::ApiError;
+    match error {
+        ApiError::BadRequest(msg) if msg.contains("No valid host") => {
+            ApiError::BadRequest(format!(
+                "{msg} (hint: stale port binding likely — check 'Port bindings' in instance detail)"
+            ))
+        }
+        other => other,
     }
 }
 
@@ -1228,6 +1275,52 @@ mod tests {
             }
             _ => panic!("Expected ApiError"),
         }
+    }
+
+    // -- BL-P2-086: live-migrate "No valid host" enrichment --
+    //
+    // Nova returns "No valid host was found" as a generic message when
+    // any conductor-side step (including stale Neutron port bindings)
+    // makes scheduling fail. Without enrichment, users have no path
+    // forward — the real cause is buried in controller logs.
+
+    #[test]
+    fn test_enrich_live_migrate_error_no_valid_host_adds_hint() {
+        use crate::port::error::ApiError;
+        let err = ApiError::BadRequest(
+            "No valid host was found. There are not enough hosts available.".into(),
+        );
+        let enriched = enrich_live_migrate_error(err);
+        let msg = enriched.to_string();
+        // Original message preserved
+        assert!(msg.contains("No valid host"));
+        // Hint added — points users to the diagnostic section we render in detail
+        assert!(
+            msg.contains("Port bindings"),
+            "expected hint to reference 'Port bindings' section, got: {msg}"
+        );
+        assert!(
+            msg.to_lowercase().contains("stale"),
+            "expected hint to mention 'stale', got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_enrich_live_migrate_error_other_bad_request_unchanged() {
+        use crate::port::error::ApiError;
+        let err = ApiError::BadRequest("Instance is locked".into());
+        let enriched = enrich_live_migrate_error(err);
+        // Non-matching BadRequest: no hint appended
+        assert_eq!(enriched.to_string(), "Bad request: Instance is locked");
+    }
+
+    #[test]
+    fn test_enrich_live_migrate_error_non_bad_request_unchanged() {
+        use crate::port::error::ApiError;
+        let err = ApiError::Forbidden("not admin".into());
+        let enriched = enrich_live_migrate_error(err);
+        // Other variants pass through unchanged
+        assert_eq!(enriched.to_string(), "Forbidden: not admin");
     }
 
     // -- spawn_versioned (BL-P2-031 Unit 2) --

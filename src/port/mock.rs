@@ -9,7 +9,7 @@ use crate::models::cinder::{Volume, VolumeSnapshot};
 use crate::models::glance::Image;
 use crate::models::keystone::{Project, Role, RoleAssignment, User};
 use crate::models::neutron::{
-    FloatingIp, Network, NetworkAgent, Port, SecurityGroup, SecurityGroupRule,
+    FloatingIp, Network, NetworkAgent, Port, PortBinding, SecurityGroup, SecurityGroupRule,
 };
 use crate::models::nova::{Aggregate, ComputeService, Flavor, Hypervisor, Server};
 
@@ -314,6 +314,9 @@ impl super::neutron::NeutronPort for MockNeutronAdapter {
         Err(ApiError::BadRequest("mock: not implemented".into()))
     }
     async fn list_ports(&self, _device_id: &str) -> ApiResult<Vec<Port>> {
+        Ok(vec![])
+    }
+    async fn list_port_bindings(&self, _port_id: &str) -> ApiResult<Vec<PortBinding>> {
         Ok(vec![])
     }
     async fn list_network_agents(&self) -> ApiResult<Vec<NetworkAgent>> {
