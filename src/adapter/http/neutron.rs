@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use super::{Link, append_pagination_parts, encode_param, extract_next_marker, paginated_list};
 use crate::adapter::http::base::BaseHttpClient;
 use crate::adapter::http::neutron_audit::NeutronAuditCtx;
-use crate::adapter::http::scope_refilter::{RefilterScope, refilter_by_scope};
+use crate::adapter::http::scope_refilter::{RefilterScope, refilter_and_audit};
 use crate::models::neutron::{
     FloatingIp, Network, NetworkAgent, Port, SecurityGroup, SecurityGroupRule,
 };
@@ -51,10 +51,11 @@ impl NeutronHttpAdapter {
 
     /// Apply response-side scope refiltering to a `PaginatedResponse`.
     /// No-op when `audit_ctx` is None (pre-Step-13b-3 adapters), preserving
-    /// the original response shape. When attached, runs `refilter_by_scope`
-    /// against the active project from `scope_provider` and emits one
-    /// `AdapterFilterViolation` event per dropped row before returning the
-    /// kept items in a fresh `PaginatedResponse`.
+    /// the original response shape. When attached, partitions via
+    /// [`refilter_and_audit`] which fans out one `AdapterFilterViolation`
+    /// event per dropped row before returning the kept items.
+    ///
+    /// [`refilter_and_audit`]: crate::adapter::http::scope_refilter::refilter_and_audit
     fn refilter_response<T>(
         &self,
         resp: PaginatedResponse<T>,
@@ -65,19 +66,25 @@ impl NeutronHttpAdapter {
     where
         T: crate::adapter::http::scope_refilter::HasTenantId,
     {
-        let Some(ctx) = self.audit_ctx.as_ref() else {
-            return resp;
-        };
-        let active = ctx.scope_provider.current_project_id();
+        let active = self
+            .audit_ctx
+            .as_ref()
+            .and_then(|ctx| ctx.scope_provider.current_project_id());
         let scope = RefilterScope::from_parts(active.as_deref(), all_tenants);
-        let (kept, dropped) = refilter_by_scope(resp.items, &scope);
         // correlation_id=0: list_* are not bound to a worker dispatch,
         // and the canonical fingerprint already disambiguates per-row
         // events via `resource_id`. Replace with the dispatch epoch
         // when worker→adapter epoch propagation lands (post-Step-14
         // refactor cycle is the natural slot — see Phase 8 cumulative
         // cargo-review verdict).
-        ctx.emit_filter_violations(&dropped, action_type, resource_kind, 0);
+        let kept = refilter_and_audit(
+            resp.items,
+            &scope,
+            self.audit_ctx.as_deref(),
+            action_type,
+            resource_kind,
+            0,
+        );
         PaginatedResponse {
             items: kept,
             next_marker: resp.next_marker,

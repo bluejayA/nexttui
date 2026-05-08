@@ -1,10 +1,11 @@
-//! BL-P2-085 Step 13b — Neutron-specific audit context for adapter-side
-//! cross-project filter violations.
+//! BL-P2-085 Step 13b / Step-14-precedent-refactor-2 — adapter-side audit
+//! context for cross-project filter violations.
 //!
-//! Bundles the three pieces every Neutron `list_*` impl needs to emit a
-//! `CrossProjectBlockEvent` with reason `AdapterFilterViolation` per row
-//! that survives the server-side `tenant_id={scope}` filter (Step 12) but
-//! still lands in `dropped` from `refilter_by_scope` (Step 13a):
+//! `AuditCtx` bundles the three pieces every adapter `list_*` impl needs
+//! to emit a `CrossProjectBlockEvent` with reason `AdapterFilterViolation`
+//! per row that survives the server-side `tenant_id={scope}` filter
+//! (Step 12) but still lands in `dropped` from `refilter_by_scope`
+//! (Step 13a):
 //!
 //! - `logger` — the production `AuditLogger` (shared `Arc` so adapter and
 //!   worker write to the same file with a single `BufWriter`).
@@ -14,24 +15,27 @@
 //!   `ContextChanged` updates to `cloud` / `user_id` are reflected here
 //!   without re-spawning the adapter.
 //!
-//! Step 13b-3 wires `NeutronHttpAdapter::with_audit` into `registry::new_http`
-//! and `main.rs`. Until then `audit_ctx` defaults to `None` and the adapter
-//! behaves as a pre-Step-13b passthrough.
+//! `NeutronAuditCtx` / `NovaAuditCtx` / `CinderAuditCtx` are type aliases
+//! preserved so callers can keep service-named imports while the struct
+//! itself is service-agnostic. Step-14-precedent-refactor-3 will add the
+//! `service: &'static str` discriminator and `AdapterAuditConfig` bundle.
 
 use std::sync::{Arc, RwLock};
 
-use crate::adapter::http::scope_refilter::HasTenantId;
+use crate::adapter::http::scope_refilter::{AuditEmitter, HasTenantId};
 use crate::context::action_channel::ScopeProvider;
 use crate::infra::audit::AuditLogger;
 use crate::infra::cross_project_audit::{self, CrossProjectBlockEvent};
 use crate::infra::cross_project_guard::{CrossProjectReason, GuardLayer};
 use crate::worker::ActorContext;
 
-/// Three pieces every Neutron `list_*` impl needs to emit a per-row
-/// `AdapterFilterViolation` event when `refilter_by_scope` returns a
-/// non-empty `dropped` set. See module docstring for the rationale behind
-/// each `Arc`-shared field.
-pub struct NeutronAuditCtx {
+/// Three pieces every adapter `list_*` impl needs to emit a per-row
+/// `AdapterFilterViolation` event when [`refilter_by_scope`] returns a
+/// non-empty `dropped` set. Service-agnostic — Step 14 adapters
+/// (Nova/Cinder) reuse the same struct via type aliases.
+///
+/// [`refilter_by_scope`]: crate::adapter::http::scope_refilter::refilter_by_scope
+pub struct AuditCtx {
     /// Production audit logger (rotation + sensitive masking). The same
     /// `Arc` is shared with `App` and the worker so all three writers
     /// land in a single `BufWriter` rotation, avoiding interleaving.
@@ -47,13 +51,21 @@ pub struct NeutronAuditCtx {
     pub actor_ctx: Arc<RwLock<ActorContext>>,
 }
 
-impl NeutronAuditCtx {
+/// Service-named alias retained for callers that prefer explicit
+/// service tagging (registry/main wiring, NeutronHttpAdapter::with_audit).
+pub type NeutronAuditCtx = AuditCtx;
+/// Step 14 placeholder — Nova adapter wiring will use this alias.
+pub type NovaAuditCtx = AuditCtx;
+/// Step 14 placeholder — Cinder adapter wiring will use this alias.
+pub type CinderAuditCtx = AuditCtx;
+
+impl<T: HasTenantId> AuditEmitter<T> for AuditCtx {
     /// Emit one `CrossProjectBlockEvent` per dropped row. No-op when
     /// `dropped.is_empty()` to avoid touching the audit log on the common
     /// (zero-violation) path. Reads `actor_ctx` and `scope_provider` *at
     /// emit time* so cloud/project switches between the list call and the
     /// emit are reflected.
-    pub fn emit_filter_violations<T: HasTenantId>(
+    fn emit_filter_violations(
         &self,
         dropped: &[T],
         action_type: &str,

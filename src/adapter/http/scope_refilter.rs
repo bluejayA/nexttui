@@ -99,6 +99,22 @@ impl<'a> RefilterScope<'a> {
     }
 }
 
+/// Caller-provided sink for `AdapterFilterViolation` events. Step-14 adapter
+/// audit contexts (Neutron/Nova/Cinder) implement this for any
+/// `T: HasTenantId`, allowing [`refilter_and_audit`] to fan one event out
+/// per dropped row colocated with the partition step. Generic over `T` so
+/// each adapter context handles its native list-item type without erasing
+/// `tenant_id` / `resource_id` to `&dyn HasTenantId`.
+pub trait AuditEmitter<T: HasTenantId> {
+    fn emit_filter_violations(
+        &self,
+        dropped: &[T],
+        action_type: &str,
+        resource_kind: &str,
+        correlation_id: u64,
+    );
+}
+
 /// Partition `items` into `(kept, dropped)` according to the scope policy
 /// described in the module-level docstring. The function is allocation-
 /// minimal — `kept` is pre-sized to match `items`, and `dropped` only
@@ -124,6 +140,38 @@ pub fn refilter_by_scope<T: HasTenantId>(
         }
     }
     (kept, dropped)
+}
+
+/// Partition `items` via [`refilter_by_scope`] and, when `audit` is `Some`
+/// and `dropped` is non-empty, fan one event out per dropped row through
+/// `audit.emit_filter_violations`. Returns only `kept` because the
+/// `dropped` set is consumed by the audit path; callers that need both
+/// vectors should call [`refilter_by_scope`] directly.
+///
+/// This colocates the partition with the audit emit so Step-14 adapters
+/// (Nova/Cinder) can replace 8-line wrappers with a single call. The
+/// generic `A` allows `Option<&NeutronAuditCtx>` callers to avoid
+/// `dyn AuditEmitter<T>` erasure (each adapter has exactly one audit ctx
+/// type at compile time).
+pub fn refilter_and_audit<T, A>(
+    items: Vec<T>,
+    scope: &RefilterScope<'_>,
+    audit: Option<&A>,
+    action_type: &str,
+    resource_kind: &str,
+    correlation_id: u64,
+) -> Vec<T>
+where
+    T: HasTenantId,
+    A: AuditEmitter<T> + ?Sized,
+{
+    let (kept, dropped) = refilter_by_scope(items, scope);
+    if !dropped.is_empty()
+        && let Some(a) = audit
+    {
+        a.emit_filter_violations(&dropped, action_type, resource_kind, correlation_id);
+    }
+    kept
 }
 
 // --- BL-P2-085 Step 13b: HasTenantId impls for Neutron list models ---
@@ -344,6 +392,122 @@ mod tests {
         let unscoped = RefilterScope::from_parts(None, false);
         assert_eq!(unscoped.active(), None);
         assert!(!unscoped.is_all_tenants());
+    }
+
+    // --- BL-P2-085 Step-14-precedent-refactor-cycle (refactor-2) ---
+    // `refilter_and_audit` colocates the partition with the per-row audit
+    // emit. `AuditEmitter` is the trait Step-14 adapter contexts
+    // (NeutronAuditCtx / NovaAuditCtx / CinderAuditCtx) implement so the
+    // free fn stays generic over the audit sink.
+
+    use std::cell::RefCell;
+
+    /// Test double for `AuditEmitter` — records (dropped_len, action_type,
+    /// resource_kind, correlation_id) per call so assertions can verify
+    /// the emit was forwarded with the right arguments.
+    struct CountingEmitter {
+        calls: RefCell<Vec<(usize, String, String, u64)>>,
+    }
+
+    impl CountingEmitter {
+        fn new() -> Self {
+            Self {
+                calls: RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    impl AuditEmitter<FakeItem> for CountingEmitter {
+        fn emit_filter_violations(
+            &self,
+            dropped: &[FakeItem],
+            action_type: &str,
+            resource_kind: &str,
+            correlation_id: u64,
+        ) {
+            self.calls.borrow_mut().push((
+                dropped.len(),
+                action_type.to_string(),
+                resource_kind.to_string(),
+                correlation_id,
+            ));
+        }
+    }
+
+    #[test]
+    fn test_refilter_and_audit_emits_when_dropped_nonempty() {
+        let emitter = CountingEmitter::new();
+        let items = vec![
+            FakeItem {
+                id: "a",
+                tenant: Some("A"),
+            },
+            FakeItem {
+                id: "b",
+                tenant: Some("B"),
+            },
+        ];
+        let kept = refilter_and_audit(
+            items,
+            &RefilterScope::strict("A"),
+            Some(&emitter),
+            "FetchTest",
+            "test_resource",
+            42,
+        );
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].id, "a");
+        let calls = emitter.calls.borrow();
+        assert_eq!(calls.len(), 1, "emitter should be called exactly once");
+        assert_eq!(calls[0].0, 1, "dropped_len=1");
+        assert_eq!(calls[0].1, "FetchTest");
+        assert_eq!(calls[0].2, "test_resource");
+        assert_eq!(calls[0].3, 42);
+    }
+
+    #[test]
+    fn test_refilter_and_audit_skips_emit_when_audit_none() {
+        let items = vec![
+            FakeItem {
+                id: "a",
+                tenant: Some("A"),
+            },
+            FakeItem {
+                id: "b",
+                tenant: Some("B"),
+            },
+        ];
+        let kept = refilter_and_audit::<_, CountingEmitter>(
+            items,
+            &RefilterScope::strict("A"),
+            None,
+            "FetchTest",
+            "test_resource",
+            42,
+        );
+        assert_eq!(kept.len(), 1, "kept must still be filtered when audit=None");
+    }
+
+    #[test]
+    fn test_refilter_and_audit_skips_emit_when_dropped_empty() {
+        let emitter = CountingEmitter::new();
+        let items = vec![FakeItem {
+            id: "a",
+            tenant: Some("A"),
+        }];
+        let kept = refilter_and_audit(
+            items,
+            &RefilterScope::strict("A"),
+            Some(&emitter),
+            "FetchTest",
+            "test_resource",
+            42,
+        );
+        assert_eq!(kept.len(), 1);
+        assert!(
+            emitter.calls.borrow().is_empty(),
+            "emitter must not be called when dropped is empty"
+        );
     }
 
     // --- BL-P2-085 Step 13b: HasTenantId impl for Neutron models ---
