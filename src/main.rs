@@ -18,7 +18,7 @@ use nexttui::adapter::auth::scoped_session::ScopedAuthSession;
 use nexttui::adapter::auth::token_cache::{self as token_cache, TokenCacheStore};
 use nexttui::adapter::auth::{DirectoryCache, DomainNameResolver, KeystoneProjectDirectory};
 use nexttui::adapter::http::endpoint_invalidator::EndpointCatalogInvalidator;
-use nexttui::adapter::http::neutron_audit::NeutronAuditCtx;
+use nexttui::adapter::http::neutron_audit::build_audit_config;
 use nexttui::adapter::registry::AdapterRegistry;
 use nexttui::app::App;
 use nexttui::config::Config;
@@ -184,23 +184,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }));
         app.set_actor_ctx(actor_ctx.clone());
 
-        // BL-P2-085 Step 13b-3: build the Neutron audit context once
-        // `audit_logger`, `rbac` (live ScopeProvider), and `actor_ctx` are
-        // all available, then hand it to the registry so every Neutron
-        // `list_*` runs response-side `refilter_by_scope` and emits an
-        // `AdapterFilterViolation` event per dropped row.
-        let neutron_audit = audit_logger.clone().map(|logger| {
-            Arc::new(NeutronAuditCtx {
-                logger,
-                scope_provider: rbac.clone() as Arc<dyn ScopeProvider>,
-                actor_ctx: actor_ctx.clone(),
-            })
-        });
+        // BL-P2-085 Step-14-precedent-refactor-3: bundle per-service audit
+        // contexts via `build_audit_config` once `audit_logger`, `rbac`
+        // (live ScopeProvider), and `actor_ctx` are all available. Today
+        // only `audit.neutron` is consumed by the registry; Step 14 wires
+        // `audit.nova` / `audit.cinder` once those adapters gain
+        // `with_audit`.
+        let audit_config = build_audit_config(
+            audit_logger.clone(),
+            rbac.clone() as Arc<dyn ScopeProvider>,
+            actor_ctx.clone(),
+        );
 
         let registry = Arc::new(AdapterRegistry::new_http(
             auth_provider.clone(),
             cloud_region,
-            neutron_audit,
+            audit_config,
         )?);
 
         // === Phase B: collect endpoint caches before worker consumes registry ===

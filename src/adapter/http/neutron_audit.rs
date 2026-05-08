@@ -22,7 +22,7 @@
 
 use std::sync::{Arc, RwLock};
 
-use crate::adapter::http::scope_refilter::{AuditEmitter, HasTenantId};
+use crate::adapter::http::scope_refilter::{AuditEmitter, ScopedItem};
 use crate::context::action_channel::ScopeProvider;
 use crate::infra::audit::AuditLogger;
 use crate::infra::cross_project_audit::{self, CrossProjectBlockEvent};
@@ -49,6 +49,21 @@ pub struct AuditCtx {
     /// once per `emit_filter_violations` call so the entire dropped set
     /// gets a consistent attribution.
     pub actor_ctx: Arc<RwLock<ActorContext>>,
+    /// Service discriminator (`"neutron"` / `"nova"` / `"cinder"`),
+    /// stamped by [`build_audit_config`]. Currently exposed via
+    /// [`AuditCtx::service`] for analysis/grep workflows; future audit
+    /// details enrichment may include it on the wire (would bump the
+    /// fingerprint canonical from v1 — defer to that schema cycle).
+    pub service: &'static str,
+}
+
+impl AuditCtx {
+    /// Read the service discriminator. Equivalent to `self.service` but
+    /// kept as a getter so the field can later become private without
+    /// breaking call sites.
+    pub fn service(&self) -> &'static str {
+        self.service
+    }
 }
 
 /// Service-named alias retained for callers that prefer explicit
@@ -59,7 +74,49 @@ pub type NovaAuditCtx = AuditCtx;
 /// Step 14 placeholder — Cinder adapter wiring will use this alias.
 pub type CinderAuditCtx = AuditCtx;
 
-impl<T: HasTenantId> AuditEmitter<T> for AuditCtx {
+/// Bundle of per-service [`AuditCtx`] instances passed to
+/// [`crate::adapter::registry::AdapterRegistry::new_http`]. Replaces the
+/// legacy 3-arg shape so Step 14 (Nova/Cinder) doesn't push the registry
+/// signature past 5 arguments. Each field is `Option` because mock
+/// registries and integration tests construct without an audit logger.
+#[derive(Default)]
+pub struct AdapterAuditConfig {
+    pub neutron: Option<Arc<NeutronAuditCtx>>,
+    pub nova: Option<Arc<NovaAuditCtx>>,
+    pub cinder: Option<Arc<CinderAuditCtx>>,
+}
+
+/// Build an [`AdapterAuditConfig`] from the three pieces every service
+/// audit ctx shares. Returns `Default` (all `None`) when `audit_logger`
+/// is `None` so mock paths and audit-disabled environments don't pay the
+/// `Arc` allocation. Each Some-arm shares the same `logger` /
+/// `scope_provider` / `actor_ctx`; only the `service` discriminator
+/// differs, matching the Step-14 plan to colocate per-service tagging
+/// in one place rather than at every adapter call site.
+pub fn build_audit_config(
+    audit_logger: Option<Arc<AuditLogger>>,
+    scope_provider: Arc<dyn ScopeProvider>,
+    actor_ctx: Arc<RwLock<ActorContext>>,
+) -> AdapterAuditConfig {
+    let Some(logger) = audit_logger else {
+        return AdapterAuditConfig::default();
+    };
+    let make = |service: &'static str| -> Arc<AuditCtx> {
+        Arc::new(AuditCtx {
+            logger: logger.clone(),
+            scope_provider: scope_provider.clone(),
+            actor_ctx: actor_ctx.clone(),
+            service,
+        })
+    };
+    AdapterAuditConfig {
+        neutron: Some(make("neutron")),
+        nova: Some(make("nova")),
+        cinder: Some(make("cinder")),
+    }
+}
+
+impl<T: ScopedItem> AuditEmitter<T> for AuditCtx {
     /// Emit one `CrossProjectBlockEvent` per dropped row. No-op when
     /// `dropped.is_empty()` to avoid touching the audit log on the common
     /// (zero-violation) path. Reads `actor_ctx` and `scope_provider` *at
@@ -77,10 +134,7 @@ impl<T: HasTenantId> AuditEmitter<T> for AuditCtx {
         }
         let active = self.scope_provider.current_project_id();
         let (cloud, user_id) = {
-            let ctx = self
-                .actor_ctx
-                .read()
-                .unwrap_or_else(|p| p.into_inner());
+            let ctx = self.actor_ctx.read().unwrap_or_else(|p| p.into_inner());
             (ctx.cloud.clone(), ctx.user_id.clone())
         };
         for item in dropped {
@@ -121,7 +175,7 @@ mod tests {
 
     use super::*;
     use crate::adapter::http::neutron::NeutronHttpAdapter;
-    use crate::adapter::http::scope_refilter::HasTenantId;
+    use crate::adapter::http::scope_refilter::ScopedItem;
     use crate::context::action_channel::ScopeProvider;
     use crate::infra::audit::AuditLogger;
     use crate::worker::ActorContext;
@@ -134,12 +188,12 @@ mod tests {
         }
     }
 
-    /// Test fixture row mirroring the minimum HasTenantId surface.
+    /// Test fixture row mirroring the minimum ScopedItem surface.
     struct Row {
         id: &'static str,
         tenant: Option<&'static str>,
     }
-    impl HasTenantId for Row {
+    impl ScopedItem for Row {
         fn tenant_id(&self) -> Option<&str> {
             self.tenant
         }
@@ -159,6 +213,7 @@ mod tests {
             logger,
             scope_provider: scope,
             actor_ctx: actor,
+            service: "neutron",
         }
     }
 
@@ -250,9 +305,7 @@ mod tests {
         let result = &lines[0]["result"];
         assert_eq!(
             result["failed"],
-            serde_json::Value::String(
-                "cross_project_block:adapter_filter_violation".to_string()
-            ),
+            serde_json::Value::String("cross_project_block:adapter_filter_violation".to_string()),
             "result must encode the AdapterFilterViolation reason"
         );
     }
@@ -273,5 +326,56 @@ mod tests {
             NeutronHttpAdapter::with_audit;
         // Reference ctx so the binding isn't dropped before the assertion.
         let _ = ctx;
+    }
+
+    // --- BL-P2-085 Step-14-precedent-refactor-cycle (refactor-3) ---
+    // `AdapterAuditConfig` bundles the three per-service audit ctxs into a
+    // single registry::new_http argument. `build_audit_config` is the
+    // canonical constructor — it tags each ctx with its service name so
+    // future audit details enrichment can discriminate per-service.
+
+    fn dummy_actor_ctx() -> Arc<RwLock<ActorContext>> {
+        Arc::new(RwLock::new(ActorContext {
+            cloud: "devstack".into(),
+            user_id: "user-uuid".into(),
+        }))
+    }
+
+    #[test]
+    fn test_adapter_audit_config_default_all_none() {
+        let cfg = AdapterAuditConfig::default();
+        assert!(cfg.neutron.is_none());
+        assert!(cfg.nova.is_none());
+        assert!(cfg.cinder.is_none());
+    }
+
+    #[test]
+    fn test_build_audit_config_returns_none_when_logger_none() {
+        let scope: Arc<dyn ScopeProvider> = Arc::new(FixedScope(None));
+        let cfg = build_audit_config(None, scope, dummy_actor_ctx());
+        assert!(cfg.neutron.is_none());
+        assert!(cfg.nova.is_none());
+        assert!(cfg.cinder.is_none());
+    }
+
+    #[test]
+    fn test_build_audit_config_returns_three_service_tagged_ctxs_when_logger_some() {
+        let dir = TempDir::new().unwrap();
+        let logger = Arc::new(AuditLogger::new(dir.path().join("audit.log")).unwrap());
+        let scope: Arc<dyn ScopeProvider> = Arc::new(FixedScope(Some("proj-A".into())));
+        let cfg = build_audit_config(Some(logger), scope, dummy_actor_ctx());
+
+        let neutron = cfg
+            .neutron
+            .expect("neutron ctx must be Some when logger is Some");
+        assert_eq!(neutron.service(), "neutron");
+
+        let nova = cfg.nova.expect("nova ctx must be Some when logger is Some");
+        assert_eq!(nova.service(), "nova");
+
+        let cinder = cfg
+            .cinder
+            .expect("cinder ctx must be Some when logger is Some");
+        assert_eq!(cinder.service(), "cinder");
     }
 }

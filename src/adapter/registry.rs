@@ -5,7 +5,7 @@ use crate::adapter::http::cinder::CinderHttpAdapter;
 use crate::adapter::http::glance::GlanceHttpAdapter;
 use crate::adapter::http::keystone::KeystoneHttpAdapter;
 use crate::adapter::http::neutron::NeutronHttpAdapter;
-use crate::adapter::http::neutron_audit::NeutronAuditCtx;
+use crate::adapter::http::neutron_audit::AdapterAuditConfig;
 use crate::adapter::http::nova::NovaHttpAdapter;
 use crate::port::auth::AuthProvider;
 use crate::port::cinder::CinderPort;
@@ -46,15 +46,17 @@ impl AdapterRegistry {
 
     /// Create all HTTP adapters from the given auth provider and region.
     ///
-    /// `neutron_audit` (BL-P2-085 Step 13b-3) attaches a per-row
-    /// `AdapterFilterViolation` audit context to the Neutron adapter. Pass
-    /// `None` for environments without an audit logger (mock registries,
-    /// integration tests that don't care about audit emission); the Neutron
-    /// adapter then behaves as a pre-Step-13b passthrough.
+    /// `audit` (BL-P2-085 Step-14-precedent-refactor-3) bundles per-service
+    /// audit contexts. The Neutron context is wired today (Step 13b);
+    /// `audit.nova` and `audit.cinder` are accepted but not yet attached
+    /// (Step 14 will add `with_audit` builders to those adapters). Pass
+    /// `AdapterAuditConfig::default()` for mock registries and integration
+    /// tests that don't care about audit emission; the Neutron adapter
+    /// then behaves as a pre-Step-13b passthrough.
     pub fn new_http(
         auth: Arc<dyn AuthProvider>,
         region: Option<String>,
-        neutron_audit: Option<Arc<NeutronAuditCtx>>,
+        audit: AdapterAuditConfig,
     ) -> Result<Self, ApiError> {
         let nova_base = Self::make_base(auth.clone(), "compute", region.clone())?;
         let neutron_base = Self::make_base(auth.clone(), "network", region.clone())?;
@@ -71,9 +73,11 @@ impl AdapterRegistry {
         ];
 
         let mut neutron = NeutronHttpAdapter::from_base(neutron_base);
-        if let Some(ctx) = neutron_audit {
+        if let Some(ctx) = audit.neutron {
             neutron = neutron.with_audit(ctx);
         }
+        // audit.nova / audit.cinder land here in Step 14 once
+        // NovaHttpAdapter / CinderHttpAdapter expose `with_audit`.
 
         Ok(Self {
             nova: Arc::new(NovaHttpAdapter::from_base(nova_base)),

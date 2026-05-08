@@ -30,7 +30,7 @@ use crate::models::neutron::{FloatingIp, Network, SecurityGroup};
 /// model lacks a project-id field on the wire (treated as fail-safe drop
 /// under strict scoping). `resource_id` is consumed by the AdapterFilter-
 /// Violation event builder to report which row was rejected.
-pub trait HasTenantId {
+pub trait ScopedItem {
     /// Project-id label as returned by the upstream API. `None` means the
     /// model has no project-id field on the wire (or the server omitted
     /// it); under strict scoping such rows are dropped fail-safe.
@@ -101,11 +101,11 @@ impl<'a> RefilterScope<'a> {
 
 /// Caller-provided sink for `AdapterFilterViolation` events. Step-14 adapter
 /// audit contexts (Neutron/Nova/Cinder) implement this for any
-/// `T: HasTenantId`, allowing [`refilter_and_audit`] to fan one event out
+/// `T: ScopedItem`, allowing [`refilter_and_audit`] to fan one event out
 /// per dropped row colocated with the partition step. Generic over `T` so
 /// each adapter context handles its native list-item type without erasing
-/// `tenant_id` / `resource_id` to `&dyn HasTenantId`.
-pub trait AuditEmitter<T: HasTenantId> {
+/// `tenant_id` / `resource_id` to `&dyn ScopedItem`.
+pub trait AuditEmitter<T: ScopedItem> {
     fn emit_filter_violations(
         &self,
         dropped: &[T],
@@ -121,7 +121,7 @@ pub trait AuditEmitter<T: HasTenantId> {
 /// allocates when at least one item is rejected. Do NOT replace this with
 /// `Iterator::partition`: that pre-allocates both sides, which is wasteful
 /// for the common path (large list, zero drops).
-pub fn refilter_by_scope<T: HasTenantId>(
+pub fn refilter_by_scope<T: ScopedItem>(
     items: Vec<T>,
     scope: &RefilterScope<'_>,
 ) -> (Vec<T>, Vec<T>) {
@@ -162,7 +162,7 @@ pub fn refilter_and_audit<T, A>(
     correlation_id: u64,
 ) -> Vec<T>
 where
-    T: HasTenantId,
+    T: ScopedItem,
     A: AuditEmitter<T> + ?Sized,
 {
     let (kept, dropped) = refilter_by_scope(items, scope);
@@ -174,12 +174,12 @@ where
     kept
 }
 
-// --- BL-P2-085 Step 13b: HasTenantId impls for Neutron list models ---
+// --- BL-P2-085 Step 13b: ScopedItem impls for Neutron list models ---
 // All three models share the same shape: `id: String` (always present) and
 // `tenant_id: Option<String>` (server may omit under unusual configurations,
 // in which case strict refiltering drops the row fail-safe).
 
-impl HasTenantId for Network {
+impl ScopedItem for Network {
     fn tenant_id(&self) -> Option<&str> {
         self.tenant_id.as_deref()
     }
@@ -188,7 +188,7 @@ impl HasTenantId for Network {
     }
 }
 
-impl HasTenantId for SecurityGroup {
+impl ScopedItem for SecurityGroup {
     fn tenant_id(&self) -> Option<&str> {
         self.tenant_id.as_deref()
     }
@@ -197,7 +197,7 @@ impl HasTenantId for SecurityGroup {
     }
 }
 
-impl HasTenantId for FloatingIp {
+impl ScopedItem for FloatingIp {
     fn tenant_id(&self) -> Option<&str> {
         self.tenant_id.as_deref()
     }
@@ -220,7 +220,7 @@ mod tests {
         tenant: Option<&'static str>,
     }
 
-    impl HasTenantId for FakeItem {
+    impl ScopedItem for FakeItem {
         fn tenant_id(&self) -> Option<&str> {
             self.tenant
         }
@@ -488,6 +488,17 @@ mod tests {
         assert_eq!(kept.len(), 1, "kept must still be filtered when audit=None");
     }
 
+    // --- BL-P2-085 Step-14-precedent-refactor-cycle (refactor-3) ---
+    // Trait rename `ScopedItem` → `ScopedItem` because the contract is
+    // "this row participates in scope comparison", not merely "has a
+    // tenant_id field". The new name accommodates Step 14 models like
+    // Cinder that may carry `project_id` instead of `tenant_id`.
+    #[test]
+    fn test_scoped_item_trait_used_for_refilter_signature() {
+        fn _bound<T: ScopedItem>() {}
+        _bound::<FakeItem>();
+    }
+
     #[test]
     fn test_refilter_and_audit_skips_emit_when_dropped_empty() {
         let emitter = CountingEmitter::new();
@@ -510,9 +521,9 @@ mod tests {
         );
     }
 
-    // --- BL-P2-085 Step 13b: HasTenantId impl for Neutron models ---
+    // --- BL-P2-085 Step 13b: ScopedItem impl for Neutron models ---
     // These tests assert that Network / SecurityGroup / FloatingIp implement
-    // HasTenantId in a way that maps `tenant_id: Option<String>` →
+    // ScopedItem in a way that maps `tenant_id: Option<String>` →
     // `tenant_id()` and `id: String` → `resource_id()`.
 
     fn sample_network(id: &str, tenant: Option<&str>) -> Network {

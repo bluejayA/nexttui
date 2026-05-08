@@ -64,7 +64,7 @@ impl NeutronHttpAdapter {
         resource_kind: &str,
     ) -> PaginatedResponse<T>
     where
-        T: crate::adapter::http::scope_refilter::HasTenantId,
+        T: crate::adapter::http::scope_refilter::ScopedItem,
     {
         let active = self
             .audit_ctx
