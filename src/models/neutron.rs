@@ -109,6 +109,45 @@ pub struct NetworkAgent {
     pub binary: String,
 }
 
+// -- Port bindings (binding-extended Neutron API) --
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PortBinding {
+    pub host: String,
+    pub vif_type: String,
+    #[serde(default)]
+    pub vnic_type: Option<String>,
+    pub status: BindingStatus,
+    #[serde(default)]
+    pub profile: PortBindingProfile,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum BindingStatus {
+    Active,
+    Inactive,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct PortBindingProfile {
+    #[serde(default)]
+    pub migrating_to: Option<String>,
+}
+
+impl PortBinding {
+    /// True iff this binding is the leftover of a failed/aborted live-migration:
+    /// `INACTIVE` status combined with a `migrating_to` profile entry. We
+    /// deliberately require both — `INACTIVE` alone can occur on legitimately
+    /// disabled standby bindings, and `migrating_to` alone is normal during
+    /// an in-progress migration.
+    pub fn is_stale_migration_remnant(&self) -> bool {
+        self.status == BindingStatus::Inactive && self.profile.migrating_to.is_some()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,5 +349,89 @@ mod tests {
         assert_eq!(agent.agent_type, "Open vSwitch agent");
         assert!(agent.alive);
         assert!(agent.admin_state_up);
+    }
+
+    // -- BL-P2-086: PortBinding (binding-extended Neutron API) --
+
+    #[test]
+    fn test_port_binding_deserialize_active() {
+        let json = r#"{
+            "host": "lima-devstack-cp1",
+            "vif_type": "ovs",
+            "vnic_type": "normal",
+            "status": "ACTIVE",
+            "profile": {"os_vif_delegation": true}
+        }"#;
+        let binding: PortBinding = serde_json::from_str(json).unwrap();
+        assert_eq!(binding.host, "lima-devstack-cp1");
+        assert_eq!(binding.vif_type, "ovs");
+        assert_eq!(binding.status, BindingStatus::Active);
+        assert!(binding.profile.migrating_to.is_none());
+        assert!(!binding.is_stale_migration_remnant());
+    }
+
+    #[test]
+    fn test_port_binding_deserialize_inactive_with_migrating_to() {
+        // Real payload from a stale binding left by an aborted live-migration.
+        let json = r#"{
+            "host": "lima-devstack-cp2",
+            "vif_type": "unbound",
+            "vnic_type": "normal",
+            "status": "INACTIVE",
+            "profile": {"os_vif_delegation": true, "migrating_to": "lima-devstack-cp1"}
+        }"#;
+        let binding: PortBinding = serde_json::from_str(json).unwrap();
+        assert_eq!(binding.host, "lima-devstack-cp2");
+        assert_eq!(binding.vif_type, "unbound");
+        assert_eq!(binding.status, BindingStatus::Inactive);
+        assert_eq!(
+            binding.profile.migrating_to.as_deref(),
+            Some("lima-devstack-cp1")
+        );
+        // The combination INACTIVE + migrating_to is the stale-remnant signature
+        // we want to surface to the user.
+        assert!(binding.is_stale_migration_remnant());
+    }
+
+    #[test]
+    fn test_port_binding_deserialize_missing_profile_uses_default() {
+        // Some Neutron payloads omit profile entirely.
+        let json = r#"{
+            "host": "h1",
+            "vif_type": "ovs",
+            "status": "ACTIVE"
+        }"#;
+        let binding: PortBinding = serde_json::from_str(json).unwrap();
+        assert!(binding.profile.migrating_to.is_none());
+        assert!(!binding.is_stale_migration_remnant());
+    }
+
+    #[test]
+    fn test_port_binding_inactive_without_migrating_to_is_not_stale() {
+        // INACTIVE alone is not enough — we only flag the specific
+        // INACTIVE + migrating_to combo to avoid false positives on
+        // legitimately-disabled standby bindings.
+        let json = r#"{
+            "host": "h2",
+            "vif_type": "unbound",
+            "status": "INACTIVE",
+            "profile": {}
+        }"#;
+        let binding: PortBinding = serde_json::from_str(json).unwrap();
+        assert_eq!(binding.status, BindingStatus::Inactive);
+        assert!(!binding.is_stale_migration_remnant());
+    }
+
+    #[test]
+    fn test_binding_status_unknown_variant() {
+        // Future-proof: unrecognized status strings should not panic
+        // — they map to BindingStatus::Unknown.
+        let json = r#"{
+            "host": "h3",
+            "vif_type": "ovs",
+            "status": "PROVISIONING"
+        }"#;
+        let binding: PortBinding = serde_json::from_str(json).unwrap();
+        assert_eq!(binding.status, BindingStatus::Unknown);
     }
 }

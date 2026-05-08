@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::models::neutron::PortBinding;
 use crate::models::nova::{Address, Flavor, Server, ServerMigration};
 use crate::ui::detail_view::{DetailData, DetailField, DetailSection};
 use crate::ui::form::FieldDef;
@@ -14,6 +15,10 @@ pub struct ServerViewContext<'a> {
     pub is_resize_pending: bool,
     pub cached_volumes: &'a [crate::models::cinder::Volume],
     pub cached_floating_ips: &'a [crate::models::neutron::FloatingIp],
+    /// `(port_id, bindings)` pairs from Neutron's `binding-extended` API.
+    /// Empty slice means "not loaded" (e.g. non-admin user) and the
+    /// section is skipped entirely (BL-P2-086).
+    pub port_bindings: &'a [(String, Vec<PortBinding>)],
 }
 
 impl<'a> ServerViewContext<'a> {
@@ -27,6 +32,7 @@ impl<'a> ServerViewContext<'a> {
             is_resize_pending: false,
             cached_volumes: &[],
             cached_floating_ips: &[],
+            port_bindings: &[],
         }
     }
 }
@@ -480,6 +486,59 @@ pub fn server_detail_data(ctx: &ServerViewContext) -> DetailData {
         });
     }
 
+    // Port bindings (BL-P2-086)
+    // Populated only for admin users — Neutron's binding-extended API is
+    // commonly admin-gated. Empty means "not loaded", so we skip the section
+    // rather than rendering an empty table that could confuse non-admins.
+    if !ctx.port_bindings.is_empty() {
+        let columns = vec![
+            "Port".into(),
+            "Host".into(),
+            "Status".into(),
+            "VIF".into(),
+            "Migrating to".into(),
+        ];
+        let mut rows: Vec<Vec<String>> = Vec::new();
+        let mut has_stale = false;
+        for (port_id, bindings) in ctx.port_bindings {
+            // Truncate port id to a short prefix for readability.
+            let port_short = port_id
+                .split('-')
+                .next()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| port_id.clone());
+            for b in bindings {
+                let stale = b.is_stale_migration_remnant();
+                if stale {
+                    has_stale = true;
+                }
+                let marker = if stale { "⚠ " } else { "" };
+                let status = format!("{marker}{:?}", b.status);
+                let migrating = b.profile.migrating_to.clone().unwrap_or("-".into());
+                rows.push(vec![
+                    port_short.clone(),
+                    b.host.clone(),
+                    status,
+                    b.vif_type.clone(),
+                    migrating,
+                ]);
+            }
+        }
+        let section_name = if has_stale {
+            "⚠ Port bindings (stale leftover detected)".into()
+        } else {
+            "Port bindings".into()
+        };
+        sections.push(DetailSection {
+            name: section_name,
+            fields: vec![DetailField::NestedTable {
+                label: "Bindings".into(),
+                columns,
+                rows,
+            }],
+        });
+    }
+
     DetailData {
         title: format!("Server: {}", server.name),
         sections,
@@ -681,6 +740,81 @@ mod tests {
     }
 
     #[test]
+    fn test_server_detail_data_no_port_bindings_section_when_empty() {
+        // BL-P2-086: empty port_bindings (e.g. non-admin) ⇒ no section.
+        let server = make_server("ACTIVE");
+        let data = server_detail_data_simple(&server);
+        assert!(
+            !data
+                .sections
+                .iter()
+                .any(|s| s.name.contains("Port bindings")),
+            "section must be hidden when port_bindings is empty"
+        );
+    }
+
+    #[test]
+    fn test_server_detail_data_port_bindings_section_with_stale() {
+        // BL-P2-086: stale (INACTIVE + migrating_to) binding triggers
+        // the warning-decorated section name and ⚠ marker on the row.
+        use crate::models::neutron::{BindingStatus, PortBinding, PortBindingProfile};
+        let server = make_server("ACTIVE");
+        let stale = PortBinding {
+            host: "lima-devstack-cp2".into(),
+            vif_type: "unbound".into(),
+            vnic_type: Some("normal".into()),
+            status: BindingStatus::Inactive,
+            profile: PortBindingProfile {
+                migrating_to: Some("lima-devstack-cp1".into()),
+            },
+        };
+        let active = PortBinding {
+            host: "lima-devstack-cp1".into(),
+            vif_type: "ovs".into(),
+            vnic_type: Some("normal".into()),
+            status: BindingStatus::Active,
+            profile: PortBindingProfile::default(),
+        };
+        let bindings = vec![("port-abc12345".into(), vec![active, stale])];
+        let ctx = ServerViewContext {
+            server: &server,
+            migration_progress: None,
+            flavor: None,
+            is_resize_pending: false,
+            cached_volumes: &[],
+            cached_floating_ips: &[],
+            port_bindings: &bindings,
+        };
+        let data = server_detail_data(&ctx);
+        let section = data
+            .sections
+            .iter()
+            .find(|s| s.name.contains("Port bindings"))
+            .expect("Port bindings section present");
+        // Section name is warning-decorated when any stale entry exists.
+        assert!(
+            section.name.starts_with('⚠'),
+            "expected warning marker on section name, got: {}",
+            section.name
+        );
+        // Inspect the nested table.
+        let DetailField::NestedTable { rows, columns, .. } = &section.fields[0] else {
+            panic!("expected NestedTable");
+        };
+        assert!(columns.iter().any(|c| c == "Host"));
+        assert!(columns.iter().any(|c| c == "Migrating to"));
+        // Two rows total (active + stale).
+        assert_eq!(rows.len(), 2);
+        // Row containing the stale binding has the ⚠ marker.
+        let stale_row = rows
+            .iter()
+            .find(|r| r.iter().any(|c| c.contains('⚠')))
+            .expect("stale row marked");
+        assert!(stale_row.iter().any(|c| c == "lima-devstack-cp2"));
+        assert!(stale_row.iter().any(|c| c == "lima-devstack-cp1"));
+    }
+
+    #[test]
     fn test_server_create_defs() {
         let defs = server_create_defs();
         assert_eq!(defs.len(), 7);
@@ -758,6 +892,7 @@ mod tests {
             is_resize_pending: false,
             cached_volumes: &[],
             cached_floating_ips: &[],
+            port_bindings: &[],
         });
         let mig_section = data
             .sections
@@ -821,6 +956,7 @@ mod tests {
             is_resize_pending: false,
             cached_volumes: &[],
             cached_floating_ips: &[],
+            port_bindings: &[],
         });
         let mig_section = data
             .sections
@@ -855,6 +991,7 @@ mod tests {
             is_resize_pending: true,
             cached_volumes: &[],
             cached_floating_ips: &[],
+            port_bindings: &[],
         });
         let banner = &data.sections[0];
         assert_eq!(banner.name, "⚠ Resize Pending");

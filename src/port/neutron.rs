@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use super::error::ApiResult;
 use super::types::*;
 use crate::models::neutron::{
-    FloatingIp, Network, NetworkAgent, Port, SecurityGroup, SecurityGroupRule,
+    FloatingIp, Network, NetworkAgent, Port, PortBinding, SecurityGroup, SecurityGroupRule,
 };
 
 #[async_trait]
@@ -64,6 +64,7 @@ pub trait NeutronPort: Send + Sync {
 
     // Ports
     async fn list_ports(&self, device_id: &str) -> ApiResult<Vec<Port>>;
+    async fn list_port_bindings(&self, port_id: &str) -> ApiResult<Vec<PortBinding>>;
 
     // Network Agents
     async fn list_network_agents(&self) -> ApiResult<Vec<NetworkAgent>>;

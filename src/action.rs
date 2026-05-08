@@ -192,6 +192,13 @@ pub enum Action {
     FetchPorts {
         server_id: String,
     },
+    /// Fetch *port bindings* (Neutron `binding-extended`) for every port
+    /// attached to `server_id`. Used by Server Detail (admin only) to surface
+    /// stale bindings left by failed live-migrations — the root cause of the
+    /// "No valid host" symptom users see in nexttui (BL-P2-086).
+    FetchPortBindingsForServer {
+        server_id: String,
+    },
 
     // All Tenants
     ToggleAllTenants,

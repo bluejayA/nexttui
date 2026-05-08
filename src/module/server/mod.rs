@@ -10,7 +10,11 @@ use crate::context::ActionSender;
 use crate::event::AppEvent;
 use crate::models::cinder::Volume;
 use crate::models::common::is_terminal_server_status;
-use crate::models::neutron::{FloatingIp, Network, Port};
+use crate::models::neutron::{FloatingIp, Network, Port, PortBinding};
+
+/// `(port_id, bindings)` pairs returned from Neutron `binding-extended`,
+/// keyed externally by the server those ports are attached to (BL-P2-086).
+type PortBindingsByPort = Vec<(String, Vec<PortBinding>)>;
 use crate::models::nova::{Flavor, Server, ServerMigration};
 use crate::module::{ConfirmHandler, PendingAction, ViewState};
 use crate::port::types::{EvacuateParams, NetworkAttachment, ServerCreateParams};
@@ -93,6 +97,11 @@ pub struct ServerModule {
     pending_fip_id: Option<String>,
     pending_ports_server_id: Option<String>,
     loading_ports: bool,
+    /// Port bindings for the *currently displayed* server, paired as
+    /// `(server_id, [(port_id, bindings)])`. Tagged with the server_id so a
+    /// late response for a previously-viewed instance cannot leak into the
+    /// current detail view (BL-P2-086).
+    cached_port_bindings: Option<(String, PortBindingsByPort)>,
     // Cached dropdown options — populated by handle_event, applied to form on open/load
     cached_flavor_opts: Vec<SelectOption>,
     cached_image_opts: Vec<SelectOption>,
@@ -131,6 +140,7 @@ impl ServerModule {
             pending_fip_id: None,
             pending_ports_server_id: None,
             loading_ports: false,
+            cached_port_bindings: None,
             cached_flavor_opts: Vec::new(),
             cached_image_opts: Vec::new(),
             cached_network_opts: Vec::new(),
@@ -190,6 +200,18 @@ impl ServerModule {
             .as_ref()
             .filter(|(sid, _)| sid == server_id)
             .map(|(_, m)| m)
+    }
+
+    /// Cached `(port_id, bindings)` pairs for `server_id`, or `None` if no
+    /// data has been loaded for this server (BL-P2-086).
+    pub fn cached_port_bindings_for(
+        &self,
+        server_id: &str,
+    ) -> Option<&[(String, Vec<PortBinding>)]> {
+        self.cached_port_bindings
+            .as_ref()
+            .filter(|(sid, _)| sid == server_id)
+            .map(|(_, data)| data.as_slice())
     }
 
     fn selected_server(&self) -> Option<&Server> {
@@ -284,7 +306,25 @@ impl ServerModule {
             KeyCode::Enter => {
                 if let Some(server) = self.selected_server() {
                     let id = server.id.clone();
-                    self.view_state = ViewState::Detail(id);
+                    self.view_state = ViewState::Detail(id.clone());
+                    // BL-P2-086: surface stale Neutron port bindings (the root
+                    // cause of "No valid host" live-migrate failures) without
+                    // an extra keystroke. Skip for non-admin: the Neutron
+                    // policy `delete_port_binding`/`get_port_bindings` is often
+                    // admin-only and we'd just spam 403s.
+                    if self.is_admin {
+                        // Drop any stale data tagged with a different server.
+                        if self
+                            .cached_port_bindings
+                            .as_ref()
+                            .is_none_or(|(sid, _)| sid != &id)
+                        {
+                            self.cached_port_bindings = None;
+                        }
+                        let _ = self
+                            .action_tx
+                            .send(Action::FetchPortBindingsForServer { server_id: id });
+                    }
                 }
                 None
             }
@@ -1135,6 +1175,19 @@ impl Component for ServerModule {
             {
                 self.handle_ports_loaded(ports.clone());
             }
+            AppEvent::PortBindingsLoaded {
+                server_id,
+                port_bindings,
+            } => {
+                // Only cache when the response matches the currently displayed
+                // server. Late responses for a server we navigated away from
+                // are dropped to avoid leaking stale data into the new view.
+                if let ViewState::Detail(current) = &self.view_state
+                    && current == server_id
+                {
+                    self.cached_port_bindings = Some((server_id.clone(), port_bindings.clone()));
+                }
+            }
             AppEvent::VolumeAttached { .. }
             | AppEvent::VolumeDetached { .. }
             | AppEvent::FloatingIpAssociated(_) => {
@@ -1166,6 +1219,7 @@ impl Component for ServerModule {
                         .resize_pending
                         .as_ref()
                         .is_some_and(|rp| rp.server_id == *id);
+                    let port_bindings = self.cached_port_bindings_for(id).unwrap_or(&[]);
                     let data = server_detail_data(&ServerViewContext {
                         server,
                         migration_progress: self.migration_progress_for(id),
@@ -1173,6 +1227,7 @@ impl Component for ServerModule {
                         is_resize_pending: is_resize,
                         cached_volumes: &self.cached_volumes,
                         cached_floating_ips: &self.cached_floating_ips,
+                        port_bindings,
                     });
                     let mut dv = crate::ui::detail_view::DetailView::new();
                     dv.set_data(data);
@@ -3104,5 +3159,77 @@ mod tests {
         assert!(hint.contains("n:Net"), "help_hint should contain n:Net");
         assert!(hint.contains("s:SG"), "help_hint should contain s:SG");
         assert!(hint.contains("i:Img"), "help_hint should contain i:Img");
+    }
+
+    // -- BL-P2-086: Port bindings auto-fetch & cache --
+
+    #[test]
+    fn test_detail_entry_admin_dispatches_fetch_port_bindings() {
+        // admin enters detail → Neutron port-binding fetch is auto-dispatched
+        // so the user can see stale bindings without an extra keystroke.
+        let (_module, mut rx) = setup_admin_detail("ACTIVE");
+        let mut saw = false;
+        while let Ok(action) = rx.try_recv() {
+            if let Action::FetchPortBindingsForServer { server_id } = action {
+                assert_eq!(server_id, "s1");
+                saw = true;
+                break;
+            }
+        }
+        assert!(
+            saw,
+            "admin detail entry should dispatch FetchPortBindingsForServer"
+        );
+    }
+
+    #[test]
+    fn test_detail_entry_non_admin_does_not_dispatch_fetch_port_bindings() {
+        // Neutron port-binding policy may be admin-only on some clouds; we
+        // never call it for non-admin to avoid spamming 403s.
+        let (mut module, mut rx) = setup();
+        module.handle_key(key(KeyCode::Enter));
+        while let Ok(action) = rx.try_recv() {
+            assert!(
+                !matches!(action, Action::FetchPortBindingsForServer { .. }),
+                "non-admin must not trigger port-binding fetch"
+            );
+        }
+    }
+
+    #[test]
+    fn test_handle_port_bindings_loaded_caches_for_current_server() {
+        use crate::models::neutron::{BindingStatus, PortBinding, PortBindingProfile};
+        let (mut module, _rx) = setup_admin_detail("ACTIVE");
+        let stale = PortBinding {
+            host: "lima-devstack-cp2".into(),
+            vif_type: "unbound".into(),
+            vnic_type: Some("normal".into()),
+            status: BindingStatus::Inactive,
+            profile: PortBindingProfile {
+                migrating_to: Some("lima-devstack-cp1".into()),
+            },
+        };
+        module.handle_event(&AppEvent::PortBindingsLoaded {
+            server_id: "s1".into(),
+            port_bindings: vec![("port-1".into(), vec![stale])],
+        });
+        let cached = module
+            .cached_port_bindings_for("s1")
+            .expect("cache populated");
+        assert_eq!(cached.len(), 1);
+        assert_eq!(cached[0].0, "port-1");
+        assert!(cached[0].1[0].is_stale_migration_remnant());
+    }
+
+    #[test]
+    fn test_handle_port_bindings_loaded_for_other_server_ignored() {
+        // Stale-data leak protection: only cache bindings tagged with the
+        // server we're currently looking at.
+        let (mut module, _rx) = setup_admin_detail("ACTIVE");
+        module.handle_event(&AppEvent::PortBindingsLoaded {
+            server_id: "different-server".into(),
+            port_bindings: vec![("p".into(), vec![])],
+        });
+        assert!(module.cached_port_bindings_for("s1").is_none());
     }
 }
