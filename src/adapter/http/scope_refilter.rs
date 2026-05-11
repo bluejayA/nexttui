@@ -56,7 +56,19 @@ pub struct RefilterScope<'a> {
 
 impl<'a> RefilterScope<'a> {
     /// Strict refilter: drop everything not matching `active`.
+    ///
+    /// `active` must be non-empty — an empty string would cause every row
+    /// to be dropped silently (since list models never carry
+    /// `tenant_id == ""`). The `debug_assert!` catches the caller bug in
+    /// dev builds; release builds rely on the [`from_parts`] empty-string
+    /// normalization (which is the only production caller).
+    ///
+    /// [`from_parts`]: RefilterScope::from_parts
     pub fn strict(active: &'a str) -> Self {
+        debug_assert!(
+            !active.is_empty(),
+            "RefilterScope::strict requires a non-empty active project id — empty would drop all rows"
+        );
         Self {
             active: Some(active),
             all_tenants: false,
@@ -79,23 +91,39 @@ impl<'a> RefilterScope<'a> {
         }
     }
 
-    /// Adapter from the legacy 2-arg shape. Normalizes `all_tenants=true` by
-    /// clearing `active`, so the resulting scope always satisfies the
-    /// ctor-validated invariant.
+    /// Adapter from the legacy 2-arg shape. Normalizes two corner cases so
+    /// the resulting scope always satisfies the ctor-validated invariant:
+    ///   - `all_tenants=true` wins over `active` (cleared to None).
+    ///   - `active=Some("")` is treated as `None` (unscoped) so an empty
+    ///     project id from `scope_provider` cannot route into the
+    ///     [`strict`] panic path.
+    ///
+    /// [`strict`]: RefilterScope::strict
     pub fn from_parts(active: Option<&'a str>, all_tenants: bool) -> Self {
         if all_tenants {
             Self::all_tenants()
-        } else if let Some(a) = active {
-            Self::strict(a)
         } else {
-            Self::unscoped()
+            match active {
+                Some(a) if !a.is_empty() => Self::strict(a),
+                _ => Self::unscoped(),
+            }
         }
     }
 
+    /// Active project id under strict scoping. `None` for `all_tenants`
+    /// or unscoped — callers should branch on this together with
+    /// [`is_all_tenants`] when reconstructing the policy.
+    ///
+    /// [`is_all_tenants`]: RefilterScope::is_all_tenants
     pub fn active(&self) -> Option<&'a str> {
         self.active
     }
 
+    /// `true` when the scope is the admin opt-out (every row kept). Always
+    /// implies [`active`] is `None`; the ctor invariant rules out the
+    /// `active=Some + all_tenants=true` combination.
+    ///
+    /// [`active`]: RefilterScope::active
     pub fn is_all_tenants(&self) -> bool {
         self.all_tenants
     }
@@ -108,6 +136,12 @@ impl<'a> RefilterScope<'a> {
 /// each adapter context handles its native list-item type without erasing
 /// `tenant_id` / `resource_id` to `&dyn ScopedItem`.
 pub trait AuditEmitter<T: ScopedItem> {
+    /// Emit one `CrossProjectBlockEvent` with reason `AdapterFilterViolation`
+    /// per dropped row. Implementations MUST be no-op when `dropped` is
+    /// empty (callers rely on this to avoid touching the audit log on the
+    /// zero-violation path), and MUST attribute every dropped row — even
+    /// rows whose `tenant_id()` is `None` — so the audit chain stays
+    /// loss-less per the module-level contract.
     fn emit_filter_violations(
         &self,
         dropped: &[T],
@@ -429,6 +463,31 @@ mod tests {
         assert!(!unscoped.is_all_tenants());
     }
 
+    // --- cargo-review SECURITY follow-ups (Sugg #1 + #2) ---
+    // Guard against the two latent footguns the SECURITY reviewer raised:
+    //   #1 `strict("")` would silently drop every row (tenant_id == "")
+    //   #2 `from_parts(Some(""), false)` would also reach strict("") via
+    //      the legacy 2-arg adapter path.
+
+    #[test]
+    #[should_panic(expected = "non-empty active")]
+    fn test_refilter_scope_strict_panics_on_empty_active() {
+        // `strict("")` is a caller bug — every row's `tenant_id == ""` test
+        // would fail, dropping all data. Caught in debug builds.
+        let _ = RefilterScope::strict("");
+    }
+
+    #[test]
+    fn test_refilter_scope_from_parts_treats_empty_string_as_unscoped() {
+        // Fail-safe: if `scope_provider.current_project_id()` ever yields
+        // `Some("")` (unscoped session, partial token, etc.), the legacy
+        // 2-arg path must NOT route into the panic above. Normalize to
+        // unscoped (refilter no-op) so the worker-side guard handles it.
+        let scope = RefilterScope::from_parts(Some(""), false);
+        assert_eq!(scope.active(), None, "empty string must be normalized to None");
+        assert!(!scope.is_all_tenants());
+    }
+
     // --- BL-P2-085 Step-14-precedent-refactor-cycle (refactor-2) ---
     // `refilter_and_audit` colocates the partition with the per-row audit
     // emit. `AuditEmitter` is the trait Step-14 adapter contexts
@@ -524,7 +583,7 @@ mod tests {
     }
 
     // --- BL-P2-085 Step-14-precedent-refactor-cycle (refactor-3) ---
-    // Trait rename `ScopedItem` → `ScopedItem` because the contract is
+    // Trait rename `HasTenantId` → `ScopedItem` because the contract is
     // "this row participates in scope comparison", not merely "has a
     // tenant_id field". The new name accommodates Step 14 models like
     // Cinder that may carry `project_id` instead of `tenant_id`.
