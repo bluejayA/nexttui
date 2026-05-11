@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{Link, append_pagination_parts, encode_param, extract_next_marker, paginated_list};
 use crate::adapter::http::base::BaseHttpClient;
+use crate::adapter::http::neutron_audit::CinderAuditCtx;
+use crate::adapter::http::scope_refilter::{RefilterScope, refilter_and_audit};
 use crate::models::cinder::{Volume, VolumeSnapshot};
 use crate::port::auth::AuthProvider;
 use crate::port::cinder::CinderPort;
@@ -14,6 +16,7 @@ use crate::port::types::*;
 
 pub struct CinderHttpAdapter {
     base: Arc<BaseHttpClient>,
+    audit_ctx: Option<Arc<CinderAuditCtx>>,
 }
 
 impl CinderHttpAdapter {
@@ -25,11 +28,63 @@ impl CinderHttpAdapter {
                 EndpointInterface::Public,
                 region,
             )?),
+            audit_ctx: None,
         })
     }
 
     pub fn from_base(base: Arc<BaseHttpClient>) -> Self {
-        Self { base }
+        Self {
+            base,
+            audit_ctx: None,
+        }
+    }
+
+    /// BL-P2-085 Step 14b: attach a `CinderAuditCtx` so every `list_*` call
+    /// runs `refilter_and_audit` against the response and emits an
+    /// `AdapterFilterViolation` audit event per dropped row. Wired by
+    /// `registry::new_http` once `audit.cinder` is provided.
+    pub fn with_audit(mut self, ctx: Arc<CinderAuditCtx>) -> Self {
+        self.audit_ctx = Some(ctx);
+        self
+    }
+
+    /// Apply response-side scope refiltering to a `PaginatedResponse`.
+    /// No-op when `audit_ctx` is None (pre-Step-14b adapters), preserving
+    /// the original response shape. When attached, partitions via
+    /// [`refilter_and_audit`] which fans out one `AdapterFilterViolation`
+    /// event per dropped row before returning the kept items.
+    ///
+    /// [`refilter_and_audit`]: crate::adapter::http::scope_refilter::refilter_and_audit
+    fn refilter_response<T>(
+        &self,
+        resp: PaginatedResponse<T>,
+        all_tenants: bool,
+        action_type: &str,
+        resource_kind: &str,
+    ) -> PaginatedResponse<T>
+    where
+        T: crate::adapter::http::scope_refilter::ScopedItem,
+    {
+        let active = self
+            .audit_ctx
+            .as_ref()
+            .and_then(|ctx| ctx.scope_provider.current_project_id());
+        let scope = RefilterScope::from_parts(active.as_deref(), all_tenants);
+        // correlation_id=0: list_* are not bound to a worker dispatch.
+        // See `NeutronHttpAdapter::refilter_response` for the rationale.
+        let kept = refilter_and_audit(
+            resp.items,
+            &scope,
+            self.audit_ctx.as_deref(),
+            action_type,
+            resource_kind,
+            0,
+        );
+        PaginatedResponse {
+            items: kept,
+            next_marker: resp.next_marker,
+            has_more: resp.has_more,
+        }
     }
 }
 
@@ -157,7 +212,7 @@ impl CinderPort for CinderHttpAdapter {
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<Volume>> {
         let query = build_volume_query(filter, pagination);
-        paginated_list(
+        let resp = paginated_list(
             &self.base,
             "/volumes/detail",
             &query,
@@ -166,7 +221,8 @@ impl CinderPort for CinderHttpAdapter {
                 (resp.volumes, next)
             },
         )
-        .await
+        .await?;
+        Ok(self.refilter_response(resp, filter.all_tenants, "FetchVolumes", "volume"))
     }
 
     async fn get_volume(&self, volume_id: &str) -> ApiResult<Volume> {
@@ -294,7 +350,7 @@ impl CinderPort for CinderHttpAdapter {
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<VolumeSnapshot>> {
         let query = build_snapshot_query(filter, pagination);
-        paginated_list(
+        let resp = paginated_list(
             &self.base,
             "/snapshots/detail",
             &query,
@@ -306,7 +362,8 @@ impl CinderPort for CinderHttpAdapter {
                 (resp.snapshots, next)
             },
         )
-        .await
+        .await?;
+        Ok(self.refilter_response(resp, filter.all_tenants, "FetchSnapshots", "snapshot"))
     }
 
     async fn get_snapshot(&self, snapshot_id: &str) -> ApiResult<VolumeSnapshot> {

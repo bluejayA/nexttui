@@ -47,11 +47,10 @@ impl AdapterRegistry {
     /// Create all HTTP adapters from the given auth provider and region.
     ///
     /// `audit` (BL-P2-085 Step-14-precedent-refactor-3) bundles per-service
-    /// audit contexts. Step 13b wired Neutron, Step 14 wires Nova; Cinder
-    /// follows in the next sub-cycle. Pass `AdapterAuditConfig::default()`
-    /// for mock registries and integration tests that don't care about
-    /// audit emission; each adapter then behaves as a pre-refilter
-    /// passthrough.
+    /// audit contexts. Step 13b wired Neutron; Step 14 wires Nova and
+    /// Cinder. Pass `AdapterAuditConfig::default()` for mock registries
+    /// and integration tests that don't care about audit emission; each
+    /// adapter then behaves as a pre-refilter passthrough.
     pub fn new_http(
         auth: Arc<dyn AuthProvider>,
         region: Option<String>,
@@ -79,13 +78,15 @@ impl AdapterRegistry {
         if let Some(ctx) = audit.nova {
             nova = nova.with_audit(ctx);
         }
-        // audit.cinder lands here in the next Step 14 sub-cycle once
-        // CinderHttpAdapter exposes `with_audit`.
+        let mut cinder = CinderHttpAdapter::from_base(cinder_base);
+        if let Some(ctx) = audit.cinder {
+            cinder = cinder.with_audit(ctx);
+        }
 
         Ok(Self {
             nova: Arc::new(nova),
             neutron: Arc::new(neutron),
-            cinder: Arc::new(CinderHttpAdapter::from_base(cinder_base)),
+            cinder: Arc::new(cinder),
             glance: Arc::new(GlanceHttpAdapter::from_base(glance_base)),
             keystone: Arc::new(KeystoneHttpAdapter::from_base(keystone_base)),
             http_caches,
