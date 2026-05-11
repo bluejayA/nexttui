@@ -23,7 +23,9 @@
 //! still emit the event with the `tenant_id` field preserved as missing —
 //! the audit chain depends on every drop being attributable.
 
+use crate::models::cinder::{Volume, VolumeSnapshot};
 use crate::models::neutron::{FloatingIp, Network, SecurityGroup};
+use crate::models::nova::Server;
 
 /// Minimal contract a list item must satisfy to participate in
 /// project-scope refiltering. `tenant_id` returns `None` when the underlying
@@ -198,6 +200,39 @@ impl ScopedItem for SecurityGroup {
 }
 
 impl ScopedItem for FloatingIp {
+    fn tenant_id(&self) -> Option<&str> {
+        self.tenant_id.as_deref()
+    }
+    fn resource_id(&self) -> Option<&str> {
+        Some(&self.id)
+    }
+}
+
+// --- BL-P2-085 Step 14: ScopedItem impls for Nova/Cinder list models ---
+// `Server.tenant_id: Option<String>` is direct; `Volume.tenant_id` and
+// `VolumeSnapshot.tenant_id` are Rust-side renames of the upstream
+// `os-vol-tenant-attr:tenant_id` / `os-extended-snapshot-attributes:
+// project_id` wire fields, so the impl shape is identical.
+
+impl ScopedItem for Server {
+    fn tenant_id(&self) -> Option<&str> {
+        self.tenant_id.as_deref()
+    }
+    fn resource_id(&self) -> Option<&str> {
+        Some(&self.id)
+    }
+}
+
+impl ScopedItem for Volume {
+    fn tenant_id(&self) -> Option<&str> {
+        self.tenant_id.as_deref()
+    }
+    fn resource_id(&self) -> Option<&str> {
+        Some(&self.id)
+    }
+}
+
+impl ScopedItem for VolumeSnapshot {
     fn tenant_id(&self) -> Option<&str> {
         self.tenant_id.as_deref()
     }
@@ -601,5 +636,114 @@ mod tests {
         let fip = sample_floating_ip("fip-2", None);
         assert_eq!(fip.tenant_id(), None);
         assert_eq!(fip.resource_id(), Some("fip-2"));
+    }
+
+    // --- BL-P2-085 Step 14: ScopedItem impls for Nova/Cinder models ---
+    // Server (nova): `tenant_id: Option<String>` direct.
+    // Volume (cinder): wire field `os-vol-tenant-attr:tenant_id` renamed
+    //   to `tenant_id` in the struct.
+    // VolumeSnapshot (cinder): wire field
+    //   `os-extended-snapshot-attributes:project_id` renamed to
+    //   `tenant_id` in the struct — same Rust-side shape as Neutron and
+    //   Nova, so the impl is identical.
+
+    fn sample_server(id: &str, tenant: Option<&str>) -> crate::models::nova::Server {
+        crate::models::nova::Server {
+            id: id.to_string(),
+            name: "srv".to_string(),
+            status: "ACTIVE".to_string(),
+            addresses: std::collections::HashMap::new(),
+            flavor: crate::models::nova::FlavorRef {
+                id: "f-1".to_string(),
+                original_name: None,
+                vcpus: None,
+                ram: None,
+                disk: None,
+            },
+            image: None,
+            key_name: None,
+            availability_zone: None,
+            created: "2026-01-01T00:00:00Z".to_string(),
+            updated: None,
+            tenant_id: tenant.map(str::to_string),
+            host_id: None,
+            host: None,
+            volumes_attached: Vec::new(),
+            security_groups: Vec::new(),
+        }
+    }
+
+    fn sample_volume(id: &str, tenant: Option<&str>) -> crate::models::cinder::Volume {
+        crate::models::cinder::Volume {
+            id: id.to_string(),
+            name: None,
+            description: None,
+            status: "available".to_string(),
+            size: 1,
+            volume_type: None,
+            encrypted: false,
+            bootable: "false".to_string(),
+            attachments: Vec::new(),
+            availability_zone: None,
+            created_at: None,
+            tenant_id: tenant.map(str::to_string),
+        }
+    }
+
+    fn sample_volume_snapshot(
+        id: &str,
+        tenant: Option<&str>,
+    ) -> crate::models::cinder::VolumeSnapshot {
+        crate::models::cinder::VolumeSnapshot {
+            id: id.to_string(),
+            name: None,
+            status: "available".to_string(),
+            size: 1,
+            volume_id: "vol-1".to_string(),
+            created_at: None,
+            tenant_id: tenant.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn test_server_has_scoped_item_returns_some_when_present() {
+        let srv = sample_server("srv-1", Some("proj-A"));
+        assert_eq!(srv.tenant_id(), Some("proj-A"));
+        assert_eq!(srv.resource_id(), Some("srv-1"));
+    }
+
+    #[test]
+    fn test_server_has_scoped_item_returns_none_when_absent() {
+        let srv = sample_server("srv-2", None);
+        assert_eq!(srv.tenant_id(), None);
+        assert_eq!(srv.resource_id(), Some("srv-2"));
+    }
+
+    #[test]
+    fn test_volume_has_scoped_item_returns_some_when_present() {
+        let vol = sample_volume("vol-1", Some("proj-B"));
+        assert_eq!(vol.tenant_id(), Some("proj-B"));
+        assert_eq!(vol.resource_id(), Some("vol-1"));
+    }
+
+    #[test]
+    fn test_volume_has_scoped_item_returns_none_when_absent() {
+        let vol = sample_volume("vol-2", None);
+        assert_eq!(vol.tenant_id(), None);
+        assert_eq!(vol.resource_id(), Some("vol-2"));
+    }
+
+    #[test]
+    fn test_volume_snapshot_has_scoped_item_returns_some_when_present() {
+        let snap = sample_volume_snapshot("snap-1", Some("proj-C"));
+        assert_eq!(snap.tenant_id(), Some("proj-C"));
+        assert_eq!(snap.resource_id(), Some("snap-1"));
+    }
+
+    #[test]
+    fn test_volume_snapshot_has_scoped_item_returns_none_when_absent() {
+        let snap = sample_volume_snapshot("snap-2", None);
+        assert_eq!(snap.tenant_id(), None);
+        assert_eq!(snap.resource_id(), Some("snap-2"));
     }
 }

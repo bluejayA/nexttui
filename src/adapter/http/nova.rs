@@ -10,6 +10,8 @@ use super::{
     paginated_list,
 };
 use crate::adapter::http::base::BaseHttpClient;
+use crate::adapter::http::neutron_audit::NovaAuditCtx;
+use crate::adapter::http::scope_refilter::{RefilterScope, refilter_and_audit};
 use crate::models::nova::{Aggregate, ComputeService, Flavor, Hypervisor, Server, ServerMigration};
 use crate::port::auth::AuthProvider;
 use crate::port::error::{ApiError, ApiResult};
@@ -18,6 +20,7 @@ use crate::port::types::*;
 
 pub struct NovaHttpAdapter {
     base: Arc<BaseHttpClient>,
+    audit_ctx: Option<Arc<NovaAuditCtx>>,
 }
 
 impl NovaHttpAdapter {
@@ -29,11 +32,63 @@ impl NovaHttpAdapter {
                 EndpointInterface::Public,
                 region,
             )?),
+            audit_ctx: None,
         })
     }
 
     pub fn from_base(base: Arc<BaseHttpClient>) -> Self {
-        Self { base }
+        Self {
+            base,
+            audit_ctx: None,
+        }
+    }
+
+    /// BL-P2-085 Step 14: attach a `NovaAuditCtx` so every `list_*` call
+    /// runs `refilter_and_audit` against the response and emits an
+    /// `AdapterFilterViolation` audit event per dropped row. Wired by
+    /// `registry::new_http` once `audit.nova` is provided.
+    pub fn with_audit(mut self, ctx: Arc<NovaAuditCtx>) -> Self {
+        self.audit_ctx = Some(ctx);
+        self
+    }
+
+    /// Apply response-side scope refiltering to a `PaginatedResponse`.
+    /// No-op when `audit_ctx` is None (pre-Step-14 adapters), preserving
+    /// the original response shape. When attached, partitions via
+    /// [`refilter_and_audit`] which fans out one `AdapterFilterViolation`
+    /// event per dropped row before returning the kept items.
+    ///
+    /// [`refilter_and_audit`]: crate::adapter::http::scope_refilter::refilter_and_audit
+    fn refilter_response<T>(
+        &self,
+        resp: PaginatedResponse<T>,
+        all_tenants: bool,
+        action_type: &str,
+        resource_kind: &str,
+    ) -> PaginatedResponse<T>
+    where
+        T: crate::adapter::http::scope_refilter::ScopedItem,
+    {
+        let active = self
+            .audit_ctx
+            .as_ref()
+            .and_then(|ctx| ctx.scope_provider.current_project_id());
+        let scope = RefilterScope::from_parts(active.as_deref(), all_tenants);
+        // correlation_id=0: list_* are not bound to a worker dispatch.
+        // See `NeutronHttpAdapter::refilter_response` for the rationale.
+        let kept = refilter_and_audit(
+            resp.items,
+            &scope,
+            self.audit_ctx.as_deref(),
+            action_type,
+            resource_kind,
+            0,
+        );
+        PaginatedResponse {
+            items: kept,
+            next_marker: resp.next_marker,
+            has_more: resp.has_more,
+        }
     }
 }
 
@@ -226,7 +281,7 @@ impl NovaPort for NovaHttpAdapter {
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<Server>> {
         let query = build_server_query(filter, pagination);
-        paginated_list(
+        let resp = paginated_list(
             &self.base,
             "/servers/detail",
             &query,
@@ -235,7 +290,8 @@ impl NovaPort for NovaHttpAdapter {
                 (resp.servers, next)
             },
         )
-        .await
+        .await?;
+        Ok(self.refilter_response(resp, filter.all_tenants, "FetchServers", "server"))
     }
 
     async fn get_server(&self, server_id: &str) -> ApiResult<Server> {
