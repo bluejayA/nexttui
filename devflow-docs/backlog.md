@@ -2,45 +2,48 @@
 
 ## Pending
 
-### BL-P2-086: Live-migrate stale port binding diagnosis — P2
-**Priority**: Medium (재현성 높은 운영 함정 — 한 번 실패하면 동일 host로 모든 후속 live-migration이 같은 사유로 막힘)
-**Category**: UX / Diagnostics (Server Detail + 에러 메시지)
+### BL-P2-088: Live-migrate pre-flight stale port binding check — P3
+**Priority**: Low (편의 — BL-P2-086 진단 기능 사용 후 진짜 필요한지 결정)
+**Category**: UX / Defensive
+**Parent**: BL-P2-086 deferred-C
 
-**Problem (실증, 2026-05-08 devstack-multi)**:
-- nexttui에서 `LiveMigrateServer` 실행 → `[ERR] LiveMigrateServer failed: Bad request: No valid host was found.` 토스트만 표시
-- 실제 원인은 Nova가 아닌 Neutron 단계: 이전(2026-05-07 06:04, Migration #18) 실패한 cp2→cp1 live-migration이 cp2 측에 `INACTIVE` + `vif_type=unbound` + `profile.migrating_to=lima-devstack-cp1` binding을 남김. cleanup 안 됨
-- 이후 모든 cp1→cp2 live-migration 시도가 conductor에서 `neutronclient.common.exceptions.Conflict: Binding for port {id} on host lima-devstack-cp2 already exists.` → conductor가 cp2를 실패 host로 마크 → retry 시 cp1+cp2 모두 ignore → "No valid host"
-- nexttui 사용자는 controller VM의 conductor 로그를 보지 않으면 진단 불가 — UX의 dead-end
-
-**Scope (A1 + A2, 진단만)**:
-
-1. **A1: live-migrate 에러 enrichment** (worker.rs:367-371)
-   - `Action::LiveMigrateServer` 에러 처리에서 `ApiError::BadRequest(msg)` + `msg`에 "No valid host" 패턴 매칭 시 토스트 message에 한 줄 hint 추가:
-     - `"hint: stale port binding 가능성 — instance detail의 'Port bindings' 섹션 확인"`
-   - 다른 액션의 BadRequest는 영향 없음
-   - 테스트: 정확한 패턴 매칭 + 다른 경로 영향 없음
-
-2. **A2: Server Detail "Port bindings" 섹션** (admin only)
-   - `NeutronPort::list_port_bindings(port_id) -> Vec<PortBinding>` trait 메서드 신규 (mock + http adapter)
-   - `models::neutron::PortBinding { host, vif_type, status: BindingStatus, profile: { migrating_to: Option<String>, ... } }`
-   - HTTP: `GET /v2.0/ports/{id}/bindings` (Neutron extension `binding-extended`, devstack 기본 활성)
-   - Server Detail이 열릴 때 admin이면 `list_ports(server_id)` → 각 port의 `list_port_bindings(port.id)` 병렬 호출 → 섹션 렌더
-   - 표시: host, status, vif_type, migrating_to 컬럼. `INACTIVE` + `migrating_to.is_some()` → ⚠️ 강조
-   - non-admin은 섹션 자체 비활성 (Neutron policy로 막혀있을 수 있음)
-
-**Out of scope (별도 후속 BL)**:
-- B: Cleanup action — admin-only destructive action으로 INACTIVE binding 삭제 (`DELETE /v2.0/ports/{id}/bindings/{host}`). A 사용 후 결정.
-- C: Pre-flight check — LiveMigrate 호출 직전 stale binding 사전 차단. 비용 부담으로 settings opt-in.
-- D: 자동 retry-with-cleanup — ❌ 비추 (클라이언트가 자원 정리 임의 수행 = 사고 가능)
+**Scope**:
+- LiveMigrate 호출 직전 인스턴스의 모든 port에 대해 `list_port_bindings` 사전 조회. INACTIVE+migrating_to 발견 시 호출 자체 차단 + 사용자에게 "stale binding 정리 후 재시도" 안내 (또는 BL-P2-087 cleanup action 안내).
+- 매번 N번의 추가 API 호출 비용 → 기본 off, settings opt-in (`live_migrate_preflight_check`).
+- BL-P2-086에서 자동 fetch한 `cached_port_bindings`가 fresh하면 재호출 skip하는 캐시 활용도 검토.
 
 **Acceptance**:
-- 신규 테스트 8~10개, `cargo test` 전체 통과
-- `cargo clippy --all-targets -- -D warnings` green, `cargo fmt --check` green
-- 실 devstack에서 testvm3 detail 열어 cp1 binding 1개 정상 표시 확인
-- (선택) stale binding 의도 재현 → ⚠️ 마커 + 에러 enrichment 동작 검증
-- 신규 dep 없음, 1 PR (commit 2개: A1 / A2)
+- 새 settings 키 + opt-in 시에만 동작
+- BL-P2-086 cache가 있으면 재호출 skip
+- 신규 테스트 4~6개
 
-**Ref**: 2026-05-08 진단 세션 — conductor 로그 결정적 패턴 (`Binding ... already exists.` → `Failed to compute_task_migrate_server: NoValidHost`). devstack stale binding은 이번 세션에서 Neutron policy 완화(`/etc/neutron/policy.json`에 `delete_port_binding` 추가) + REST API DELETE로 즉시 정리 완료.
+**Open question**: BL-P2-086 사용자 피드백 수집 후 진짜 가치 있는지 평가. 진단만으로 충분하면 이 항목 폐기.
+
+### BL-P2-087: Port binding cleanup action — P2
+**Priority**: Medium (BL-P2-086 진단을 발견 → 즉시 복구 경로 완결)
+**Category**: UX / Recovery action (admin-only, destructive)
+**Parent**: BL-P2-086 deferred-B
+
+**Problem**: BL-P2-086으로 stale binding을 발견할 수는 있지만 정리는 controller VM의 Neutron REST API 직접 호출로만 가능. UX dead-end가 줄긴 했지만 완결이 아님.
+
+**Scope**:
+- Server Detail의 admin 액션에 `Cleanup stale port binding` 추가 (전용 keybinding, 예: `Shift+P`)
+- INACTIVE+migrating_to 행만 후보로 list, 사용자가 어느 host의 binding을 지울지 명시 선택
+- Confirm modal에 정확한 페이로드 표시: "DELETE /v2.0/ports/{id}/bindings/{host}"
+- Neutron `binding-extended` extension 기본 정책이 admin조차 거부할 수 있음 (실증 — devstack 기본은 `delete_port_binding` 거부) → 403 시 hint: "Neutron policy `/etc/neutron/policy.json` 확인 필요"
+- 호출 직후 BL-P2-086의 `FetchPortBindingsForServer` 자동 재실행으로 즉시 반영
+
+**Out of scope**:
+- 정책 자체 수정은 nexttui 책임 아님 (운영자 작업)
+- bulk cleanup (여러 인스턴스 동시) — 단일 인스턴스 단위로만
+
+**Acceptance**:
+- `NeutronPort::delete_port_binding(port_id, host)` trait 메서드 + mock + HTTP adapter
+- Server module에 새 destructive action + RBAC ActionKind::Delete 또는 신규 ActionKind 추가 검토
+- 403 에러 enrichment (policy 안내)
+- 신규 테스트 6~8개, 신규 dep 없음, 1 PR
+
+**Ref**: 2026-05-08 BL-P2-086 진단 세션에서 직접 cleanup 시도 시 403 만났고 Neutron policy 완화로 우회. nexttui로 처리하려면 같은 우회 패턴 + 친절한 에러 가이드 필요.
 
 ### BL-P2-082: KeystoneProjectDirectory security hardening (Unit 1 fast-follow medium findings) — P2
 **Priority**: Medium (defense-in-depth, 실측 위험 낮음)
@@ -878,3 +881,4 @@ AI 개발 맥락에서 이는 "preference" 수준이 아니라 **claude-code 세
 - **BL-P2-077**: PR3 cargo-review 잔여 MED — unicode-width 전환 + NO_COLOR bg 제거 (PR #76, 2026-04-18)
 - **BL-P2-079**: PR3 Codex 2차/3차 review 잔여 finding — confirm reset + Usage refetch + Tab cycling + input_mode/Network form reset (PR #76, 2026-04-18)
 - **BL-P2-074**: SwitchCloud wire 완결 — `ContextRequest::CloudOnly` variant + `CloudConfig::default_project` 필드 + `SwitchError::NotConfigured` + `ContextSwitcher` idempotent fast-path (PR #78, 2026-04-20). safe_display는 BL-P2-050으로 defer. Codex P2 2건(tracing Instrument, slash in default_project) 반영.
+- **BL-P2-086**: Live-migrate stale port binding diagnosis — A1 worker error enrichment + A2 Server Detail "Port bindings" 섹션(admin only, INACTIVE+migrating_to ⚠ 마커). NeutronPort::list_port_bindings + binding-extended adapter. +16 tests (PR #83, 2026-05-08). Follow-ups: BL-P2-087 cleanup action, BL-P2-088 pre-flight check.
