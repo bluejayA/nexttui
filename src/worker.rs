@@ -19,6 +19,7 @@ use crate::event::AppEvent;
 use crate::infra::audit::AuditLogger;
 use crate::infra::cross_project_audit::{self, CrossProjectBlockEvent};
 use crate::infra::cross_project_guard::{self, CrossProjectReason, GuardDecision, GuardLayer};
+use crate::models::glance::Image;
 use crate::infra::rbac::{ActionKind, RbacGuard};
 use crate::port::types::*;
 
@@ -126,6 +127,12 @@ pub async fn run_worker(
         let all_tenants = all_tenants.clone();
         let polling_servers = polling_servers.clone();
         let in_flight_fetches = in_flight_fetches.clone();
+        // Step 16 (FR4 Phase 9): the spawned task needs audit_logger /
+        // actor_ctx so a pre-mutation form-block can emit its
+        // `AdapterFilterViolation` / `FormSelectionMismatch` audit
+        // entry without re-resolving them from globals.
+        let audit_logger_task = audit_logger.clone();
+        let actor_ctx_task = actor_ctx.clone();
 
         // BL-P2-085 Step 12: snapshot active project once per dispatch and
         // pass it to handle_action so Neutron list builders inject
@@ -138,7 +145,15 @@ pub async fn run_worker(
         let span = tracing::info_span!("worker_task", action = action_name(&action));
         tokio::spawn(
             async move {
-                let event = handle_action(&registry, &all_tenants, active_tenant, action).await;
+                let event = handle_action(
+                    &registry,
+                    &all_tenants,
+                    active_tenant,
+                    action,
+                    audit_logger_task.as_deref(),
+                    &actor_ctx_task,
+                )
+                .await;
                 let success = event
                     .as_ref()
                     .is_some_and(|ev| !matches!(ev, AppEvent::ApiError { .. }));
@@ -406,6 +421,70 @@ pub(crate) fn emit_origin_block_audit(
     cross_project_audit::emit(&event, audit_logger);
 }
 
+/// FR4 (BL-P2-085 Step 16, Phase 9): pure decision over a refetched
+/// Glance image. `image.owner` carries the project id (Glance schema);
+/// `None` is treated as fail-safe deny so an upstream that omits owner
+/// cannot route a cross-project delete past the form layer.
+pub(crate) fn check_image_owner_scope(image: &Image, active: &str) -> GuardDecision {
+    match image.owner.as_deref() {
+        Some(owner) if owner == active => GuardDecision::Allow,
+        Some(owner) => GuardDecision::Block {
+            reason: CrossProjectReason::FormSelectionMismatch {
+                selected: owner.to_string(),
+                active: active.to_string(),
+            },
+        },
+        None => GuardDecision::Block {
+            reason: CrossProjectReason::FormSelectionMismatch {
+                selected: String::new(),
+                active: active.to_string(),
+            },
+        },
+    }
+}
+
+/// FR4 (BL-P2-085 Step 16, Phase 9): build a [`CrossProjectBlockEvent`]
+/// for a form-layer block (`GuardLayer::Fr4Form`) and emit via
+/// [`cross_project_audit::emit`]. Mirrors [`emit_origin_block_audit`]
+/// for the FR2 path; the worker uses this when pre-mutation GET shows
+/// the selected resource lives in another project.
+///
+/// `resource_id` is stamped on the top-level event so the audit
+/// fingerprint stays unique per row; `asserted_origin_project_id` is
+/// `None` because FR4 has no origin to compare against.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn emit_form_block_audit(
+    reason: CrossProjectReason,
+    action_type: &str,
+    resource_kind: &str,
+    resource_id: &str,
+    active_project_id: Option<String>,
+    audit_logger: Option<&AuditLogger>,
+    actor_ctx: &Arc<RwLock<ActorContext>>,
+    correlation_id: u64,
+) {
+    let (cloud, user_id) = actor_ctx
+        .read()
+        .map(|g| (g.cloud.clone(), g.user_id.clone()))
+        .unwrap_or_else(|e| {
+            let g = e.into_inner();
+            (g.cloud.clone(), g.user_id.clone())
+        });
+    let mut event = CrossProjectBlockEvent::new(
+        reason,
+        GuardLayer::Fr4Form,
+        action_type,
+        resource_kind,
+        cloud,
+        user_id,
+        active_project_id,
+        None, // FR4: no origin to assert
+        correlation_id,
+    );
+    event.resource_id = Some(resource_id.to_string());
+    cross_project_audit::emit(&event, audit_logger);
+}
+
 /// Human-readable name for an Action, used in PermissionDenied messages.
 fn action_name(action: &Action) -> &str {
     match action {
@@ -463,6 +542,8 @@ async fn handle_action(
     all_tenants: &AtomicBool,
     active_tenant: Option<String>,
     action: Action,
+    audit_logger: Option<&AuditLogger>,
+    actor_ctx: &Arc<RwLock<ActorContext>>,
 ) -> Option<AppEvent> {
     let action_label = action_name(&action);
     tracing::info!(action = action_label, "handling action");
@@ -854,10 +935,39 @@ async fn handle_action(
             Ok(img) => Some(AppEvent::ImageCreated(img)),
             Err(e) => Some(api_error("CreateImage", e)),
         },
-        Action::DeleteImage { id } => match registry.glance.delete_image(&id).await {
-            Ok(()) => Some(AppEvent::ImageDeleted { id }),
-            Err(e) => Some(api_error("DeleteImage", e)),
-        },
+        Action::DeleteImage { id } => {
+            // FR4 (BL-P2-085 Step 16, Phase 9): pre-mutation owner check.
+            // Refetch the image to read `owner` live — a list snapshot in
+            // the UI can be stale by the time the user confirms delete.
+            // Allow when active scope is unscoped (worker FR2 already
+            // handles the unscoped failsafe via DispatchedAction stamping)
+            // or when the pre-GET fails (let the delete attempt surface
+            // the underlying error via the existing api_error path).
+            if let Some(active) = active_tenant.as_deref()
+                && let Ok(image) = registry.glance.get_image(&id).await
+                && let GuardDecision::Block { reason } =
+                    check_image_owner_scope(&image, active)
+            {
+                emit_form_block_audit(
+                    reason.clone(),
+                    "DeleteImage",
+                    "image",
+                    &id,
+                    Some(active.to_string()),
+                    audit_logger,
+                    actor_ctx,
+                    0, // correlation_id: form layer not bound to a dispatch epoch
+                );
+                return Some(AppEvent::CrossProjectBlocked {
+                    reason: reason.as_str().to_string(),
+                    action: "DeleteImage".to_string(),
+                });
+            }
+            match registry.glance.delete_image(&id).await {
+                Ok(()) => Some(AppEvent::ImageDeleted { id }),
+                Err(e) => Some(api_error("DeleteImage", e)),
+            }
+        }
 
         // -- Keystone: Projects ---------------------------------------------
         Action::FetchProjects => match registry.keystone.list_projects(&default_pagination).await {
@@ -1762,6 +1872,117 @@ mod tests {
         assert_eq!(
             second["cloud"], "cloud-B",
             "second emit must reflect post-switch cloud (live RwLock read)"
+        );
+    }
+
+    // --- BL-P2-085 Step 16 (Phase 9): FR4 form-layer image-owner guard ---
+
+    fn sample_image(id: &str, owner: Option<&str>) -> Image {
+        Image {
+            id: id.to_string(),
+            name: "img".to_string(),
+            status: "active".to_string(),
+            disk_format: None,
+            container_format: None,
+            size: None,
+            visibility: "private".to_string(),
+            min_disk: 0,
+            min_ram: 0,
+            checksum: None,
+            created_at: None,
+            owner: owner.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn test_check_image_owner_scope_match_allows() {
+        let img = sample_image("img-1", Some("proj-A"));
+        assert_eq!(check_image_owner_scope(&img, "proj-A"), GuardDecision::Allow);
+    }
+
+    #[test]
+    fn test_check_image_owner_scope_mismatch_blocks() {
+        let img = sample_image("img-1", Some("proj-B"));
+        match check_image_owner_scope(&img, "proj-A") {
+            GuardDecision::Block { reason } => match reason {
+                CrossProjectReason::FormSelectionMismatch { selected, active } => {
+                    assert_eq!(selected, "proj-B");
+                    assert_eq!(active, "proj-A");
+                }
+                other => panic!("expected FormSelectionMismatch, got {other:?}"),
+            },
+            GuardDecision::Allow => panic!("mismatch must block"),
+        }
+    }
+
+    #[test]
+    fn test_check_image_owner_scope_missing_owner_fail_safe() {
+        // Glance omitted `owner` → can't prove same-project → fail-safe deny.
+        let img = sample_image("img-2", None);
+        match check_image_owner_scope(&img, "proj-A") {
+            GuardDecision::Block { reason } => match reason {
+                CrossProjectReason::FormSelectionMismatch { selected, active } => {
+                    assert_eq!(selected, "", "None owner encodes as empty selected");
+                    assert_eq!(active, "proj-A");
+                }
+                other => panic!("expected FormSelectionMismatch, got {other:?}"),
+            },
+            GuardDecision::Allow => panic!("missing owner must fail-safe deny"),
+        }
+    }
+
+    #[test]
+    fn test_emit_form_block_audit_writes_entry_with_fr4_form_layer() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("audit.log");
+        let logger = AuditLogger::new(path.clone()).unwrap();
+        let actor = actor_ctx_with("devstack", "user-uuid");
+
+        let reason = CrossProjectReason::FormSelectionMismatch {
+            selected: "proj-B".into(),
+            active: "proj-A".into(),
+        };
+        emit_form_block_audit(
+            reason,
+            "DeleteImage",
+            "image",
+            "img-99",
+            Some("proj-A".to_string()),
+            Some(&logger),
+            &actor,
+            17,
+        );
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(!content.is_empty(), "audit log must contain entry");
+        let parsed: serde_json::Value = serde_json::from_str(content.trim()).unwrap();
+        assert_eq!(parsed["action"], "DeleteImage");
+        assert_eq!(parsed["resource_id"], "img-99");
+        assert_eq!(parsed["details"]["guard_layer"], "fr4_form");
+        assert_eq!(parsed["details"]["correlation_id"], 17);
+        assert_eq!(
+            parsed["result"],
+            serde_json::json!({ "failed": "cross_project_block:form_selection_mismatch" })
+        );
+    }
+
+    #[test]
+    fn test_emit_form_block_audit_does_not_panic_when_logger_none() {
+        // logger=None must remain best-effort (tracing::warn! fallback).
+        let actor = actor_ctx_with("devstack", "user-uuid");
+        let reason = CrossProjectReason::FormSelectionMismatch {
+            selected: "proj-B".into(),
+            active: "proj-A".into(),
+        };
+        emit_form_block_audit(
+            reason,
+            "DeleteImage",
+            "image",
+            "img-99",
+            Some("proj-A".to_string()),
+            None,
+            &actor,
+            1,
         );
     }
 
