@@ -1152,6 +1152,16 @@ fn fetch_dedup_key(action: &Action) -> Option<&'static str> {
 use crate::models::common::is_terminal_server_status;
 
 /// Poll server status every 2 seconds until it reaches a terminal state.
+///
+/// BL-P2-085 Step 18 (Phase 11) — background read-only contract: this
+/// task sends `AppEvent::ServerStatusPolled` directly on the event
+/// channel and **never** dispatches a mutation through `ActionSender`.
+/// FR2 origin-stamping therefore does not apply here; cross-project
+/// scope checks remain a property of the user-initiated mutation path
+/// (worker recv loop). If a future refactor needs the polling task to
+/// emit mutation `Action`s, route them through `ActionSender::send` so
+/// the Step-9 central stamping covers them automatically — do not
+/// hand-craft `DispatchedAction`s in the polling body.
 async fn poll_server_status(
     registry: &AdapterRegistry,
     event_tx: &mpsc::UnboundedSender<VersionedEvent<AppEvent>>,
@@ -1182,6 +1192,13 @@ async fn poll_server_status(
 }
 
 /// Poll migration progress every 2 seconds until completed or error.
+///
+/// BL-P2-085 Step 18 (Phase 11) — background read-only contract: same
+/// invariant as [`poll_server_status`]. The two `AppEvent` variants
+/// emitted here (`MigrationProgressLoaded` / `MigrationPollingStopped`)
+/// flow on the event channel directly and bypass the FR2 stamping
+/// path. Adding mutation dispatch to this body must go through
+/// `ActionSender::send` (Step 9 central stamping).
 async fn poll_migration_progress(
     registry: &AdapterRegistry,
     event_tx: &mpsc::UnboundedSender<VersionedEvent<AppEvent>>,
@@ -1985,6 +2002,26 @@ mod tests {
             1,
         );
     }
+
+    // --- BL-P2-085 Step 18 (Phase 11): background poll read-only audit ---
+    //
+    // The plan-time worry was that background pollers might dispatch
+    // mutation actions with a stale scope. Inspection shows the two
+    // existing pollers (`poll_server_status` / `poll_migration_progress`)
+    // only send `AppEvent`s on `event_tx` — never `ActionSender::send`.
+    // The architectural pin lives on the two function-level doc comments
+    // (`poll_server_status` / `poll_migration_progress`): any future
+    // change that needs the polling task to dispatch a mutation must
+    // route through `ActionSender::send` so the Step-9 central stamping
+    // handles origin automatically. Hand-built `DispatchedAction`s
+    // inside poll bodies are forbidden.
+    //
+    // No runtime test is added here because (a) the existing pollers
+    // are async, multi-minute loops not suited to unit-level invocation
+    // without elaborate mocking, and (b) an `async fn` signature
+    // doesn't coerce to a `fn` pointer, so a compile-time signature pin
+    // would be artificial. The two doc comments + this module-level
+    // note are the canonical guard.
 
     // --- BL-P2-085 Step 11c: read-only bypass + AppEvent::CrossProjectBlocked ---
 
