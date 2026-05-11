@@ -200,6 +200,52 @@ BL-P2-080 Unit 3(`.github/workflows/ci.yml::devstack-integration`)은 placeholde
 
 **Ref**: 2026-04-21 Codex adversarial-review v3 finding M1, BL-P2-081 옵션 β 타협안 follow-up.
 
+### BL-P2-089: Glance `UpdateImage` Action + FR4 cross-project guard (BL-P2-085 follow-up)
+**Priority**: Medium
+**Parent**: BL-P2-085 Step 16 (descope)
+**Category**: Security / Functional
+
+**Description**: BL-P2-085 Step 16에서 `Action::DeleteImage` 경로에는 FR4 pre-mutation 가드 (Glance `get_image` → `check_image_owner_scope` → `Fr4Form` audit + reject)를 적용했으나, image **update** path는 `Action::UpdateImage` variant 자체가 미존재해 가드를 적용할 곳이 없었음. Glance `update_image` adapter는 이미 존재하지만 worker가 호출하지 않음.
+
+본 BL에서:
+1. `Action::UpdateImage { id, params: ImageUpdateParams }` variant 신규 (`src/action.rs`)
+2. `module/image/mod.rs`에 update 키 핸들러 (`PendingAction::UpdateImage` 또는 직접 form submit)
+3. `worker.rs::action_to_kind`에 `Action::UpdateImage => ActionKind::Update` 분류 + `action_name` 매핑 추가
+4. `worker.rs::handle_action(Action::UpdateImage)` 분기 — `DeleteImage`와 동일 패턴:
+   - pre-mutation `glance.get_image(&id).await`
+   - `check_image_owner_scope(&image, active)` 호출 (Step 16 pure helper 재사용)
+   - Block이면 `emit_form_block_audit(reason, "UpdateImage", "image", &id, ...)` + `AppEvent::CrossProjectBlocked { reason, action: "UpdateImage" }`
+   - 진행 시 `glance.update_image(&id, &params).await`
+5. 3 신규 tests (worker.rs::tests):
+   - `test_update_image_rejects_cross_project_owner`
+   - `test_update_image_allows_same_project_owner`
+   - `test_update_image_emits_fr4_form_event` — `emit_form_block_audit`로 "UpdateImage" action_type stamp 확인
+
+**Out of scope**: image visibility/min_disk/min_ram 등 update field 전체 surface — 본 BL은 FR4 가드 적용에 집중. Form UI 추가/변경은 별도 cycle.
+
+**Ref**: BL-P2-085 Step 16 commit `e91cca1` ("Plan adjustment: descoped `UpdateImage` to a follow-up BL because no `Action::UpdateImage` variant exists today").
+
+### BL-P2-090: `MockGlanceWithImage` configurable mock for `handle_action` FR4 integration test (BL-P2-085 follow-up)
+**Priority**: Low
+**Parent**: BL-P2-085 Step 16 (test gap)
+**Category**: Testing Infrastructure
+
+**Description**: BL-P2-085 Step 16의 pure helper (`check_image_owner_scope` / `emit_form_block_audit`) 5 tests로 결정 매트릭스는 cover됐으나, `handle_action(Action::DeleteImage)` **통합 경로** 자체는 단위 테스트로 검증되지 않음. 원인: 기본 `MockGlanceAdapter::get_image`가 `Err(ApiError::NotFound)`만 반환하므로 cross-project owner 시나리오를 `handle_action`에 끝까지 흘려보낼 수 없음.
+
+본 BL에서:
+1. `MockGlanceAdapter`에 configurable behavior 추가 — 다음 중 1택:
+   - Option (a): `MockGlanceAdapter::with_image(Image)` builder + 내부 `Mutex<Option<Image>>`로 get_image 반환 제어
+   - Option (b): 별 mock struct `MockGlanceWithImage { owner: Option<String>, delete_called: AtomicBool }`로 분리
+   - Option (c): 더 일반화된 `MockAdapter<T>` 패턴 도입 (다른 adapter mock에도 확장 가능)
+2. `worker.rs::tests`에 통합 test 추가:
+   - `test_handle_action_delete_image_emits_cross_project_blocked_when_owner_mismatch` — AdapterRegistry(with mock) + active=A → `handle_action` returns `AppEvent::CrossProjectBlocked`, mock이 `delete_image`를 호출받지 않았는지 확인 (Atomic flag)
+   - `test_handle_action_delete_image_proceeds_when_owner_matches` — owner=A + active=A → audit log empty, `delete_image` 호출됨
+   - `test_handle_action_delete_image_falls_through_on_pre_get_error` — pre-GET이 NotFound 등이면 기존 delete 흐름 (현재 동작 보존)
+
+**Out of scope**: 다른 adapter mock 일반화 (별도 BL). Option (c)를 선택할 경우 다른 adapter에도 적용 여부는 follow-up.
+
+**Ref**: BL-P2-085 Step 16 commit `e91cca1` ("Pure helpers cover the decision matrix; `handle_action` integration is not unit-tested directly because `MockGlanceAdapter::get_image` returns `NotFound`").
+
 ### BL-P2-052: Rescoped 토큰 자동 refresh + ContextChanged handler
 **Priority**: High (Part A 기준) — **BL-P2-080 / BL-P2-081 / BL-P2-083 이후**
 **Category**: Auth / Functional Regression
