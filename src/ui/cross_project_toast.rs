@@ -68,11 +68,7 @@ pub fn glance_owner_mismatch_toast(owner: &str, active: &str) -> (String, ToastL
 /// FR4 generic form-selection block toast. `field` is the form field
 /// label the user selected (e.g. `"network"`, `"flavor"`). All three
 /// strings are truncated.
-pub fn form_mismatch_toast(
-    field: &str,
-    selected: &str,
-    active: &str,
-) -> (String, ToastLevel) {
+pub fn form_mismatch_toast(field: &str, selected: &str, active: &str) -> (String, ToastLevel) {
     let msg = format!(
         "Form field '{}' references project '{}' but active scope is '{}'",
         safe_display_60(field),
@@ -103,7 +99,10 @@ mod tests {
     #[test]
     fn test_form_mismatch_toast_contains_field_label() {
         let (msg, _) = form_mismatch_toast("network", "proj-B", "proj-A");
-        assert!(msg.contains("network"), "field label must be in toast: {msg}");
+        assert!(
+            msg.contains("network"),
+            "field label must be in toast: {msg}"
+        );
         assert!(msg.contains("proj-B"));
         assert!(msg.contains("proj-A"));
     }

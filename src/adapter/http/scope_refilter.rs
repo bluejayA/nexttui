@@ -484,7 +484,11 @@ mod tests {
         // 2-arg path must NOT route into the panic above. Normalize to
         // unscoped (refilter no-op) so the worker-side guard handles it.
         let scope = RefilterScope::from_parts(Some(""), false);
-        assert_eq!(scope.active(), None, "empty string must be normalized to None");
+        assert_eq!(
+            scope.active(),
+            None,
+            "empty string must be normalized to None"
+        );
         assert!(!scope.is_all_tenants());
     }
 

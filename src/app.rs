@@ -805,10 +805,7 @@ impl App {
     /// updates land in the worker's next audit entry. The Arc is held by
     /// both the worker and this `App`; mutations through the `RwLock` are
     /// visible to both sides without re-spawning the worker.
-    pub fn set_actor_ctx(
-        &mut self,
-        ctx: Arc<std::sync::RwLock<crate::worker::ActorContext>>,
-    ) {
+    pub fn set_actor_ctx(&mut self, ctx: Arc<std::sync::RwLock<crate::worker::ActorContext>>) {
         self.actor_ctx = Some(ctx);
     }
 

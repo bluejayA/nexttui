@@ -252,7 +252,8 @@ mod tests {
         // length + lowercase hex contract
         assert_eq!(fp.len(), 12, "fingerprint must be 12 hex chars");
         assert!(
-            fp.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+            fp.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
             "fingerprint must be lowercase hex: {fp}"
         );
 
@@ -310,7 +311,10 @@ mod tests {
         assert!(!content.is_empty(), "audit log must contain entry");
         let parsed: serde_json::Value = serde_json::from_str(content.trim()).unwrap();
         assert_eq!(parsed["action"], "CreateServer");
-        assert_eq!(parsed["result"], serde_json::json!({ "failed": "cross_project_block:origin_scope_mismatch" }));
+        assert_eq!(
+            parsed["result"],
+            serde_json::json!({ "failed": "cross_project_block:origin_scope_mismatch" })
+        );
         assert_eq!(parsed["details"]["guard_layer"], "fr2_worker");
         assert_eq!(parsed["details"]["correlation_id"], 42);
     }

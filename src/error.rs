@@ -75,12 +75,18 @@ mod tests {
             msg.to_lowercase().contains("cross-project"),
             "missing cross-project label: {msg}"
         );
-        assert!(msg.to_lowercase().contains("blocked"), "missing 'blocked': {msg}");
+        assert!(
+            msg.to_lowercase().contains("blocked"),
+            "missing 'blocked': {msg}"
+        );
         assert!(
             msg.contains("origin_scope_mismatch"),
             "missing reason as_str(): {msg}"
         );
-        assert!(msg.contains("fr2_worker"), "missing guard layer as_str(): {msg}");
+        assert!(
+            msg.contains("fr2_worker"),
+            "missing guard layer as_str(): {msg}"
+        );
 
         let err = AppError::CrossProjectBlocked {
             reason: CrossProjectReason::FormSelectionMismatch {

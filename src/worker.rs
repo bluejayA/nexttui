@@ -19,8 +19,8 @@ use crate::event::AppEvent;
 use crate::infra::audit::AuditLogger;
 use crate::infra::cross_project_audit::{self, CrossProjectBlockEvent};
 use crate::infra::cross_project_guard::{self, CrossProjectReason, GuardDecision, GuardLayer};
-use crate::models::glance::Image;
 use crate::infra::rbac::{ActionKind, RbacGuard};
+use crate::models::glance::Image;
 use crate::port::types::*;
 
 /// Spawn an async future and forward its `AppEvent` result to `event_tx`
@@ -967,8 +967,7 @@ async fn handle_action(
             // / 5xx while keeping 404 as the existing pass-through.
             if let Some(active) = active_tenant.as_deref()
                 && let Ok(image) = registry.glance.get_image(&id).await
-                && let GuardDecision::Block { reason } =
-                    check_image_owner_scope(&image, active)
+                && let GuardDecision::Block { reason } = check_image_owner_scope(&image, active)
             {
                 emit_form_block_audit(
                     reason.clone(),
@@ -1936,7 +1935,10 @@ mod tests {
     #[test]
     fn test_check_image_owner_scope_match_allows() {
         let img = sample_image("img-1", Some("proj-A"));
-        assert_eq!(check_image_owner_scope(&img, "proj-A"), GuardDecision::Allow);
+        assert_eq!(
+            check_image_owner_scope(&img, "proj-A"),
+            GuardDecision::Allow
+        );
     }
 
     #[test]

@@ -101,11 +101,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let current_epoch = Arc::new(nexttui::context::ContextEpoch::new());
         let (action_raw_tx, action_rx) = mpsc::unbounded_channel();
-        let action_tx = nexttui::context::ActionSender::new(
-            action_raw_tx,
-            current_epoch.clone(),
-            rbac.clone(),
-        );
+        let action_tx =
+            nexttui::context::ActionSender::new(action_raw_tx, current_epoch.clone(), rbac.clone());
         let (event_tx, event_rx) = mpsc::unbounded_channel();
 
         // Build auth credential from config

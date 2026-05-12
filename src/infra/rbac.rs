@@ -93,11 +93,7 @@ impl RbacState {
     /// so that callers holding a single `RwLock` read guard get an atomic
     /// (role × scope) decision — preventing the BL-P2-085 Codex P1 race
     /// where role and project_id could be sampled from different snapshots.
-    fn scope_decision(
-        &self,
-        target_project_id: &str,
-        action: ActionKind,
-    ) -> RbacScopeDecision {
+    fn scope_decision(&self, target_project_id: &str, action: ActionKind) -> RbacScopeDecision {
         let role_ok = match self.effective_role {
             EffectiveRole::Admin => true,
             EffectiveRole::Member => !RbacGuard::is_admin_only_action(action),

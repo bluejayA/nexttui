@@ -83,10 +83,7 @@ impl ActionReceiver {
     }
 
     pub async fn recv(&mut self) -> Option<Action> {
-        self.rx
-            .recv()
-            .await
-            .map(|env| env.into_inner().action)
+        self.rx.recv().await.map(|env| env.into_inner().action)
     }
 
     pub fn try_recv(&mut self) -> Result<Action, TryRecvError> {
@@ -97,9 +94,7 @@ impl ActionReceiver {
         self.rx.close();
     }
 
-    pub fn into_inner(
-        self,
-    ) -> mpsc::UnboundedReceiver<VersionedEvent<DispatchedAction>> {
+    pub fn into_inner(self) -> mpsc::UnboundedReceiver<VersionedEvent<DispatchedAction>> {
         self.rx
     }
 }
@@ -113,10 +108,7 @@ pub fn test_action_channel() -> (ActionSender, ActionReceiver) {
     let (tx, rx) = mpsc::unbounded_channel();
     let epoch = Arc::new(ContextEpoch::new());
     let scope: Arc<dyn ScopeProvider> = Arc::new(RbacGuard::new());
-    (
-        ActionSender::new(tx, epoch, scope),
-        ActionReceiver::new(rx),
-    )
+    (ActionSender::new(tx, epoch, scope), ActionReceiver::new(rx))
 }
 
 impl ActionSender {
@@ -147,10 +139,7 @@ impl ActionSender {
         clippy::result_large_err,
         reason = "tracked by BL-P2-060 — pending bench-based boxing decision"
     )]
-    pub fn send(
-        &self,
-        action: Action,
-    ) -> Result<(), SendError<VersionedEvent<DispatchedAction>>> {
+    pub fn send(&self, action: Action) -> Result<(), SendError<VersionedEvent<DispatchedAction>>> {
         let dispatched = if crate::worker::action_is_mutation(&action) {
             match self.scope_provider.current_project_id() {
                 Some(project_id) => DispatchedAction::stamped(action, project_id),
