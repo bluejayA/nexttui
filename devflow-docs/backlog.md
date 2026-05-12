@@ -246,6 +246,100 @@ BL-P2-080 Unit 3(`.github/workflows/ci.yml::devstack-integration`)은 placeholde
 
 **Ref**: BL-P2-085 Step 16 commit `e91cca1` ("Pure helpers cover the decision matrix; `handle_action` integration is not unit-tested directly because `MockGlanceAdapter::get_image` returns `NotFound`").
 
+### BL-P2-091: Glance FR1 — `ScopedItem for Image` + `GlanceHttpAdapter::with_audit` (BL-P2-085 follow-up)
+**Priority**: Medium
+**Parent**: BL-P2-085 cargo-review branch-full Correctness #1 / Suggestions #4
+**Category**: Security / Functional
+
+**Description**: BL-P2-085가 Neutron/Nova/Cinder 3개 list adapter에 FR1 (`refilter_response` + `AdapterFilterViolation` audit emit)을 wire했으나, GlanceHttpAdapter는 **FR1 미적용**. 결과적으로 `FetchImages`가 admin 토큰 등에서 cross-project image를 list UI에 노출할 수 있고, 차단은 FR4 (DeleteImage pre-mutation) 경로에서만 발생. atomic security PR의 "FR1+FR2+FR3+FR4 layered defense" 약속과 비대칭.
+
+본 BL에서:
+1. `src/adapter/http/scope_refilter.rs`에 `impl ScopedItem for Image` 추가 — `Image.owner: Option<String>` → `tenant_id()`, `Image.id: String` → `resource_id()`
+2. `src/adapter/http/glance.rs`:
+   - `audit_ctx: Option<Arc<GlanceAuditCtx>>` 필드 + `with_audit(ctx)` builder (Nova/Cinder/Neutron 패턴 mirror)
+   - `refilter_response<T: ScopedItem>` helper
+   - `list_images` 본체에서 `refilter_response(resp, filter.all_tenants, "FetchImages", "image")` 호출
+3. `src/adapter/http/neutron_audit.rs`에 `pub type GlanceAuditCtx = AuditCtx;` + `AdapterAuditConfig.glance: Option<Arc<GlanceAuditCtx>>` 필드 추가 + `build_audit_config`에서 `glance` 채우기
+4. `src/adapter/registry.rs::new_http` body에 `audit.glance` 소비 (`glance.with_audit(ctx)`)
+5. 신규 tests: `test_image_has_scoped_item_returns_some_when_present` / `_returns_none_when_absent` / `_build_audit_config_returns_glance_with_service_glance` / `test_glance_with_audit_attaches_ctx_default_none`
+
+**Out of scope**: Glance image visibility 의미론 (`public`/`private`/`shared`/`community`)의 정밀한 처리 — `owner` 비교만으로 부족할 수 있는 케이스는 별도 BL.
+
+**Ref**: cargo-review branch-full report 2026-05-12 (Correctness #1, Suggestions #4).
+
+### BL-P2-092: Cross-resource pre-mutation FR4 (FIP/port, Volume/server project mismatch) (BL-P2-085 follow-up)
+**Priority**: Medium
+**Parent**: BL-P2-085 cargo-review branch-full Suggestions #5
+**Category**: Security / Functional
+
+**Description**: BL-P2-085 FR4 (`check_image_owner_scope` / `validate_form_scope`)는 단일 resource의 owner-vs-active 비교만 처리. 그러나 cross-resource mutation은 두 resource가 서로 다른 project에 속할 가능성에 대한 pre-mutation check가 부재:
+- `AssociateFloatingIp { fip_id, port_id }` — fip가 proj-A, port가 proj-B 소속일 수 있음
+- `DisassociateFloatingIp { fip_id }` — fip가 active scope와 다른 project일 수 있음
+- `AttachVolume { volume_id, server_id }` — volume과 server가 다른 project일 수 있음
+- `DetachVolume` / `ForceDetachVolume` — 동일
+- `LiveMigrateServer` / `Evacuate` 등 — destination host가 다른 project AZ일 수 있음 (별 BL 영역일 수도)
+
+현재는 OpenStack 서버측 RBAC에 의존 — admin 토큰이면 통과 가능. atomic security의 client-side defense-in-depth가 비대칭.
+
+본 BL에서:
+1. `Action::AssociateFloatingIp` 분기에 pre-mutation GET 두 번 (fip + port) → 각자 project_id 추출 → active_tenant와 비교 → 첫 mismatch면 `Fr4Form` audit emit + `AppEvent::CrossProjectBlocked`
+2. `Action::AttachVolume` / `DetachVolume` / `ForceDetachVolume` 동일 패턴 (volume + server)
+3. `Action::DisassociateFloatingIp` — fip만 비교
+4. helper `check_pair_scope(left_project, right_project, active)` pure fn 도입 (이번 BL의 단일 resource helper 일반화)
+5. 5+ tests — 각 action별 cross-project deny + same-project allow + missing project_id fail-safe
+
+**Out of scope**: Live-migrate destination host AZ scope (BL-P2-086 직후 영역). Phase 9 plan에는 FIP/Volume만 있었음.
+
+**Ref**: cargo-review branch-full report 2026-05-12 (Suggestions #5).
+
+### BL-P2-093: `actor_ctx.user_id` cloud-switch live sync (BL-P2-085 follow-up)
+**Priority**: High
+**Parent**: BL-P2-085 cargo-review branch-full Suggestions #1
+**Category**: Security / Audit Attribution
+
+**Description**: BL-P2-085 Phase 7 폴리싱에서 `actor_ctx.cloud`는 `App::handle_event(ContextChanged)`에서 live update 되도록 wire됐으나, `actor_ctx.user_id`는 **wire-startup 시점의 `wire_username`으로 고정**. 즉 사용자가 cloud-A → cloud-B로 switch한 뒤 다른 자격증명으로 재인증해도, 그 후 발생하는 모든 cross-project block audit entry는 **cloud-A의 user_id를 사용**한다.
+
+영향:
+1. Audit attribution 손상 — multi-cloud 환경에서 누가 block을 trigger했는지 잘못 기록
+2. **fingerprint v1 dedup 깨짐** — canonical `"v1|user|active|origin|target|action|resource_id"`에 user가 포함됨 → 동일 user가 두 cloud에서 동일 cross-project pattern 시도 시 fingerprint 다르게 생성 → dedup 미발동
+
+본 BL에서:
+1. `ContextTarget` 또는 `ContextChanged` event payload에 새 토큰의 `user.id` 포함 (Keystone token의 user UUID 사용)
+2. `App::handle_event(ContextChanged)`에서 `actor_ctx.write().user_id = new_user_id`로 갱신
+3. `KeystoneAuthAdapter::get_token_info()`이 user_id를 노출하는지 확인 + wire
+4. 신규 test: `test_actor_ctx_user_id_updates_on_cloud_switch` (RwLock mutate → 다음 emit이 새 user_id 반영) — Phase 7 폴리싱의 `test_emit_origin_block_audit_picks_up_actor_context_mutation` 패턴 mirror
+
+**Out of scope**: token refresh 중 user_id 변경 hook (BL-P2-052의 token refresh 작업과 결합). Username/UUID 매핑 (현재는 UUID 우선).
+
+**Ref**: cargo-review branch-full report 2026-05-12 (Suggestions #1).
+
+### BL-P2-094: Fingerprint v2 schema — `|` escape + length-prefix (BL-P2-085 follow-up)
+**Priority**: Low (v2 cycle 시 필수)
+**Parent**: BL-P2-085 cargo-review branch-full Suggestions #2
+**Category**: Schema Hardening
+
+**Description**: BL-P2-085 fingerprint v1 canonical은 `"v1|user|active|origin|target|action|resource_id"` 형태로 field 값을 unescape된 채 `|`로 join. 어느 하나가 `|`를 포함하면 collision 가능:
+- `(user="a|b", active="c")` ↔ `(user="a", active="b|c")` 동일 fingerprint
+- Keystone user_id는 UUID라 안전하지만 `action_type` (예: "Action|with|pipe"), `resource_id` (사용자 정의 가능한 경우) 등 customizable fields는 위험
+
+v1 schema는 LOCKED라 즉시 변경 X. **다음 schema bump 시점에 반드시 escape rule을 같이 도입**.
+
+본 BL에서:
+1. fingerprint v2 canonical 설계:
+   - 옵션 (a): `\|` / `\\` escape rule + version prefix `"v2|escaped(user)|escaped(active)|..."`
+   - 옵션 (b): length-prefix encoding `"v2|3:foo|5:bar|..."` (collision 불가, simple)
+   - 옵션 (c): JSON canonicalization (serde_json with `sort_keys`) — 가독성 ↓이지만 표준
+2. v1 → v2 migration: 기존 v1 entry 보존 (rotation 이전 데이터). 새 entry는 v2.
+3. `CrossProjectBlockEvent::fingerprint` 갱신 + `tests/cross_project_audit.rs` schema-stable tests 갱신
+4. v1 LOCKED 약속 해제 — state.md "Schema-Stable 결정" 갱신
+5. **호환성**: audit consumer (grep/jq script 등)는 v1/v2 둘 다 지원하도록 release notes
+
+**Out of scope**: hex 변환 최적화 (cargo-review Suggestions #6, byte-level lookup) — 본 BL과 함께 진행하면 자연.
+
+**Trigger**: 새 schema field 추가 (예: `service` from refactor-3 / `correlation_id` epoch propagation) 또는 v1 LOCKED 해제 결정 시.
+
+**Ref**: cargo-review branch-full report 2026-05-12 (Suggestions #2).
+
 ### BL-P2-052: Rescoped 토큰 자동 refresh + ContextChanged handler
 **Priority**: High (Part A 기준) — **BL-P2-080 / BL-P2-081 / BL-P2-083 이후**
 **Category**: Auth / Functional Regression
