@@ -121,19 +121,36 @@ pub fn save_token(
 }
 
 /// Load a single token from a cache file.
-/// Returns None if the file doesn't exist, is unreadable, or the token is expired.
+/// Returns None if the file doesn't exist, is unreadable, the token is
+/// expired, or the token predates BL-P2-093 (missing `user_id`).
 /// Automatically deletes expired token files.
 fn load_token_file(path: &Path) -> Option<Token> {
     let data = std::fs::read(path).ok()?;
     let token: Token = serde_json::from_slice(&data).ok()?;
 
-    if token.expires_at > chrono::Utc::now() + chrono::Duration::minutes(1) {
-        Some(token)
-    } else {
+    if token.expires_at <= chrono::Utc::now() + chrono::Duration::minutes(1) {
         tracing::info!(path = %path.display(), "cached token expired, removing");
         let _ = std::fs::remove_file(path);
-        None
+        return None;
     }
+
+    // BL-P2-093 upgrade safety: legacy disk-cached tokens (pre-BL-P2-093)
+    // deserialize with `user_id = ""` via `#[serde(default)]`. Accepting
+    // them would let `actor_ctx.user_id` stay anchored to the wire username
+    // when the user switches into that cached scope post-upgrade (the
+    // ContextChanged emit forwards the empty `user_id` and `handle_event`
+    // preserves the prior value). Treat empty as a cache miss so the
+    // next `get_token` reauths against Keystone and persists the UUID;
+    // the file is left in place to be overwritten by the fresh token.
+    if token.user_id.is_empty() {
+        tracing::info!(
+            path = %path.display(),
+            "cached token lacks user_id (pre-BL-P2-093), forcing reauth"
+        );
+        return None;
+    }
+
+    Some(token)
 }
 
 /// Load all valid cached tokens from the cache directory.
@@ -223,7 +240,7 @@ mod tests {
                     url: "https://nova:8774/v2.1".to_string(),
                 }],
             }],
-            user_id: String::new(),
+            user_id: "user-uuid-cached".to_string(),
         }
     }
 
@@ -342,6 +359,33 @@ mod tests {
         let path = PathBuf::from("/tmp/nexttui-test-nonexistent-dir");
         let loaded = load_all_tokens(&path);
         assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn test_load_legacy_token_without_user_id_treated_as_cache_miss() {
+        // BL-P2-093 upgrade safety: pre-upgrade cached tokens deserialize
+        // with `user_id = ""`. `load_token_file` must reject them so the
+        // next get_token reauths and persists the Keystone UUID instead of
+        // leaving actor_ctx.user_id anchored to the wire username.
+        let dir = TempDir::new().unwrap();
+        let cache_dir = dir.path().join("cloud-legacy");
+        let scope = sample_scope();
+
+        let mut token = sample_token(60);
+        token.user_id = String::new();
+        save_token(&token, &cache_dir, &scope).unwrap();
+
+        let loaded = load_all_tokens(&cache_dir);
+        assert!(
+            loaded.is_empty(),
+            "legacy empty user_id must be treated as a cache miss"
+        );
+        // File is left in place; next save_token will overwrite with a
+        // fresh token carrying the Keystone UUID.
+        assert!(
+            cache_dir.join(scope.cache_key()).exists(),
+            "legacy file must NOT be auto-deleted (only expired tokens are)"
+        );
     }
 
     #[test]
