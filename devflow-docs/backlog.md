@@ -2,6 +2,49 @@
 
 ## Pending
 
+### BL-P2-088: Live-migrate pre-flight stale port binding check — P3
+**Priority**: Low (편의 — BL-P2-086 진단 기능 사용 후 진짜 필요한지 결정)
+**Category**: UX / Defensive
+**Parent**: BL-P2-086 deferred-C
+
+**Scope**:
+- LiveMigrate 호출 직전 인스턴스의 모든 port에 대해 `list_port_bindings` 사전 조회. INACTIVE+migrating_to 발견 시 호출 자체 차단 + 사용자에게 "stale binding 정리 후 재시도" 안내 (또는 BL-P2-087 cleanup action 안내).
+- 매번 N번의 추가 API 호출 비용 → 기본 off, settings opt-in (`live_migrate_preflight_check`).
+- BL-P2-086에서 자동 fetch한 `cached_port_bindings`가 fresh하면 재호출 skip하는 캐시 활용도 검토.
+
+**Acceptance**:
+- 새 settings 키 + opt-in 시에만 동작
+- BL-P2-086 cache가 있으면 재호출 skip
+- 신규 테스트 4~6개
+
+**Open question**: BL-P2-086 사용자 피드백 수집 후 진짜 가치 있는지 평가. 진단만으로 충분하면 이 항목 폐기.
+
+### BL-P2-087: Port binding cleanup action — P2
+**Priority**: Medium (BL-P2-086 진단을 발견 → 즉시 복구 경로 완결)
+**Category**: UX / Recovery action (admin-only, destructive)
+**Parent**: BL-P2-086 deferred-B
+
+**Problem**: BL-P2-086으로 stale binding을 발견할 수는 있지만 정리는 controller VM의 Neutron REST API 직접 호출로만 가능. UX dead-end가 줄긴 했지만 완결이 아님.
+
+**Scope**:
+- Server Detail의 admin 액션에 `Cleanup stale port binding` 추가 (전용 keybinding, 예: `Shift+P`)
+- INACTIVE+migrating_to 행만 후보로 list, 사용자가 어느 host의 binding을 지울지 명시 선택
+- Confirm modal에 정확한 페이로드 표시: "DELETE /v2.0/ports/{id}/bindings/{host}"
+- Neutron `binding-extended` extension 기본 정책이 admin조차 거부할 수 있음 (실증 — devstack 기본은 `delete_port_binding` 거부) → 403 시 hint: "Neutron policy `/etc/neutron/policy.json` 확인 필요"
+- 호출 직후 BL-P2-086의 `FetchPortBindingsForServer` 자동 재실행으로 즉시 반영
+
+**Out of scope**:
+- 정책 자체 수정은 nexttui 책임 아님 (운영자 작업)
+- bulk cleanup (여러 인스턴스 동시) — 단일 인스턴스 단위로만
+
+**Acceptance**:
+- `NeutronPort::delete_port_binding(port_id, host)` trait 메서드 + mock + HTTP adapter
+- Server module에 새 destructive action + RBAC ActionKind::Delete 또는 신규 ActionKind 추가 검토
+- 403 에러 enrichment (policy 안내)
+- 신규 테스트 6~8개, 신규 dep 없음, 1 PR
+
+**Ref**: 2026-05-08 BL-P2-086 진단 세션에서 직접 cleanup 시도 시 403 만났고 Neutron policy 완화로 우회. nexttui로 처리하려면 같은 우회 패턴 + 친절한 에러 가이드 필요.
+
 ### BL-P2-082: KeystoneProjectDirectory security hardening (Unit 1 fast-follow medium findings) — P2
 **Priority**: Medium (defense-in-depth, 실측 위험 낮음)
 **Category**: Auth / Security
@@ -978,3 +1021,4 @@ AI 개발 맥락에서 이는 "preference" 수준이 아니라 **claude-code 세
 - **BL-P2-077**: PR3 cargo-review 잔여 MED — unicode-width 전환 + NO_COLOR bg 제거 (PR #76, 2026-04-18)
 - **BL-P2-079**: PR3 Codex 2차/3차 review 잔여 finding — confirm reset + Usage refetch + Tab cycling + input_mode/Network form reset (PR #76, 2026-04-18)
 - **BL-P2-074**: SwitchCloud wire 완결 — `ContextRequest::CloudOnly` variant + `CloudConfig::default_project` 필드 + `SwitchError::NotConfigured` + `ContextSwitcher` idempotent fast-path (PR #78, 2026-04-20). safe_display는 BL-P2-050으로 defer. Codex P2 2건(tracing Instrument, slash in default_project) 반영.
+- **BL-P2-086**: Live-migrate stale port binding diagnosis — A1 worker error enrichment + A2 Server Detail "Port bindings" 섹션(admin only, INACTIVE+migrating_to ⚠ 마커). NeutronPort::list_port_bindings + binding-extended adapter. +16 tests (PR #83, 2026-05-08). Follow-ups: BL-P2-087 cleanup action, BL-P2-088 pre-flight check.

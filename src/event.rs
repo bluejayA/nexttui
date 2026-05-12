@@ -3,7 +3,7 @@ use crate::models::{
     cinder::{Volume, VolumeSnapshot},
     glance::Image,
     keystone::{Project, User},
-    neutron::{FloatingIp, Network, NetworkAgent, Port, SecurityGroup},
+    neutron::{FloatingIp, Network, NetworkAgent, Port, PortBinding, SecurityGroup},
     nova::{Aggregate, ComputeService, Flavor, Hypervisor, Server, ServerMigration},
 };
 use crate::port::types::TenantUsage;
@@ -161,6 +161,13 @@ pub enum AppEvent {
     PortsLoaded {
         server_id: String,
         ports: Vec<Port>,
+    },
+    /// Result of `Action::FetchPortBindingsForServer` — pairs of `(port_id,
+    /// bindings)` for every port attached to `server_id`. Bindings come from
+    /// Neutron's `binding-extended` API (BL-P2-086).
+    PortBindingsLoaded {
+        server_id: String,
+        port_bindings: Vec<(String, Vec<PortBinding>)>,
     },
 
     // Server status polling (resize / cold-migrate state transitions)

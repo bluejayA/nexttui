@@ -8,7 +8,7 @@ use crate::adapter::http::base::BaseHttpClient;
 use crate::adapter::http::neutron_audit::NeutronAuditCtx;
 use crate::adapter::http::scope_refilter::{RefilterScope, refilter_and_audit};
 use crate::models::neutron::{
-    FloatingIp, Network, NetworkAgent, Port, SecurityGroup, SecurityGroupRule,
+    FloatingIp, Network, NetworkAgent, Port, PortBinding, SecurityGroup, SecurityGroupRule,
 };
 use crate::port::auth::AuthProvider;
 use crate::port::error::{ApiError, ApiResult};
@@ -141,6 +141,11 @@ struct NeutronFloatingIpWrapper {
 #[derive(Deserialize)]
 struct NeutronPortsResponse {
     ports: Vec<Port>,
+}
+
+#[derive(Deserialize)]
+struct NeutronPortBindingsResponse {
+    bindings: Vec<PortBinding>,
 }
 
 #[allow(dead_code)] // Used in Unit 14
@@ -615,6 +620,13 @@ impl NeutronPort for NeutronHttpAdapter {
         Ok(resp.ports)
     }
 
+    async fn list_port_bindings(&self, port_id: &str) -> ApiResult<Vec<PortBinding>> {
+        let path = format!("/v2.0/ports/{}/bindings", encode_param(port_id));
+        let req = self.base.get(&path).await?;
+        let resp: NeutronPortBindingsResponse = self.base.send_json(req).await?;
+        Ok(resp.bindings)
+    }
+
     // -- Network Agents (stubs — Unit 14) --
 
     async fn list_network_agents(&self) -> ApiResult<Vec<NetworkAgent>> {
@@ -1010,5 +1022,45 @@ mod tests {
         let resp: NeutronNetworksResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.networks.len(), 1);
         assert!(resp.networks_links.is_none());
+    }
+
+    // -- BL-P2-086: GET /v2.0/ports/{id}/bindings response --
+
+    #[test]
+    fn test_neutron_port_bindings_response_deserialize() {
+        // Real payload captured 2026-05-08 from devstack-multi.
+        let json = r#"{
+            "bindings": [
+                {
+                    "host": "lima-devstack-cp1",
+                    "vif_type": "ovs",
+                    "vnic_type": "normal",
+                    "status": "ACTIVE",
+                    "profile": {"os_vif_delegation": true},
+                    "vif_details": {"connectivity": "l2", "bridge_name": "br-int"}
+                },
+                {
+                    "host": "lima-devstack-cp2",
+                    "vif_type": "unbound",
+                    "vnic_type": "normal",
+                    "status": "INACTIVE",
+                    "profile": {"os_vif_delegation": true, "migrating_to": "lima-devstack-cp1"},
+                    "vif_details": {}
+                }
+            ]
+        }"#;
+        let resp: NeutronPortBindingsResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.bindings.len(), 2);
+        assert_eq!(resp.bindings[0].host, "lima-devstack-cp1");
+        assert!(!resp.bindings[0].is_stale_migration_remnant());
+        assert!(resp.bindings[1].is_stale_migration_remnant());
+    }
+
+    #[test]
+    fn test_neutron_port_bindings_response_empty() {
+        // After cleanup or for a brand-new port with one binding only.
+        let json = r#"{"bindings": []}"#;
+        let resp: NeutronPortBindingsResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.bindings.is_empty());
     }
 }
