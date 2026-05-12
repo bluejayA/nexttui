@@ -356,6 +356,22 @@ BL-P2-080 Unit 3(`.github/workflows/ci.yml::devstack-integration`)은 placeholde
 
 **Ref**: cargo-review branch-full report 2026-05-12 (Suggestions #1).
 
+### BL-P2-095: App-side success audit attribution should use Keystone UUID (BL-P2-093 follow-up)
+**Priority**: Medium
+**Parent**: BL-P2-093 codex-review branch-diff open question (2026-05-12)
+**Category**: Audit Consistency
+
+**Description**: BL-P2-093 fixed worker cross-project block audit attribution (`actor_ctx.user_id` live-sync to Keystone UUID), but `App::build_audit_entry` (app-side CUD success path) still uses the configured wire username for the `user` field. Result: cross-project block entries and success entries for the same actor can carry different `user` values in the same log file, breaking grep/dedup that joins both streams.
+
+본 BL에서:
+1. `App::build_audit_entry`가 `actor_ctx.read().user_id`를 우선 사용 (worker emit과 동일 경로)
+2. `actor_ctx`가 wire되지 않은 경우만 fallback (단위 테스트 호환)
+3. 신규 test: `test_build_audit_entry_uses_actor_ctx_user_id` — set_actor_ctx 후 CUD success event 발행 시 audit 라인의 `user` 필드가 Keystone UUID와 일치
+
+**Out of scope**: audit log rotation/retention. Username/UUID display mapping (UI side).
+
+**Ref**: codex-review branch-diff report 2026-05-12 (Open question #1).
+
 ### BL-P2-094: Fingerprint v2 schema — `|` escape + length-prefix (BL-P2-085 follow-up)
 **Priority**: Low (v2 cycle 시 필수)
 **Parent**: BL-P2-085 cargo-review branch-full Suggestions #2
