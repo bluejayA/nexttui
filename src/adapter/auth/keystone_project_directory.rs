@@ -330,6 +330,7 @@ mod tests {
             },
             roles: Vec::<TokenRole>::new(),
             catalog: Vec::<CatalogEntry>::new(),
+            user_id: String::new(),
         }
     }
 

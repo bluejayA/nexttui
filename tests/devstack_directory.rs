@@ -126,6 +126,7 @@ fn make_devstack_token(id: &str) -> Token {
         },
         roles: Vec::<TokenRole>::new(),
         catalog: Vec::<CatalogEntry>::new(),
+        user_id: String::new(),
     }
 }
 

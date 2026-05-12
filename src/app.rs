@@ -632,7 +632,11 @@ impl App {
         //      data starts loading immediately.
         // The remaining UX bits (router/selection reset + toast) are tracked
         // by BL-P2-052 Part B leftovers.
-        if let AppEvent::ContextChanged { ref target } = event {
+        if let AppEvent::ContextChanged {
+            ref target,
+            ref user_id,
+        } = event
+        {
             // Codex review 3차 P1: async `ContextChanged` can arrive while
             // the user is in Form/Command mode. The module reset below
             // leaves the form behind, but without normalizing `input_mode`
@@ -645,14 +649,19 @@ impl App {
             if let Some(cache) = &self.directory_cache {
                 cache.invalidate_cloud(&target.cloud);
             }
-            // BL-P2-085 Phase 7 폴리싱: the worker reads `actor_ctx` live at
-            // each block emit. Without this update, audit entries from the
-            // worker stay anchored to the spawn-time cloud after the user
-            // switches.
+            // BL-P2-085 Phase 7 폴리싱 + BL-P2-093: the worker reads
+            // `actor_ctx` live at each block emit. Without this update, audit
+            // entries from the worker stay anchored to the spawn-time cloud
+            // / user after the user switches. Empty `user_id` is treated as
+            // "no change" so test fixtures and rescope paths that lack a
+            // Keystone user UUID don't overwrite a valid prior value.
             if let Some(ref ctx) = self.actor_ctx
                 && let Ok(mut guard) = ctx.write()
             {
                 guard.cloud = target.cloud.clone();
+                if !user_id.is_empty() {
+                    guard.user_id = user_id.clone();
+                }
             }
             self.context_indicator.set_target(target, true);
             for component in self.components.values_mut() {
@@ -1698,9 +1707,14 @@ impl App {
         tokio::spawn(async move {
             match switcher.switch(request).await {
                 Ok((epoch, snapshot)) => {
+                    // BL-P2-093: forward the rescoped token's Keystone user
+                    // UUID so `handle_event(ContextChanged)` can refresh
+                    // `actor_ctx.user_id` for subsequent audit entries.
+                    let user_id = snapshot.token.user_id.clone();
                     let _ = event_tx.send(crate::context::VersionedEvent::new(
                         AppEvent::ContextChanged {
                             target: snapshot.target,
+                            user_id,
                         },
                         epoch,
                     ));
@@ -1737,9 +1751,11 @@ impl App {
         tokio::spawn(async move {
             match switcher.switch_back().await {
                 Ok((epoch, snapshot)) => {
+                    let user_id = snapshot.token.user_id.clone();
                     let _ = event_tx.send(crate::context::VersionedEvent::new(
                         AppEvent::ContextChanged {
                             target: snapshot.target,
+                            user_id,
                         },
                         epoch,
                     ));
@@ -2116,6 +2132,7 @@ mod tests {
                 project_name: "admin".into(),
                 domain: "default".into(),
             },
+            user_id: String::new(),
         });
         let t = app
             .context_indicator
@@ -2125,6 +2142,41 @@ mod tests {
         assert_eq!(t.project_name, "admin");
         // The switch marks a highlight.
         assert!(app.context_indicator.is_highlighting());
+    }
+
+    #[test]
+    fn test_context_changed_updates_actor_user_id() {
+        // BL-P2-093: Phase 7 폴리싱이 actor_ctx.cloud는 live 갱신하지만 user_id는
+        // wire-startup 시점 값에 고정. 다른 자격증명으로 재인증한 후 발생한 모든
+        // cross-project block audit이 이전 user_id로 기록되어 attribution을 망가뜨림.
+        // ContextChanged payload의 user_id는 handle_event 안에서 actor_ctx에 반영
+        // 되어야 한다.
+        use crate::context::types::ContextTarget;
+        use crate::worker::ActorContext;
+
+        let actor_ctx = Arc::new(std::sync::RwLock::new(ActorContext {
+            cloud: "cloud-A".into(),
+            user_id: "user-A".into(),
+        }));
+        let mut app = make_app();
+        app.set_actor_ctx(actor_ctx.clone());
+
+        app.handle_event(AppEvent::ContextChanged {
+            target: ContextTarget {
+                cloud: "cloud-B".into(),
+                project_id: "p1".into(),
+                project_name: "admin".into(),
+                domain: "default".into(),
+            },
+            user_id: "user-B".into(),
+        });
+
+        let guard = actor_ctx.read().expect("actor_ctx read");
+        assert_eq!(guard.cloud, "cloud-B", "cloud must follow ContextChanged");
+        assert_eq!(
+            guard.user_id, "user-B",
+            "user_id must follow ContextChanged (BL-P2-093)"
+        );
     }
 
     #[test]
@@ -2144,6 +2196,7 @@ mod tests {
                 project_name: "admin".into(),
                 domain: "default".into(),
             },
+            user_id: String::new(),
         });
         assert_eq!(
             app.input_mode,
@@ -2216,6 +2269,7 @@ mod tests {
                 project_name: "admin".into(),
                 domain: "default".into(),
             },
+            user_id: String::new(),
         });
         assert!(
             state.borrow().last_recently,
@@ -2274,6 +2328,7 @@ mod tests {
                 project_name: "admin".into(),
                 domain: "default".into(),
             },
+            user_id: String::new(),
         });
 
         let mut received: Vec<Action> = Vec::new();
@@ -3586,6 +3641,7 @@ mod tests {
             },
             roles: Vec::new(),
             catalog: Vec::<CatalogEntry>::new(),
+            user_id: String::new(),
         };
         let mut new_token = old_token.clone();
         new_token.id = "new".into();
@@ -3634,9 +3690,16 @@ mod tests {
             .expect("channel closed");
         assert_eq!(envelope.epoch(), 1);
         match envelope.into_inner() {
-            AppEvent::ContextChanged { target } => {
+            AppEvent::ContextChanged { target, user_id } => {
                 assert_eq!(target.project_name, "demo");
                 assert_eq!(target.cloud, "devstack");
+                // BL-P2-093: MockContextSession's rescoped token leaves
+                // user_id blank — `handle_event` treats empty as "no change",
+                // preserving the wire-startup actor_ctx.user_id.
+                assert!(
+                    user_id.is_empty(),
+                    "mock rescoped token carries empty user_id by design"
+                );
             }
             other => panic!("expected ContextChanged, got {other:?}"),
         }
@@ -3761,7 +3824,10 @@ mod tests {
             project_name: "admin".into(),
             domain: "default".into(),
         };
-        app.handle_event(AppEvent::ContextChanged { target });
+        app.handle_event(AppEvent::ContextChanged {
+            target,
+            user_id: String::new(),
+        });
 
         // "devstack" entries should be gone; "prod" should remain.
         assert!(
@@ -3786,7 +3852,10 @@ mod tests {
             project_name: "admin".into(),
             domain: "default".into(),
         };
-        app.handle_event(AppEvent::ContextChanged { target });
+        app.handle_event(AppEvent::ContextChanged {
+            target,
+            user_id: String::new(),
+        });
         // If we reach here without panicking, the test passes.
     }
 }

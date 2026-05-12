@@ -223,6 +223,7 @@ mod tests {
                 },
                 roles: Vec::new(),
                 catalog: Vec::<CatalogEntry>::new(),
+                user_id: String::new(),
             },
             token_scope: TokenScope::from(&t),
             captured_at: Utc.with_ymd_and_hms(2026, 4, 14, 0, 0, 0).unwrap(),

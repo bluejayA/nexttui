@@ -30,6 +30,9 @@ struct KeystoneTokenBody {
     project: Option<KeystoneProject>,
     roles: Vec<KeystoneRole>,
     catalog: Option<Vec<KeystoneCatalogEntry>>,
+    /// Keystone v3 includes a `user` block with the authenticated user's UUID.
+    /// Optional so legacy fixtures without it deserialize cleanly.
+    user: Option<KeystoneUser>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -37,6 +40,11 @@ struct KeystoneProject {
     id: String,
     name: String,
     domain: KeystoneDomain,
+}
+
+#[derive(Debug, Deserialize)]
+struct KeystoneUser {
+    id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -111,12 +119,15 @@ pub(super) fn parse_token(token_id: String, resp: KeystoneTokenResponse) -> Toke
         })
         .collect();
 
+    let user_id = body.user.map(|u| u.id).unwrap_or_default();
+
     Token {
         id: token_id,
         expires_at: body.expires_at,
         project,
         roles,
         catalog,
+        user_id,
     }
 }
 
@@ -608,6 +619,11 @@ mod tests {
         r#"{
             "token": {
                 "expires_at": "2099-12-31T23:59:59.000000Z",
+                "user": {
+                    "id": "user-uuid-abc",
+                    "name": "admin",
+                    "domain": { "id": "default", "name": "Default" }
+                },
                 "project": {
                     "id": "proj-123",
                     "name": "admin-project",
@@ -680,6 +696,10 @@ mod tests {
         assert_eq!(token.id, "tok-abc-123");
         assert_eq!(token.project.name, "admin-project");
         assert_eq!(token.project.domain_name, "Default");
+        assert_eq!(
+            token.user_id, "user-uuid-abc",
+            "user.id must be parsed from Keystone response (BL-P2-093)"
+        );
         assert_eq!(token.roles.len(), 2);
         assert_eq!(token.roles[0].name, "admin");
         assert_eq!(token.catalog.len(), 2);
@@ -705,6 +725,9 @@ mod tests {
         assert!(token.catalog.is_empty());
         assert_eq!(token.roles.len(), 1);
         assert!(token.project.id.is_empty());
+        // BL-P2-093: missing `user` block must deserialize cleanly and leave
+        // user_id empty (caller falls back to wire-startup username).
+        assert!(token.user_id.is_empty());
     }
 
     #[test]
@@ -843,6 +866,7 @@ mod tests {
             },
             roles: Vec::new(),
             catalog: Vec::new(),
+            user_id: String::new(),
         }
     }
 

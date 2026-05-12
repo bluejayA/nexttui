@@ -287,6 +287,7 @@ mod tests {
             },
             roles: Vec::new(),
             catalog: Vec::<CatalogEntry>::new(),
+            user_id: String::new(),
         }
     }
 

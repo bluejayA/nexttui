@@ -87,6 +87,11 @@ pub struct Token {
     pub project: ProjectScope,
     pub roles: Vec<TokenRole>,
     pub catalog: Vec<CatalogEntry>,
+    /// Keystone-issued user UUID extracted from the token response's `user.id`.
+    /// Empty when the response lacks a user block (legacy fixtures, mocks);
+    /// callers fall back to the wire-startup username in that case.
+    #[serde(default)]
+    pub user_id: String,
 }
 
 impl std::fmt::Debug for Token {
@@ -97,6 +102,7 @@ impl std::fmt::Debug for Token {
             .field("project", &self.project)
             .field("roles", &self.roles)
             .field("catalog", &format!("[{} entries]", self.catalog.len()))
+            .field("user_id", &self.user_id)
             .finish()
     }
 }
