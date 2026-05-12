@@ -1,161 +1,143 @@
 # Requirements Analysis
 
-**BL**: BL-P2-074
 **Depth**: Standard
-**Timestamp**: 2026-04-19T09:20:00+09:00 (revised)
-**Parent BL**: BL-P2-031 (PR#76 머지 완료, stub 남김)
-**Reference**: `.archive/inception-20260418-223706/requirements.md` (BL-P2-031 원본 FR-1)
-**Review**: 3자 리뷰 반영 완료 (`inception/requirements-review-raw/`)
+**Timestamp**: 2026-04-24T10:50:00+09:00
+**Work Item**: BL-P2-085 (P0, Critical) — Cross-project scoping 전면 fix
 
 ## User Intent
 
-PR#76(BL-P2-031 PR3)에서 의도적으로 toast-only stub으로 남긴 `:switch-cloud <name>` 명령을 완결한다. **옵션 (a) — `ContextRequest::CloudOnly { cloud }` variant 도입 + resolver default-project 위임**을 채택한다. 사용자가 `:switch-cloud prod`를 입력하면 해당 cloud의 **명시적으로 선언된 선호 project** (clouds.yaml의 신규 필드 `CloudConfig::default_project`)로 전환된다.
+`:switch-project`로 project 전환 후 server create 시 `SecurityGroupNotFound` → ERROR 인스턴스가 발생하는 근본 원인인 **4겹 cross-project scoping 버그**를 구조적으로 제거한다. admin 토큰 사용자가 active scope와 불일치하는 project의 리소스를 mutation/delete 할 수 있는 운영 사고 위험을 차단한다.
 
-**Default project source 결정** (H1 adversarial 리뷰 반영):
-- `CloudConfig`에 **신규 필드 `default_project: Option<String>` 추가** — 기존 `auth.project_name`(Keystone bootstrap credential scope)과 분리.
-- `auth.project_name` 재사용 금지 — 많은 환경이 `admin`/`service`로 고정되어 있어 runtime switch default로 쓰면 사용자가 실수로 admin scope에 착지할 수 있음 (OWASP A01 privilege 오남용 표면). PR#76 ConfirmDialog fingerprint가 파괴적 액션을 안전하게 만들려는 노력과 정면 충돌.
-- `default_project`가 설정되지 않은 cloud에 대한 `:switch-cloud` 호출은 `SwitchError::NotConfigured` 반환 + toast로 `:switch-project <name>` 사용 유도.
+PR#82 hotfix(c4590ab, 2026-04-24 머지)가 표면 증상(server form stale cache + 동명 옵션 disambiguation)만 차단했으므로, 이 위에 구조적 fix를 누적한다.
 
-**옵션 (b) picker 두 단계 플로우 거절 비용 근거**:
-- Unit 6 ContextPicker는 별도 BL로 스코프 분리되어 있음 (BL-P2-075의 의존). 이 BL에서 picker를 먼저 짓는 것은 단일 PR에 "cloud-only variant + default 정책 + 신규 picker UI + 테스트" 4축을 압축하는 것 → 리뷰 부담 + 회귀 위험 증가.
-- 현재 toast 힌트 "(picker: Ctrl+P — Unit 6)"는 **미래 기능 예고**이지 `:switch-cloud` 차단 계약이 아님. CloudOnly 경로는 picker와 orthogonal — picker 도입 후에도 "explicit choice 레이어 아래의 빠른 기본값"으로 자연스럽게 공존 (zsh의 `cd` vs fuzzy `cdi` 관계).
-- **현재 BL은 stub 제거가 최우선 목표**. picker 통합은 Unit 6 착수 시 별도 BL로 병합.
+### 확정된 정책 모델 (해석 분기 결과)
+
+**A (엄격 차단) + C-lite (구조화 이벤트 로그)** 채택.
+
+- 모든 사용자(admin 포함)는 `active_scope`와 불일치하는 project 리소스를 mutation/delete 할 수 **없다**. UI가 해당 경로를 막는다.
+- 차단되는 모든 cross-project 시도를 구조화된 `cross_project_block` 이벤트로 로그에 기록 → 감사 + 사용자 패턴 분석 양쪽에 재사용 가능한 스키마.
+- **기각된 대안**:
+  - B (opt-in) — B2(broad)는 현재 단일-프로젝트 UI 컨셉을 크게 재설계해야 하고 BL 한 건 범위를 초과(Unit 6 ContextPicker 연관). B1/B3은 운영 편의성 대비 구현 비용 정당화 어려움. 필요 시 별도 BL로 분리.
+  - 감사 뷰어 / 패턴 대시보드 = 이벤트 스키마는 이번에 픽스하되 뷰어/UI 소비는 후속 BL.
 
 ## Functional Requirements
 
-### FR-1. `:switch-cloud <name>` 즉시 전환 (Must)
-- 사용자가 `:switch-cloud <cloud-name>` 입력 시, `Command::SwitchCloud(name)` → `Action::SwitchContext(ContextRequest::CloudOnly { cloud: name })` dispatch.
-- 현재 toast-only stub (src/app.rs:1771-1780)을 실제 dispatch로 교체.
-- 파서 변경 없음 — `Command::SwitchCloud(String)` 이미 존재 (src/input/command.rs:205 확인, `test_parse_switch_cloud` 통과).
+### FR1 [Critical] Adapter 읽기 경로 tenant-scoping
+- `src/adapter/http/neutron.rs`의 SG / Network / FloatingIp List 빌더가 `active_scope`의 project_id를 `tenant_id` 쿼리 파라미터로 주입한다.
+- `src/adapter/http/nova.rs`, `src/adapter/http/cinder.rs`의 list 엔드포인트는 `all_tenants` 플래그 모델로 통일 — 기본 미사용(scope-only), 의도적으로 필요한 상위 호출부만 명시 활성화.
+- **수용 기준** (둘 다 충족):
+  - (요청 측) List 호출 시 HTTP 요청 쿼리에 `tenant_id={active_scope}` (또는 등가의 `all_tenants=false` + project-scoped token)이 실제로 포함됨을 mock HTTP가 assertion.
+  - (응답 측) mock이 cross-project 리소스를 섞어 반환해도 상위 레이어에 전달되는 결과는 `active_scope`에 속한 리소스만 포함.
 
-### FR-2. `ContextRequest::CloudOnly { cloud }` variant (Must)
-- `src/context/types.rs`의 `ContextRequest` enum에 `CloudOnly { cloud: String }` variant 추가. `ByName` / `ById`와 병렬.
-- `ContextRequest`는 `#[non_exhaustive]`가 **없고** 구조적 매칭이 전제 → 컴파일러가 모든 매처 업데이트를 강제. 업데이트 필수 사이트 (grep 검증 완료):
-  1. `src/context/resolver.rs` — `ContextTargetResolver::resolve` arm
-  2. `src/context/switcher.rs` — `SwitchContextSwitcher` 내부 매처
-  3. `src/worker.rs` — context-switch dispatch 경로
-  4. `src/app.rs` — handler / tests
-- clippy `-D warnings`에 의존하지 않고 사전 컴파일로 검증.
+### FR2 [Critical] Worker mutation origin-scope guard (구 "target-scope guard")
+- `src/worker.rs`의 모든 mutation Action dispatch 직전 **origin-scope 가드**를 수행한다.
+- **개정 시맨틱** (2026-04-24, application-design Assumption A1 검증 후): `Action` enum이 `project_id`를 per-variant로 가지지 않음이 실측 확인되어, "target.project_id 비교" 대신 **"Action 생성 시점의 scope가 현재 active scope와 동일한지 비교"** 로 재정의.
+- 구현: 중앙 dispatch 지점에서 `StampedAction { action, origin_project_id }` 래퍼로 감싸 Action을 발행. worker가 `stamped.origin_project_id == current_active_scope.project.id` 검사.
+- **커버되는 위협 시나리오**:
+  - TOCTOU: 폼 open 당시 scope=A, 사용자가 `:switch-project B`로 전환한 뒤 폼을 submit → origin_project_id=A != active=B → 거부
+  - Cache stale: mutation이 비동기 지연되는 동안 scope가 전환된 경우 동일하게 거부
+- 가드 실패 시: mutation을 거부하고 `cross_project_block` 이벤트(reason=`project_scope`)를 emit + 사용자에게 토스트로 즉시 알림.
+- **Mutation 판정 기준**: `Action`에 `is_mutation()` 헬퍼 추가 (enum exhaustive match). read-only Action(`Fetch*`, `Navigate`, `Back` 등)은 가드 대상이 아님. 모든 Action은 `true`/`false` 중 하나로 명시적 분류되어야 하며, 미분류는 컴파일 에러.
+- **ID 위조 시나리오 (target이 실제로 다른 scope)**: 이 가드가 직접 커버하지는 않음. FR1(adapter scope 필터)과 FR4(form 검증)가 커버. TUI 환경에서는 사용자가 직접 ID를 입력하는 경로가 제한적이므로 현실적 위협 최소.
+- **수용 기준**:
+  - (a) mock worker 테스트에서 `origin_project_id=A`, `current_active=B`인 mutation Action dispatch가 `AppError::CrossProjectBlocked`(또는 application-design에서 확정된 variant)로 거부되고 이벤트가 기록됨.
+  - (b) `is_mutation()` 구현이 enum exhaustive → 미분류 Action은 컴파일 실패.
+  - (c) read-only Action은 `StampedAction` 래핑 없이 통과(또는 래핑되어도 guard 비대상 분기).
 
-### FR-3. Resolver default-project 위임 (Must)
-- `ContextTargetResolver::resolve(CloudOnly { cloud })` 경로 구현.
-- 해결 알고리즘:
-  1. cloud가 known_clouds에 있는지 확인 (없으면 `SwitchError::NotFound`).
-  2. `CloudDirectory::default_project(cloud)` 조회 (신규 trait 메서드, `CloudConfig::default_project` 기반).
-  3. `None` → `SwitchError::NotConfigured { cloud }` (FR-8로 신설).
-  4. 있으면 그 project 이름으로 `ByName` 경로 재사용 → disambiguation + `ContextTarget` 반환.
-- `CloudDirectory` trait에 `default_project(cloud: &str) -> Option<String>` 추가.
+### FR3 [Critical] RBAC project-mismatch 정책
+- `src/infra/rbac.rs`에 project-mismatch 차단 규칙을 추가한다. 현재 role-tier 가드 위에 누적(AND) 적용.
+- RBAC 결정 순서: (1) role-tier 검사 → (2) project-scope 일치 검사. **둘 다 PASS**해야 Action 허용. role-tier PASS + scope FAIL 조합은 deny.
+- 차단 결정 시 FR5 이벤트의 `reason` 필드가 `role_tier` / `project_scope` / `both`로 구분 가능해야 한다 (거부 원인 식별 가능).
+- **수용 기준**: 단위 테스트로 role×scope 2차원 매트릭스(admin/member/reader × match/mismatch) 커버. admin+mismatch 케이스가 deny이고 reason이 `project_scope`로 기록됨.
 
-### FR-4. 이미 해당 cloud의 default project에 있을 때 no-op (Should)
-- `:switch-cloud <current-cloud>` 입력 시 resolver가 반환한 `ContextTarget`이 현재 활성 `ContextTarget`과 동일하면, state_machine transition 생략 + `ToastLevel::Info` "already on <cloud> • <project>" 발행.
-- **Acceptance 측정 기준** (quality P0 + spec Important 반영):
-  - 단위 테스트: `SwitchContextSwitcher` 또는 상위 dispatcher에서 동일 target 재입력 시 `Switching` 상태 전이 카운터가 0 증가함을 assert.
-  - 구현 위치 결정 (설계 단계): switcher 내부 idempotent 체크 (쉬움) vs app-level pre-check (명시적). **예비 결정: switcher 내부**, application-design에서 최종 확정.
+### FR4 [High] Form-selected ID cross-project 검증
+- `src/adapter/http/cinder.rs`의 CreateSnapshot 및 다른 form 기반 mutation에서 선택된 리소스 ID의 project_id가 현재 `active_scope`와 일치하는지 제출 시점에 검증한다.
+- 검증 실패 시 form이 제출되지 않고 에러 토스트 표시.
+- **수용 기준**: 단위 테스트에서 cross-project ID를 담은 폼 제출 요청이 거부됨.
 
-### FR-5. Error 경로 가시적 처리 (Must)
-- unknown cloud → toast `cloud '<name>' not found` (`SwitchError::NotFound` 매핑, safe_display 적용 — **60자 truncate + 제어문자 제거**).
-- `CloudConfig::default_project` 없음 → toast `cloud '<name>' has no default project — use :switch-project <name>` (`SwitchError::NotConfigured` 매핑, safe_display 적용).
-- auth 블록 자체가 None인 clouds.yaml 엔트리 → `CloudConfig::default_project`도 None으로 coalesce → 위와 동일 NotConfigured 경로 (spec Critical 반영).
-- `default_project` 설정됐으나 Keystone에 없음(stale) → 기존 resolver `NotFound` 경로.
-- 0 projects available (keystone empty list) → `NotFound` 경로에 흡수.
-- 모든 에러는 `ToastLevel::Error`, 상태 전이 없음, help toast(src/app.rs:1758)와 guidance 문구 일관성 유지.
+### FR5 [High] 구조화된 `cross_project_block` 이벤트 로깅
+- FR2/FR3/FR4의 차단 이벤트를 공통 스키마로 기록한다:
+  ```
+  {
+    timestamp, actor_user_id, actor_cloud,
+    active_project_id, target_project_id,
+    action_type, resource_kind, resource_id,
+    outcome: "blocked",
+    reason, fingerprint
+  }
+  ```
+- 필드 정의:
+  - `reason`: `role_tier` / `project_scope` / `both` / `form_selection` / `adapter_filter` 중 하나. 차단을 유발한 계층 식별.
+  - `fingerprint`: `sha256(actor_user_id ∥ active_project_id ∥ target_project_id ∥ action_type ∥ resource_id)` 앞 12자. 동일 시도의 반복 그룹핑용.
+- 출력 채널: 기존 nexttui 로그 파일 (`~/Library/Caches/nexttui/nexttui.log.<UTC-date>`)에 append. Grep 가능한 prefix/tag 사용 (예: `[cross-project-guard]`).
+- 전용 로그 파일 분리 여부는 구현 시 판단 (tag prefix로 충분하면 분리 불요).
+- PII: `actor_user_id`는 Keystone user ID 평문 기록. 해싱은 후속 옵션 (이번 BL 범위 밖).
+- **쓰기 보장 수준**: best-effort — IO 실패 시 기록은 유실될 수 있으나(단, 차단 자체는 이미 완료된 상태), 동일 프로세스 내 에러 로그(`tracing::error!`)에 남는다. "이벤트 손실 0%"는 보장하지 않는다 (NFR1과 일관).
+- **수용 기준**: 차단 이벤트 발생 시 위 스키마의 structured log line이 파일에 기록된다. 필드 중 하나라도 누락되면 테스트 실패.
 
-### FR-6. Legacy :ctx와 분리 유지 (Must)
-- `Command::ContextSwitch` / `Command::ContextList`는 PR3와 동일하게 toast-only 유지. 이번 BL에서 변경하지 않음.
-- BL-P2-075 (Unit 6 이후 deprecate)가 처리.
-
-### FR-7. 테스트 (Must)
-**단위 테스트**:
-- `ContextRequest::CloudOnly` variant 생성/매칭 테스트 (types.rs).
-- Resolver 성공 경로: `CloudOnly { cloud: "devstack" }` → default_project 기반 `ContextTarget` 반환.
-- Resolver 실패 경로 3종:
-  - unknown cloud → `SwitchError::NotFound`
-  - default_project 없음 → `SwitchError::NotConfigured`
-  - default_project 설정되어 있으나 Keystone에 없음 → `SwitchError::NotFound`
-- FR-4 idempotency: 동일 target 재입력 시 transition 카운터 불변.
-
-**`CloudDirectory` trait impl 4개 사이트 전수 업데이트 및 테스트** (quality P0 반영):
-1. `src/context/config_cloud_directory.rs::ConfigCloudDirectory` — `default_project(&str)` 실제 구현 (CloudConfig 참조).
-2. `src/context/resolver.rs::tests::FakeClouds` — 테스트용 stub.
-3. `src/app.rs::tests::FakeClouds` (~line 3444) — stub.
-4. `src/context/switcher.rs::tests::FakeClouds` (~line 213) — stub.
-
-**통합 테스트** (src/app.rs::tests):
-- `:switch-cloud prod` 입력 → `Action::SwitchContext(ContextRequest::CloudOnly { cloud: "prod" })`가 **정확히 1회** emit됨 (spec Important 반영).
-- 기존 `test_command_bar_switch_cloud_emits_info_toast`는 **신규 동작으로 대체** — 성공 경로는 dispatch assert, 실패 경로는 `ToastLevel::Error` + 메시지 substring assert.
-- help toast(src/app.rs:1758)의 "switch-cloud" 문자열과의 regex 충돌 점검 (quality P1 반영).
-
-### FR-8. `SwitchError::NotConfigured { cloud: String }` variant (Must)
-- `src/context/error.rs`에 variant 추가.
-- 용도: cloud가 `default_project` 설정 없이 `:switch-cloud`로 접근되었을 때.
-- **전용 variant 도입 이유** (H3 반영): 문자열 substring으로 fallback하면 BL-P2-053(SwitchError 확장 BL) 착수 시 테스트 + 사용자 facing message 양쪽이 깨짐. 지금 variant 하나 추가가 migration 비용 최소.
-- `SwitchError`는 `#[non_exhaustive]`가 없어 매처 전수 업데이트 필요 (FR-2와 동일 사이트 집합 + error 경로 핸들러).
+### FR6 [Medium] 사용자 토스트 카피
+- 차단 시 사용자에게 표시할 토스트 메시지 공통 카피를 확정한다 (예: `"차단: 활성 프로젝트 '{active}'에서 '{target}' 리소스는 수정할 수 없습니다. :switch-project {target} 후 재시도하세요."`).
+- 정확한 카피는 구현 시 확정 (i18n은 이번 범위 밖).
+- **수용 기준**: (a) 차단 발생 시 UI 테스트/통합 테스트에서 토스트가 한 번 표시됨을 검증. (b) 토스트 메시지에 `active_project_name`과 `target_project_name` 두 값이 포함됨. (c) 공통 카피가 단일 모듈에서 생성되어 재사용(복붙 카피 금지).
 
 ## Non-Functional Requirements
 
-### NFR-1. 동시성 격리 (기존 invariant 유지)
-- 변경 없음. `CloudOnly` dispatch도 기존 epoch/state_machine 경로를 탄다. 추가 spawn이나 race 없음.
+### NFR1 보안
+- **차단 실패 금지 (우선순위 1)**: 4겹 버그 전부에 대해 false negative(차단해야 하는 시도가 통과)는 허용되지 않는다. 테스트로 보장.
+- **이벤트 손실은 best-effort**: `cross_project_block` 이벤트는 IO 실패 시 로그 파일 append가 실패할 수 있으나, 그 경우에도 **차단 자체는 이미 완료**되어 있어야 한다. 이벤트 기록과 차단 행위는 독립 경로이며, 차단이 이벤트 기록에 의존하지 않는다. (FR5 "쓰기 보장 수준"과 일관)
 
-### NFR-2. 테스트 회귀 0건
-- 기존 1314 tests 전부 통과 유지. PR3에서 커버한 `test_command_bar_switch_cloud_emits_info_toast`는 dispatch 검증으로 대체됨.
-- `CloudDirectory` trait 확장으로 4개 impl 사이트 재컴파일 → 미업데이트 시 즉시 컴파일 실패로 탐지.
+### NFR2 회귀 테스트 / CI 게이팅
+- **확정된 테스트 전략 = T1 (mock unit만 merge-blocking)**.
+- mock HTTP 어댑터 + mock worker로 **FR1~FR5 전체 5개 FR** 단위 테스트 커버. ("4축"이 아니라 5개 FR — adapter(FR1) + worker(FR2) + rbac(FR3) + form(FR4) + log(FR5).)
+- DevStack 통합 테스트(두 project 동명 SG 시나리오)는 **로컬/수동 실행만** — CI merge 게이트 아님.
+- 이유:
+  - BL-P2-081이 `devstack-integration` CI placeholder의 "정식 activation" 우선권 보유 (메모리 기준).
+  - mock 단위 테스트가 deterministic + 빠름 + 구조 커버 충분.
+  - DevStack은 "실측 안전망"이지 매 PR 게이트가 아님 (flakiness 관리).
 
-### NFR-3. 코드 규모 (Guidance only, not acceptance)
-- 예상 diff: +150~250 lines (variant + NotConfigured variant + resolver arm + `default_project` accessor + 4 impl 사이트 + handler + 테스트). 단일 PR. **acceptance 기준이 아닌 가이드라인**.
+### NFR3 호환성
+- PR#82 hotfix 위에 누적 — `build_disambiguated_opts` 헬퍼와 `on_context_changed` cache-clear 경로는 유지·재사용.
+- `build_disambiguated_opts`를 다른 모듈(server 외 volume/snapshot/network 등)의 드롭다운에도 확장 여부는 **구현 재량** (이번 범위에 포함하면 Open Question 해결 후 결정).
 
-### NFR-4. 보안 / OWASP
-- 신규 외부 입력: `CloudConfig::default_project` (clouds.yaml 사용자 제어 문자열). 신뢰할 수 있으나 toast 표시 시 **`safe_display(&str, max_len=60)` 유틸 적용 필수** — 제어문자 / CR-LF injection / 터미널 이스케이프 방지.
-- cloud name도 마찬가지 (파서 레벨 sanitization이 있어도 방어심층).
-- 위험 scope 착지 방지: `default_project`를 명시적 필드로 분리한 것이 핵심 mitigation (H1 반영).
-
-### NFR-5. Clippy `-D warnings` 유지
-- `ContextRequest` / `SwitchError` 모두 `#[non_exhaustive]` 부재로 컴파일러가 매처 업데이트를 강제.
-
-### NFR-6. Observability / Tracing
-- `CloudOnly` resolve/dispatch 경로에 기존 `tracing::info_span!` 상속 + 필드 추가:
-  - `cloud=<input>` — 사용자 입력 그대로
-  - `resolved_project=<name>` — resolver가 선택한 default project
-- 실패 시 `tracing::warn!` 이벤트 1건 (error variant 매핑).
+### NFR4 브랜치/배포 정책
+- `main` 직접 커밋 금지. `feature/bl-p2-085-cross-project-scoping` (또는 도출된 유사 이름) 브랜치 + PR.
+- CONSTRUCTION 완료 후 `/codex:review --scope branch --base main` 게이트 실행. 선택적으로 adversarial-review.
 
 ## Technology Stack
 
-(brownfield — workspace.md 참조, 변경 없음)
-
 | 계층 | 선택 | 소스 | 비고 |
 |------|------|------|------|
-| Language | Rust (edition 2024) | Brownfield | 변경 없음 |
-| TUI | ratatui 0.30 + crossterm 0.29 | Brownfield | 변경 없음 |
-| Async | tokio + tokio-util | Brownfield | 변경 없음 |
-| Test | built-in `#[cfg(test)]` | Brownfield | 변경 없음 |
+| Language | Rust edition 2024 | Brownfield 감지 | 변경 없음 |
+| Framework | ratatui 0.30 + crossterm 0.29 | Brownfield 감지 | 변경 없음 |
+| HTTP | reqwest | Brownfield 감지 | 변경 없음 |
+| Test | `#[cfg(test)]` + `tests/` integration | Brownfield 감지 | mock HTTP 어댑터 기반 unit 추가 |
+| Logging | tracing | Brownfield 감지 | 구조화 이벤트 필드 추가 |
+
+→ 전체 스킵 (사전 지정 + Brownfield 완전 커버).
 
 ## Assumptions
 
-1. **Default project source**: 신규 `CloudConfig::default_project: Option<String>` 필드가 유일한 default source. `auth.project_name` fallback은 **하지 않음** — 의미 충돌 방지 (H1).
-2. **`CloudDirectory` trait 확장**: 3개 메서드로 확장 (`active_cloud` / `known_clouds` / `default_project`). 4개 impl 사이트 전수 업데이트 (config_cloud_directory + 3 FakeClouds).
-3. **`ContextRequest` 매처 사이트 전수 조사 완료**: resolver / switcher / worker / app — 컴파일러가 누락을 막음.
-4. **State machine transition**: CloudOnly도 일반 ByName과 동일한 transition 규칙(Idle→Switching→Committed/Failed). 추가 상태 없음.
-5. **이미 활성 project와 동일할 때**: resolver가 Ok(ContextTarget)를 반환하면 switcher 또는 app-level pre-check가 no-op 판단. FR-4 acceptance로 측정 가능. 구현 위치는 application-design에서 확정.
-6. **Unit 6 ContextPicker 미구현 상태 유지**: 이 BL은 picker를 건드리지 않음. toast 힌트 "(picker: Ctrl+P — Unit 6)"도 그대로 — 미래 기능 예고로 해석.
-7. **`:switch-back` 시맨틱 (post-CloudOnly)**: `CloudOnly { cloud }` → resolver가 `ContextTarget`으로 변환한 뒤부터는 기존 ByName 경로와 동일. 즉 `:switch-back`은 **pre-switch `ContextTarget`**으로 복귀 (pre-switch request가 아님). `ContextHistoryStore`는 이미 `ContextSnapshot`만 저장하므로 추가 작업 없음 (M3 반영).
-8. **clouds.yaml 스키마 확장**: `default_project` 필드는 `Option<String>` → 기존 clouds.yaml 파일과 100% backward compatible (serde(default)). 미설정 시 `None`.
+Assumption 위험도 등급: ⚠️ = 거짓이면 설계/범위 재조정 필요.
+
+1. **⚠️** `active_scope`는 `src/context/` 모듈에서 전파되는 단일 값으로 이미 확립되어 있다 — 새로 도입할 필요 없음 (PR#80 `TokenScopeFingerprint` 등). **거짓 시 영향**: FR2/FR3/FR4의 "target vs active" 비교 기반이 흔들림 → application-design에서 전파 경로 실측 확인 선행 필요.
+2. **⚠️** mock HTTP 테스트 인프라는 기존 `src/adapter/http/` 하위에 이미 존재하거나 일반 관례로 구축 가능하다. **거짓 시 영향**: NFR2 T1 전략 자체가 재설계 대상 (Construction 초반 체크 필요).
+3. **⚠️** `build_disambiguated_opts` 헬퍼(PR#82 도입)는 서버 모듈 외 다른 모듈에도 "이름만 바꿔서" 적용 가능한 순수 함수 형태다 — 호출부만 추가하면 확장 가능. **거짓 시 영향**: NFR3 재사용 가정과 Open Q2(다른 모듈 확장 여부) 결정이 뒤집힘 → 확장 자체를 포기하거나 별도 리팩터링 선행.
+4. `cross_project_block` 이벤트의 소비자(뷰어/대시보드)는 이번 BL 범위 밖이며, 후속 BL에서 동일 스키마를 기반으로 구축한다.
+5. DevStack 싱글노드 환경은 개발자 로컬에서 이 BL의 수동 검증에 사용된다 (기동 중, 이전 세션 정보).
+
+⚠️ 표시된 가정은 CONSTRUCTION 진입 직후 실측 검증이 필수다 (application-design 또는 TDD RED 단계 초기).
 
 ## Open Questions
 
-없음. 설계 단계(application-design)에서 확정할 항목:
-- FR-4 idempotent 체크의 실제 위치 (switcher 내부 vs app-level pre-check)
-- `SwitchError::NotConfigured` 표시 메시지 최종 문구
-- `default_project` config 스키마 위치 (cloud 레벨 직하 vs 기존 subfield 내부)
+1. **[구현 단계에서 결정]** `tenant_id` 필터를 주입하지 못하는 특수 endpoint (예: Keystone admin-only global list, quota/pricing API 등)가 존재하는가? 존재하면 해당 endpoint는 FR1 대상에서 제외하고 worker/RBAC 레벨에서 커버한다. (application-design에서 adapter 매트릭스 작성 시 확정)
+2. **[구현 단계에서 결정]** `build_disambiguated_opts`를 서버 외 모듈(volume/snapshot/network 등)로 확장할지 — 이번 PR 범위 포함 여부. (workflow-planning 또는 application-design의 component 스코프에서 확정)
+3. **[구현 단계에서 결정]** Worker 거부 에러 타입 — `WorkerError::CrossProjectBlocked` 신규 variant vs 기존 `SwitchError`/`RbacDenied` 재사용. (application-design에서 에러 분류 확정)
+4. **[workflow-planning에서 결정]** 구현을 1개 PR로 통합 vs adapter/worker/rbac 분할 PR. 안정성 우선과 리뷰 부담의 트레이드오프.
 
 ## Change Log
-
-- 2026-04-18T22:45 INITIAL — BL-P2-074 단독 requirements, 옵션 (a) 채택.
-- 2026-04-19T09:20 REVISE — 3자 리뷰(spec/quality/adversarial) 반영. 주요 변경:
-  - H1: `auth.project_name` → 신규 `CloudConfig::default_project` 필드로 전환 (의미 충돌 해소)
-  - H3: `SwitchError::NotConfigured` 전용 variant 신설 (FR-8)
-  - FR-4 measurable acceptance 추가 (transition 카운터 불변 테스트)
-  - FR-7 확장: 4개 impl 사이트 + 4개 매처 사이트 + emit 1회 + failure 3종
-  - NFR-4: toast safe_display 의무화
-  - NFR-6: tracing 필드 커버 추가
-  - Assumption 7: `:switch-back` post-CloudOnly 시맨틱 명시
-  - Option (b) 거절 비용 근거 보강
-  - NFR-3 "guidance only"로 완화
+- [2026-04-24T10:50:00+09:00] INITIAL — 4겹 버그 매핑 + A+C-lite 정책 모델 + T1 테스트 전략 기반 초안 작성
+- [2026-04-24T11:00:00+09:00] REVIEW-RESPONSE — spec-reviewer must-fix 3건 + should-consider 일부 반영: FR1 요청측 수용기준 추가, FR2 mutation 판정기준 명시, FR3 reason 분리 조건, FR5 fingerprint 정의 + best-effort 쓰기 보장, FR6 수용기준 추가, NFR1 손실-없음 문구 정정(best-effort), NFR2 "4축"→"5 FR" 정정, Assumptions 위험도 플래그 추가
+- [2026-04-24T11:50:00+09:00] DESIGN-DERIVED — application-design LIST에서 실측 확인으로 아래 보정:
+  - FR2 시맨틱 개정: `target.project_id == active_scope` → `origin_project_id == current_active_scope`. 근거: `Action` enum이 `project_id`를 per-variant로 가지지 않음 (55개 dispatch site). 중앙 dispatch 지점 `StampedAction` 래퍼로 스탬핑하여 TOCTOU/cache-stale 시나리오 커버. ID 위조 시나리오는 FR1+FR4에 위임.
+  - NFR2 용어 정정: mock HTTP 서버 도입 대신 **pure fn URL/query 빌더 추출** 방향 확정 (dev-dep 증가 없음, 기존 serde 단위 테스트 스타일과 일관).
+  - 용어 통일: `active_scope` → `TokenScope`/`ScopedAuthSession`/`RbacGuard::project_id()` 실제 타입으로 DETAIL 단계에서 매핑.

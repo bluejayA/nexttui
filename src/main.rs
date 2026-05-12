@@ -18,9 +18,11 @@ use nexttui::adapter::auth::scoped_session::ScopedAuthSession;
 use nexttui::adapter::auth::token_cache::{self as token_cache, TokenCacheStore};
 use nexttui::adapter::auth::{DirectoryCache, DomainNameResolver, KeystoneProjectDirectory};
 use nexttui::adapter::http::endpoint_invalidator::EndpointCatalogInvalidator;
+use nexttui::adapter::http::neutron_audit::build_audit_config;
 use nexttui::adapter::registry::AdapterRegistry;
 use nexttui::app::App;
 use nexttui::config::Config;
+use nexttui::context::action_channel::ScopeProvider;
 use nexttui::context::{
     CancellationRegistry, ConfigCloudDirectory, ContextHistoryStore, ContextSwitcher,
     ContextTargetResolver, SwitchStateMachine,
@@ -91,9 +93,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tracing::warn!(warning = %w, "config warning");
         }
 
+        // RbacGuard is created up-front so the same Arc can be shared between
+        // ActionSender (FR2 origin stamping, BL-P2-085 Step 9) and the App /
+        // worker downstream. The token-derived role/project_id update
+        // happens later (after auth_provider returns the token).
+        let rbac = std::sync::Arc::new(nexttui::infra::rbac::RbacGuard::new());
+
         let current_epoch = Arc::new(nexttui::context::ContextEpoch::new());
         let (action_raw_tx, action_rx) = mpsc::unbounded_channel();
-        let action_tx = nexttui::context::ActionSender::new(action_raw_tx, current_epoch.clone());
+        let action_tx =
+            nexttui::context::ActionSender::new(action_raw_tx, current_epoch.clone(), rbac.clone());
         let (event_tx, event_rx) = mpsc::unbounded_channel();
 
         // Build auth credential from config
@@ -131,17 +140,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             AuthMethod::ApplicationCredential { id, .. } => id.clone(),
         };
 
-        let auth_provider = Arc::new(KeystoneAuthAdapter::new(credential)?);
-        let registry = Arc::new(AdapterRegistry::new_http(
-            auth_provider.clone(),
-            cloud.region_name.clone(),
-        )?);
+        // Capture owned copies so the `cloud` borrow can be released before
+        // `config` is moved into `App::from_registry`. Step 13b-3 deferred
+        // the `AdapterRegistry::new_http` call until after the App is built,
+        // and the registry constructor still needs `region_name`.
+        let cloud_region = cloud.region_name.clone();
 
-        // === Phase B: collect endpoint caches before worker consumes registry ===
-        let endpoint_caches = registry.endpoint_caches().to_vec();
+        let auth_provider = Arc::new(KeystoneAuthAdapter::new(credential)?);
 
         // Trigger initial authentication, then initialize RBAC from token roles
-        let rbac = std::sync::Arc::new(nexttui::infra::rbac::RbacGuard::new());
+        // (the `rbac` Arc was constructed earlier so ActionSender already holds
+        // a clone for FR2 stamping — `update_roles` here is observed live by
+        // the sender's `ScopeProvider` impl).
         let _ = auth_provider.get_token().await; // force auth before reading roles
         if let Ok(token) = auth_provider.get_token_info().await {
             rbac.update_roles(token.roles, Some(token.project.id));
@@ -151,13 +161,55 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (mut app, initial_actions) =
             App::from_registry(config, action_tx.clone(), module_registry, rbac.clone());
 
-        // Spawn background worker
+        // BL-P2-085 Phase 7: share the same `Arc<AuditLogger>` with `App` so
+        // both worker-side block events and app-side success entries land in
+        // a single rotated log. `actor_ctx` lives behind an `Arc<RwLock<...>>`
+        // so a runtime cloud-switch (BL-P2-074) updates the next audit entry
+        // — `App::handle_event` writes the new cloud on `ContextChanged`.
+        // `user_id` falls back to `"unknown"` (matches `App::build_audit_entry`)
+        // when the credential lacks an explicit username; a follow-up resolves
+        // the Keystone UUID from the live `Token`.
+        let audit_logger = app.audit_logger_arc();
+        let initial_user_id = if wire_username.is_empty() {
+            "unknown".to_string()
+        } else {
+            wire_username.clone()
+        };
+        let actor_ctx = Arc::new(std::sync::RwLock::new(nexttui::worker::ActorContext {
+            cloud: config_for_wire.active_cloud_name().to_string(),
+            user_id: initial_user_id,
+        }));
+        app.set_actor_ctx(actor_ctx.clone());
+
+        // BL-P2-085 Step-14-precedent-refactor-3: bundle per-service audit
+        // contexts via `build_audit_config` once `audit_logger`, `rbac`
+        // (live ScopeProvider), and `actor_ctx` are all available. Today
+        // only `audit.neutron` is consumed by the registry; Step 14 wires
+        // `audit.nova` / `audit.cinder` once those adapters gain
+        // `with_audit`.
+        let audit_config = build_audit_config(
+            audit_logger.clone(),
+            rbac.clone() as Arc<dyn ScopeProvider>,
+            actor_ctx.clone(),
+        );
+
+        let registry = Arc::new(AdapterRegistry::new_http(
+            auth_provider.clone(),
+            cloud_region,
+            audit_config,
+        )?);
+
+        // === Phase B: collect endpoint caches before worker consumes registry ===
+        let endpoint_caches = registry.endpoint_caches().to_vec();
+
         tokio::spawn(run_worker(
             registry,
             rbac,
             app.all_tenants.clone(),
             action_rx,
             event_tx.clone(),
+            audit_logger,
+            actor_ctx,
         ));
 
         // Trigger initial data load

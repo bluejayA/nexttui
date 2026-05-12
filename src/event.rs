@@ -190,6 +190,18 @@ pub enum AppEvent {
         operation: String,
     },
 
+    // FR2 Cross-project block (BL-P2-085 Step 11c)
+    /// Worker rejected a stamped mutation because its `origin_project_id`
+    /// disagreed with the live active scope on `RbacGuard`. `reason` is the
+    /// stable `CrossProjectReason::as_str()` slug (`"origin_scope_mismatch"`,
+    /// `"unscoped_fail_safe"`, …); `action` is the `Action` variant name.
+    /// The structured audit entry is written by the worker via
+    /// `cross_project_audit::emit` before this event reaches the UI.
+    CrossProjectBlocked {
+        reason: String,
+        action: String,
+    },
+
     // System
     CloudSwitched(String),
 

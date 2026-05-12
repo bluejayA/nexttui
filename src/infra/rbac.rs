@@ -30,6 +30,36 @@ pub enum EffectiveRole {
     Admin,
 }
 
+/// Combined RBAC decision over (role-tier × project-scope).
+/// Returned by `RbacGuard::check_project_scope` (FR3 of BL-P2-085).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RbacScopeDecision {
+    Allow,
+    Deny { reason: RbacDenialReason },
+}
+
+/// Why an RBAC scope check denied an action. Stable strings via `as_str()`
+/// so audit consumers can grep.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RbacDenialReason {
+    /// `can_perform(action)` returned false (insufficient privilege tier).
+    RoleTier,
+    /// Active scope ≠ target_project_id, or scope is unscoped (fail-safe).
+    ProjectScope,
+    /// Both role-tier and project-scope failed.
+    Both,
+}
+
+impl RbacDenialReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RbacDenialReason::RoleTier => "role_tier",
+            RbacDenialReason::ProjectScope => "project_scope",
+            RbacDenialReason::Both => "both",
+        }
+    }
+}
+
 impl EffectiveRole {
     /// Derive the highest-privilege role from a list of Keystone roles.
     /// Unknown roles are ignored. If no known role matches, defaults to Reader.
@@ -56,6 +86,36 @@ struct RbacState {
     project_id: Option<String>,
     effective_role: EffectiveRole,
     capabilities: HashSet<Capability>,
+}
+
+impl RbacState {
+    /// Snapshot-based scope decision. Operates purely on `&self` field reads
+    /// so that callers holding a single `RwLock` read guard get an atomic
+    /// (role × scope) decision — preventing the BL-P2-085 Codex P1 race
+    /// where role and project_id could be sampled from different snapshots.
+    fn scope_decision(&self, target_project_id: &str, action: ActionKind) -> RbacScopeDecision {
+        let role_ok = match self.effective_role {
+            EffectiveRole::Admin => true,
+            EffectiveRole::Member => !RbacGuard::is_admin_only_action(action),
+            EffectiveRole::Reader => action == ActionKind::Read,
+        };
+        let scope_ok = self
+            .project_id
+            .as_deref()
+            .is_some_and(|p| p == target_project_id);
+        match (role_ok, scope_ok) {
+            (true, true) => RbacScopeDecision::Allow,
+            (false, true) => RbacScopeDecision::Deny {
+                reason: RbacDenialReason::RoleTier,
+            },
+            (true, false) => RbacScopeDecision::Deny {
+                reason: RbacDenialReason::ProjectScope,
+            },
+            (false, false) => RbacScopeDecision::Deny {
+                reason: RbacDenialReason::Both,
+            },
+        }
+    }
 }
 
 /// Role-based access control guard.
@@ -85,6 +145,21 @@ impl RbacGuard {
         if let Ok(mut s) = self.state.write() {
             s.roles = roles;
             s.project_id = project_id;
+            s.effective_role = effective;
+            s.capabilities.clear();
+        }
+    }
+
+    /// Refresh roles and re-derive `effective_role` without touching
+    /// `project_id`. Used on token re-issue paths where the active project
+    /// has not changed (e.g. Keystone token refresh inside the same scope).
+    ///
+    /// Mirrors `update_roles` by clearing capabilities so callers must
+    /// repopulate them via `update_capabilities` if needed.
+    pub fn update_roles_preserve_project(&self, roles: Vec<TokenRole>) {
+        let effective = EffectiveRole::from_roles(&roles);
+        if let Ok(mut s) = self.state.write() {
+            s.roles = roles;
             s.effective_role = effective;
             s.capabilities.clear();
         }
@@ -131,6 +206,30 @@ impl RbacGuard {
             EffectiveRole::Member => !Self::is_admin_only_action(action),
             EffectiveRole::Reader => action == ActionKind::Read,
         }
+    }
+
+    /// Combined RBAC check: role-tier (`can_perform`) + project-scope
+    /// (`target_project_id == active project_id`). Returns a structured
+    /// reason so audit consumers and toasts can disambiguate role-tier vs
+    /// scope-mismatch denials. Unscoped guard (`project_id == None`) is
+    /// treated as a scope-mismatch fail-safe.
+    ///
+    /// Atomicity (Codex P1, 2026-04-28): role and project_id are read from a
+    /// single `state.read()` snapshot via `RbacState::scope_decision`, so a
+    /// concurrent `update_roles*` cannot interleave between the two reads.
+    /// On a poisoned lock the decision falls back to `Deny { Both }`
+    /// (fail-safe — no privilege should be granted on corrupt state).
+    pub fn check_project_scope(
+        &self,
+        target_project_id: &str,
+        action: ActionKind,
+    ) -> RbacScopeDecision {
+        self.state
+            .read()
+            .map(|s| s.scope_decision(target_project_id, action))
+            .unwrap_or(RbacScopeDecision::Deny {
+                reason: RbacDenialReason::Both,
+            })
     }
 
     /// Capability-based permission check.
@@ -522,5 +621,203 @@ mod tests {
 
         guard.update_roles(vec![role("member")], None);
         assert!(!guard.has_capability("server", "delete"));
+    }
+
+    // --- BL-P2-085 Step 5: check_project_scope (FR3 RBAC project-scope) ---
+
+    #[test]
+    fn test_check_project_scope_admin_match_allows() {
+        let guard = RbacGuard::new();
+        guard.update_roles(vec![role("admin")], Some("proj-A".into()));
+        assert_eq!(
+            guard.check_project_scope("proj-A", ActionKind::Create),
+            RbacScopeDecision::Allow
+        );
+    }
+
+    #[test]
+    fn test_check_project_scope_admin_mismatch_denies_project_scope() {
+        let guard = RbacGuard::new();
+        guard.update_roles(vec![role("admin")], Some("proj-A".into()));
+        assert_eq!(
+            guard.check_project_scope("proj-B", ActionKind::Delete),
+            RbacScopeDecision::Deny {
+                reason: RbacDenialReason::ProjectScope
+            }
+        );
+    }
+
+    #[test]
+    fn test_check_project_scope_unscoped_denies_project_scope_fail_safe() {
+        let guard = RbacGuard::new();
+        guard.update_roles(vec![role("admin")], None); // unscoped admin
+        assert_eq!(
+            guard.check_project_scope("proj-A", ActionKind::Create),
+            RbacScopeDecision::Deny {
+                reason: RbacDenialReason::ProjectScope
+            },
+            "None scope must fail-safe deny on the scope dimension"
+        );
+    }
+
+    #[test]
+    fn test_check_project_scope_reader_create_match_denies_role_tier() {
+        let guard = RbacGuard::new();
+        guard.update_roles(vec![role("reader")], Some("proj-A".into()));
+        assert_eq!(
+            guard.check_project_scope("proj-A", ActionKind::Create),
+            RbacScopeDecision::Deny {
+                reason: RbacDenialReason::RoleTier
+            }
+        );
+    }
+
+    #[test]
+    fn test_check_project_scope_reader_create_mismatch_denies_both() {
+        let guard = RbacGuard::new();
+        guard.update_roles(vec![role("reader")], Some("proj-A".into()));
+        assert_eq!(
+            guard.check_project_scope("proj-B", ActionKind::Create),
+            RbacScopeDecision::Deny {
+                reason: RbacDenialReason::Both
+            }
+        );
+    }
+
+    #[test]
+    fn test_check_project_scope_member_admin_only_action_match_denies_role_tier() {
+        let guard = RbacGuard::new();
+        guard.update_roles(vec![role("member")], Some("proj-A".into()));
+        // ForceDelete is admin-only; scope matches
+        assert_eq!(
+            guard.check_project_scope("proj-A", ActionKind::ForceDelete),
+            RbacScopeDecision::Deny {
+                reason: RbacDenialReason::RoleTier
+            }
+        );
+    }
+
+    #[test]
+    fn test_check_project_scope_reader_read_match_allows() {
+        // Reader can Read in own scope
+        let guard = RbacGuard::new();
+        guard.update_roles(vec![role("reader")], Some("proj-A".into()));
+        assert_eq!(
+            guard.check_project_scope("proj-A", ActionKind::Read),
+            RbacScopeDecision::Allow
+        );
+    }
+
+    // --- BL-P2-085 Step 6: update_roles_preserve_project (token re-issue path) ---
+
+    #[test]
+    fn test_preserve_project_keeps_existing_project_id() {
+        let guard = RbacGuard::new();
+        guard.update_roles(vec![role("admin")], Some("proj-A".into()));
+        guard.update_roles_preserve_project(vec![role("member")]);
+        assert_eq!(
+            guard.project_id(),
+            Some("proj-A".to_string()),
+            "preserve must not touch project_id"
+        );
+    }
+
+    #[test]
+    fn test_preserve_project_updates_roles_and_effective() {
+        let guard = RbacGuard::new();
+        guard.update_roles(vec![role("admin")], Some("proj-A".into()));
+        assert_eq!(guard.effective_role(), EffectiveRole::Admin);
+
+        guard.update_roles_preserve_project(vec![role("reader")]);
+        assert_eq!(guard.effective_role(), EffectiveRole::Reader);
+        assert!(!guard.is_admin());
+    }
+
+    #[test]
+    fn test_update_roles_vs_preserve_diff() {
+        // Regression: original update_roles still overwrites project_id.
+        let guard1 = RbacGuard::new();
+        guard1.update_roles(vec![role("admin")], Some("proj-A".into()));
+        guard1.update_roles(vec![role("member")], Some("proj-B".into()));
+        assert_eq!(guard1.project_id(), Some("proj-B".to_string()));
+
+        let guard2 = RbacGuard::new();
+        guard2.update_roles(vec![role("admin")], Some("proj-A".into()));
+        guard2.update_roles_preserve_project(vec![role("member")]);
+        assert_eq!(guard2.project_id(), Some("proj-A".to_string()));
+    }
+
+    #[test]
+    fn test_preserve_project_clears_capabilities_parity_with_update_roles() {
+        let guard = RbacGuard::new();
+        guard.update_roles(vec![role("admin")], Some("proj-A".into()));
+        guard.update_capabilities(vec![Capability {
+            resource: "server".to_string(),
+            action: "delete".to_string(),
+        }]);
+        assert!(guard.has_capability("server", "delete"));
+
+        guard.update_roles_preserve_project(vec![role("member")]);
+        assert!(
+            !guard.has_capability("server", "delete"),
+            "preserve must clear capabilities for parity with update_roles"
+        );
+    }
+
+    // --- BL-P2-085 Codex P1: atomic scope decision over single state snapshot ---
+
+    #[test]
+    fn test_rbac_state_scope_decision_atomic_snapshot() {
+        // Codex P1 fix: check_project_scope must read role + project_id from
+        // a single RwLock snapshot. This test exercises RbacState::scope_decision
+        // directly (no lock involved) to lock in the snapshot-based contract:
+        // any future race-fix refactor must keep the decision derivable from
+        // a single &RbacState reference.
+        let state = RbacState {
+            roles: vec![role("admin")],
+            project_id: Some("proj-a".into()),
+            effective_role: EffectiveRole::Admin,
+            capabilities: HashSet::new(),
+        };
+        assert_eq!(
+            state.scope_decision("proj-a", ActionKind::Create),
+            RbacScopeDecision::Allow,
+            "admin in matching scope must Allow"
+        );
+        assert_eq!(
+            state.scope_decision("proj-b", ActionKind::Create),
+            RbacScopeDecision::Deny {
+                reason: RbacDenialReason::ProjectScope
+            },
+            "admin in mismatched scope must Deny ProjectScope"
+        );
+
+        let unscoped = RbacState {
+            roles: vec![role("admin")],
+            project_id: None,
+            effective_role: EffectiveRole::Admin,
+            capabilities: HashSet::new(),
+        };
+        assert_eq!(
+            unscoped.scope_decision("proj-a", ActionKind::Create),
+            RbacScopeDecision::Deny {
+                reason: RbacDenialReason::ProjectScope
+            },
+            "unscoped guard must fail-safe to ProjectScope denial"
+        );
+
+        let reader = RbacState {
+            roles: vec![role("reader")],
+            project_id: Some("proj-a".into()),
+            effective_role: EffectiveRole::Reader,
+            capabilities: HashSet::new(),
+        };
+        assert_eq!(
+            reader.scope_decision("proj-b", ActionKind::Create),
+            RbacScopeDecision::Deny {
+                reason: RbacDenialReason::Both
+            },
+            "role-tier + scope mismatch must Deny Both"
+        );
     }
 }

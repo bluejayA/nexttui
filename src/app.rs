@@ -77,7 +77,11 @@ pub struct App {
     activity_log: ActivityLog,
     activity_popup: ActivityLogPopup,
     show_activity_log: bool,
-    audit_logger: Option<AuditLogger>,
+    audit_logger: Option<Arc<AuditLogger>>,
+    /// Phase 7 폴리싱: shared with the background worker so a runtime
+    /// cloud-switch updates the next `CrossProjectBlockEvent`'s `cloud`
+    /// field. Wired post-construction via `set_actor_ctx`.
+    actor_ctx: Option<Arc<std::sync::RwLock<crate::worker::ActorContext>>>,
     /// Command bar input widget (`:`-triggered). Paired with `command_parser`.
     pub(crate) input_bar: InputBar,
     pub(crate) command_parser: CommandParser,
@@ -124,6 +128,7 @@ impl App {
             activity_popup: ActivityLogPopup::new(),
             show_activity_log: false,
             audit_logger,
+            actor_ctx: None,
             input_bar: InputBar::new(),
             command_parser,
             context_indicator: ContextIndicator::new(std::time::Duration::from_secs(2)),
@@ -169,6 +174,7 @@ impl App {
             activity_popup: ActivityLogPopup::new(),
             show_activity_log: false,
             audit_logger,
+            actor_ctx: None,
             input_bar: InputBar::new(),
             command_parser,
             context_indicator: ContextIndicator::new(std::time::Duration::from_secs(2)),
@@ -201,7 +207,7 @@ impl App {
     /// Inject an audit logger for testing.
     #[cfg(test)]
     pub fn set_audit_logger(&mut self, logger: AuditLogger) {
-        self.audit_logger = Some(logger);
+        self.audit_logger = Some(Arc::new(logger));
     }
 
     /// Handle key input. Returns true if a re-render is needed.
@@ -639,6 +645,15 @@ impl App {
             if let Some(cache) = &self.directory_cache {
                 cache.invalidate_cloud(&target.cloud);
             }
+            // BL-P2-085 Phase 7 폴리싱: the worker reads `actor_ctx` live at
+            // each block emit. Without this update, audit entries from the
+            // worker stay anchored to the spawn-time cloud after the user
+            // switches.
+            if let Some(ref ctx) = self.actor_ctx
+                && let Ok(mut guard) = ctx.write()
+            {
+                guard.cloud = target.cloud.clone();
+            }
             self.context_indicator.set_target(target, true);
             for component in self.components.values_mut() {
                 component.on_context_changed();
@@ -758,7 +773,10 @@ impl App {
     }
 
     /// Initialize audit logger. Returns None on failure (non-fatal).
-    fn init_audit_logger() -> Option<AuditLogger> {
+    /// Wrapped in `Arc` so the worker (BL-P2-085 Step 11b) can share the same
+    /// instance — two `AuditLogger` instances on the same path would interleave
+    /// writes through their independent `BufWriter`s.
+    fn init_audit_logger() -> Option<Arc<AuditLogger>> {
         #[cfg(test)]
         {
             // In tests, do not create audit logger by default
@@ -768,13 +786,27 @@ impl App {
         {
             let path = crate::config::nexttui_config_dir().join("audit.log");
             match AuditLogger::new(path) {
-                Ok(logger) => Some(logger),
+                Ok(logger) => Some(Arc::new(logger)),
                 Err(e) => {
                     tracing::warn!("Failed to initialize audit logger: {e}");
                     None
                 }
             }
         }
+    }
+
+    /// FR2 Step 11b: handle to the audit logger so the worker can share the
+    /// same `Arc` and emit `CrossProjectBlockEvent` entries through it.
+    pub fn audit_logger_arc(&self) -> Option<Arc<AuditLogger>> {
+        self.audit_logger.clone()
+    }
+
+    /// Phase 7 폴리싱: install the shared actor context so `ContextChanged`
+    /// updates land in the worker's next audit entry. The Arc is held by
+    /// both the worker and this `App`; mutations through the `RwLock` are
+    /// visible to both sides without re-spawning the worker.
+    pub fn set_actor_ctx(&mut self, ctx: Arc<std::sync::RwLock<crate::worker::ActorContext>>) {
+        self.actor_ctx = Some(ctx);
     }
 
     /// Record a CUD event to the audit log. Errors are logged as warnings, never propagated.
@@ -1423,6 +1455,16 @@ impl App {
                 format!("Permission denied: {operation}"),
                 ToastLevel::Error,
                 operation.clone(),
+                String::new(),
+            ),
+            // BL-P2-085 Step 11c: cross-project block surfaced from the worker.
+            // Worker has already written the structured audit entry; the toast
+            // is the user-visible counterpart and uses Error level (parity with
+            // PermissionDenied) so it inherits the longer Error TTL.
+            AppEvent::CrossProjectBlocked { reason, action } => (
+                format!("Cross-project block: {action} ({reason})"),
+                ToastLevel::Error,
+                action.clone(),
                 String::new(),
             ),
             // Data loaded / system events — no toast or activity log
@@ -3057,6 +3099,29 @@ mod tests {
         assert!(!entry.success);
         assert_eq!(entry.operation, "CreateServer");
         assert!(entry.message.contains("quota exceeded"));
+    }
+
+    // --- BL-P2-085 Step 11c: cross-project block toast ---
+
+    #[test]
+    fn test_generate_toast_for_cross_project_blocked_pushes_error() {
+        let mut app = make_app();
+        app.handle_event(AppEvent::CrossProjectBlocked {
+            reason: "origin_scope_mismatch".into(),
+            action: "DeleteServer".into(),
+        });
+        assert_eq!(app.activity_log.entries().len(), 1);
+        let entry = &app.activity_log.entries()[0];
+        assert!(
+            !entry.success,
+            "cross-project block must surface as a failure in the activity log",
+        );
+        assert_eq!(entry.operation, "DeleteServer");
+        assert!(
+            entry.message.contains("origin_scope_mismatch"),
+            "toast message must include the reason: {msg}",
+            msg = entry.message,
+        );
     }
 
     #[test]

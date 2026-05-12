@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod aggregate;
+pub mod common;
 pub mod compute_service;
 pub mod flavor;
 pub mod floating_ip;

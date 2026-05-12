@@ -1,75 +1,65 @@
 # Workflow Plan
 
-**Timestamp**: 2026-04-19T09:40:00+09:00
-**BL**: BL-P2-074 (SwitchCloud wire 완결)
-**Parent BL**: BL-P2-031 (PR#76 머지 완료). 부모 workflow-plan은 `.archive/inception-20260418-223706/workflow-plan.md` 참조.
-**Parent Requirements**: `devflow-docs/inception/requirements.md` FR-1 `:switch-cloud <name>` — cloud 전환 (프로젝트는 cloud 기본값 또는 미선택 상태)
-**Selected Approach**: A안 (설계 먼저 + 단일 unit TDD) — 2026-04-19 확정
-
-## Context
-
-BL-P2-074는 BL-P2-031 PR#76의 toast-only stub(`src/app.rs:1771-1780`)을 완결한다. requirements.md FR-1의 "cloud 기본값" 경로를 구체화.
-
-**Review artifacts**: `inception/requirements-review-raw/{spec,quality,adversarial}.md` — 3자 리뷰 원문 + 종합 의견.
-
-### BL-P2-074 확정 설계 결정
-
-| 결정 | 선택 | 근거 |
-|---|---|---|
-| 구현 전략 | 옵션 (a) `ContextRequest::CloudOnly { cloud }` variant | 옵션 (b) picker 경로는 Unit 6 의존 → BL-P2-075로 분리 |
-| Default project source | **신규 `CloudConfig::default_project: Option<String>` 필드** | `auth.project_name` (Keystone bootstrap credential) 재사용은 admin scope 실착지 위험 (adversarial H1) |
-| 미설정 cloud 전환 요청 | **`SwitchError::NotConfigured { cloud }` 전용 variant 신설** | 문자열 fallback은 BL-P2-053 migration 부담 (adversarial H3 + spec + quality 합의) |
-| 동일 cloud 재입력 no-op | state_machine transition 카운터 불변 단위 테스트로 acceptance 측정 | FR-4 testability (3자 합의) |
-| CloudDirectory trait | `default_project(&str) -> Option<String>` 메서드 추가 | 4 impl 사이트 전수 업데이트 (ConfigCloudDirectory + 3 FakeClouds) |
-| ContextRequest 매처 | resolver/switcher/worker/app 4개 사이트 전수 업데이트 | 컴파일러 강제 (`#[non_exhaustive]` 부재) |
-| :switch-back post-CloudOnly | pre-switch `ContextTarget`으로 복귀 | `ContextHistoryStore` 기존 동작 유지 |
-| Toast 안전 | `safe_display(60자 truncate + 제어문자 제거)` 의무화 | 터미널 이스케이프/CR-LF injection 방지 |
+**Timestamp**: 2026-04-24T11:15:00+09:00
+**Work Item**: BL-P2-085 — Cross-project scoping 전면 fix (P0, Critical)
+**Selected Approach**: A안 Atomic Security Fix
 
 ## Approaches Considered
 
-### A안) 설계 먼저 + 단일 unit TDD (권장)
-- **포함**: application-design (Standard) → code-generation (Standard, TDD) → build-and-test (Standard)
-- **스킵**: units-generation (단일 unit)
-- **깊이**: Standard
-- **적합**: `CloudConfig` 스키마 확장 + `CloudDirectory` trait 확장 + FR-4 idempotent 위치 + `SwitchError::NotConfigured` 통합을 단일 문서로 응축 → code-generation 중 흔들림 최소화
-- **주의**: +0.5 세션 오버헤드 (설계 문서 작성)
+- **A안) Atomic Security Fix** — application-design Standard + 단일 PR + 5 FR atomic. 권장. P0 보안 경계의 rollback/일관성 단순화.
+- **B안) Split Layered Rollout** — application-design Minimal + units 3개 + 3개 PR 순차. 리뷰 부담 분산하지만 **중간 상태에서 보안 경계 부분 적용 창**이 생겨 P0 긴급도에 부적합.
 
-### B안) 바로 구현
-- **포함**: code-generation (Minimal, TDD) → build-and-test (Standard)
-- **스킵**: application-design, units-generation
-- **깊이**: Minimal (code-generation) / Standard (build-and-test)
-- **적합**: 설계 결정이 requirements-review-raw에서 이미 확정됐다고 간주, 바로 TDD 진입
-- **주의**: idempotent 위치, config 스키마 배치, serde 직렬화 호환성 등 세부 결정을 TDD 루프 안에서 내려야 함 → 리팩토링 증가 가능
-
-## Workflow Visualization (A안 기준)
-
-```
-INCEPTION
-  ✅ workspace-detection (완료, 델타)
-  ✅ requirements-analysis (완료, 3자 리뷰 반영)
-  ⏭ workflow-planning (현재)
-  ➡ application-design [Standard] (A안)
-  ⏭ units-generation — 스킵 (A안: 단일 unit)
-
-CONSTRUCTION
-  ➡ code-generation [Standard] (TDD RED-GREEN-REFACTOR)
-  ➡ build-and-test [Standard]
-```
-
-## Approved Stages (A안 기준 — gate 선택 대기)
+## Approved Stages (A안 기준 초기값 — 게이트 확정 후 업데이트)
 
 ### PRE-PLANNING
-- user-stories: skipped — Standard complexity + 단일 기능 완결 BL (Pre-Planning Gate C 선택)
-- nfr-requirements: skipped — requirements 개정 + 3자 리뷰에서 NFR 응축 완료 (Pre-Planning Gate C 선택)
+- user-stories: skipped — Bug-fix BL, INVEST 스토리 가치 낮음 (pre-planning gate=C)
+- nfr-requirements: skipped — NFR은 requirements.md 내부로 충분 (pre-planning gate=C)
 
 ### CONSTRUCTION
-- application-design: included — `CloudConfig` 스키마 확장 + `CloudDirectory` trait 확장 + FR-4 idempotent 위치 + `SwitchError::NotConfigured` 통합
-- units-generation: skipped — 단일 unit (variant + handler + resolver + tests)
-- code-generation: included — always (TDD protocol 적용)
+- application-design: included — 5 FR 계층 매트릭스 + ⚠️ Assumption 3건 실측 검증 필요
+- units-generation: skipped — A안은 단일 atomic unit (보안 경계 fix 일체)
+- code-generation: included — always (TDD 엄수)
 - build-and-test: included — always
 
 ## Stage Depths
-- application-design: Standard
+
+- application-design: **Standard** — LIST + DETAIL + review. NFR Design 비활성 (Comprehensive 아님).
 - units-generation: N/A (skipped)
-- code-generation: Standard (TDD protocol — `_shared/tdd-protocol.md`)
-- build-and-test: Standard
+- code-generation: **Standard** — TDD protocol 적용 (RED-GREEN-REFACTOR, `_shared/tdd-protocol.md`)
+- build-and-test: **Standard** — cargo test + clippy + audit + `/codex:review --scope branch --base main` 게이트
+
+## Rationale (A안 선택 근거 요약)
+
+1. **P0 보안 경계 atomic rollback/일관성**: 5 FR 상호 의존 (reason 스키마, RBAC→worker, form→RBAC) → 분할 시 중간 창 + 스키마 drift 위험.
+2. **상용 운영 조직 / 안정성 우선 철학**과 정합: 부분 적용 상태가 운영 사고 위험 창을 여는 것을 회피.
+3. **리뷰 부담 관리 가능**: spec-reviewer (requirements에서 이미 1회) + R1 artifact-review (application-design) + `/codex:review` (CONSTRUCTION 완료 후) — 기존 체인으로 충분. Council은 저장된 `feedback_review_depth.md`에 따라 고위험 변경 시만 (현재 4겹 매핑 명확해서 불요).
+
+## Scope Exclusions (명시)
+
+- `build_disambiguated_opts` 다른 모듈 확장 (Open Q2): **이번 범위 밖**. 필요 시 후속 BL로 분리.
+- 감사 로그 뷰어 / 패턴 분석 대시보드: 이벤트 스키마만 이번에 픽스, UI 소비는 후속 BL.
+- PII 해싱 옵션: 후속 BL.
+- DevStack `devstack-integration` CI placeholder 활성화: BL-P2-081 우선권 보유.
+
+## Open Questions To Resolve Downstream
+
+- Q1 — `tenant_id` 필터 주입 불가 endpoint 여부 → application-design adapter 매트릭스
+- Q3 — Worker 거부 에러 variant → application-design 에러 분류
+- Q4 — 단일 PR vs 분할 PR → **A안 선택으로 확정: 단일 PR**
+
+## Workflow Visualization
+
+```
+INCEPTION
+  ✅ workspace-detection (완료, gate=C)
+  ✅ complexity-declaration (완료, Standard)
+  ✅ requirements-analysis (완료, gate=B, 4 open Qs deferred)
+  ✅ pre-planning (완료, gate=C — user-stories/nfr 스킵)
+  ⏭ workflow-planning (현재)
+  ➡ application-design [Standard] — LIST + DETAIL + review
+
+CONSTRUCTION
+  ⏭ units-generation — 스킵 (A안 기준, atomic 단일 변경 범위)
+  ➡ code-generation [Standard] — TDD RED-GREEN-REFACTOR
+  ➡ build-and-test [Standard] — cargo test + clippy + codex-review 게이트
+```

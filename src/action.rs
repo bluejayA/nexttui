@@ -223,6 +223,43 @@ pub enum Action {
     SwitchBack,
 }
 
+/// Envelope wrapping an [`Action`] with the active scope at dispatch time.
+///
+/// FR2 (BL-P2-085): produced by [`crate::context::ActionSender::send`] which
+/// stamps the current `project_id` for mutation actions. The worker compares
+/// the stamp to the live active scope and rejects mismatches (TOCTOU /
+/// cache-stale defense). Read-only actions carry `None` and bypass the guard.
+#[derive(Debug, Clone)]
+pub struct DispatchedAction {
+    pub action: Action,
+    /// `Some(project_id)` for mutations stamped at dispatch.
+    /// `None` for read-only actions or for senders without a scoped provider.
+    pub origin_project_id: Option<String>,
+}
+
+impl DispatchedAction {
+    /// Create a stamped envelope for a mutation action.
+    pub fn stamped(action: Action, origin_project_id: String) -> Self {
+        Self {
+            action,
+            origin_project_id: Some(origin_project_id),
+        }
+    }
+
+    /// Create an unstamped envelope (read-only action).
+    pub fn unstamped(action: Action) -> Self {
+        Self {
+            action,
+            origin_project_id: None,
+        }
+    }
+
+    /// True if this action was stamped at dispatch time.
+    pub fn is_stamped(&self) -> bool {
+        self.origin_project_id.is_some()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -371,5 +408,24 @@ mod tests {
             },
         ];
         assert_eq!(actions.len(), 8);
+    }
+
+    #[test]
+    fn test_dispatched_action_stamped_carries_origin() {
+        let act = Action::DeleteServer {
+            id: "srv-1".into(),
+            name: "web".into(),
+        };
+        let dispatched = DispatchedAction::stamped(act.clone(), "admin-uuid".into());
+        assert_eq!(dispatched.origin_project_id.as_deref(), Some("admin-uuid"));
+        assert!(dispatched.is_stamped());
+        assert!(matches!(dispatched.action, Action::DeleteServer { .. }));
+    }
+
+    #[test]
+    fn test_dispatched_action_unstamped_has_no_origin() {
+        let dispatched = DispatchedAction::unstamped(Action::FetchServers);
+        assert!(dispatched.origin_project_id.is_none());
+        assert!(!dispatched.is_stamped());
     }
 }

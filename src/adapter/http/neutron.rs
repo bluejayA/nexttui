@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{Link, append_pagination_parts, encode_param, extract_next_marker, paginated_list};
 use crate::adapter::http::base::BaseHttpClient;
+use crate::adapter::http::neutron_audit::NeutronAuditCtx;
+use crate::adapter::http::scope_refilter::{RefilterScope, refilter_and_audit};
 use crate::models::neutron::{
     FloatingIp, Network, NetworkAgent, Port, PortBinding, SecurityGroup, SecurityGroupRule,
 };
@@ -15,6 +17,7 @@ use crate::port::types::*;
 
 pub struct NeutronHttpAdapter {
     base: Arc<BaseHttpClient>,
+    audit_ctx: Option<Arc<NeutronAuditCtx>>,
 }
 
 impl NeutronHttpAdapter {
@@ -26,11 +29,67 @@ impl NeutronHttpAdapter {
                 EndpointInterface::Public,
                 region,
             )?),
+            audit_ctx: None,
         })
     }
 
     pub fn from_base(base: Arc<BaseHttpClient>) -> Self {
-        Self { base }
+        Self {
+            base,
+            audit_ctx: None,
+        }
+    }
+
+    /// BL-P2-085 Step 13b: attach a `NeutronAuditCtx` so every `list_*` call
+    /// runs `refilter_by_scope` against the response and emits an
+    /// `AdapterFilterViolation` audit event per dropped row. Wired by
+    /// `registry::new_http` (Step 13b-3).
+    pub fn with_audit(mut self, ctx: Arc<NeutronAuditCtx>) -> Self {
+        self.audit_ctx = Some(ctx);
+        self
+    }
+
+    /// Apply response-side scope refiltering to a `PaginatedResponse`.
+    /// No-op when `audit_ctx` is None (pre-Step-13b-3 adapters), preserving
+    /// the original response shape. When attached, partitions via
+    /// [`refilter_and_audit`] which fans out one `AdapterFilterViolation`
+    /// event per dropped row before returning the kept items.
+    ///
+    /// [`refilter_and_audit`]: crate::adapter::http::scope_refilter::refilter_and_audit
+    fn refilter_response<T>(
+        &self,
+        resp: PaginatedResponse<T>,
+        all_tenants: bool,
+        action_type: &str,
+        resource_kind: &str,
+    ) -> PaginatedResponse<T>
+    where
+        T: crate::adapter::http::scope_refilter::ScopedItem,
+    {
+        let active = self
+            .audit_ctx
+            .as_ref()
+            .and_then(|ctx| ctx.scope_provider.current_project_id());
+        let scope = RefilterScope::from_parts(active.as_deref(), all_tenants);
+        // correlation_id=0: list_* are not bound to a worker dispatch,
+        // and the canonical fingerprint already disambiguates per-row
+        // events via `resource_id`. Replace with the dispatch epoch
+        // when worker→adapter epoch propagation lands (post-Step-14
+        // refactor cycle is the natural slot — see Phase 8 cumulative
+        // cargo-review verdict).
+        let kept = refilter_and_audit(
+            resp.items,
+            &scope,
+            self.audit_ctx.as_deref(),
+            action_type,
+            resource_kind,
+            0,
+        );
+        PaginatedResponse {
+            items: kept,
+            next_marker: resp.next_marker,
+            has_more: resp.has_more,
+        }
     }
 }
 
@@ -223,30 +282,44 @@ impl RuleDirection {
 
 // --- Query builders ---
 
-// Neutron API does not support `all_tenants` query parameter.
-// Admin tokens automatically see all projects' resources.
-// The filter structs carry the flag for UI column logic only.
+// BL-P2-085 Step 12: Neutron list endpoints accept `tenant_id={scope}` for
+// strict project scoping and `all_tenants=1` (admin-only) to opt out. The two
+// are mutually exclusive: `all_tenants=true` wins and `tenant_id` is omitted.
+// When neither is set, the query falls back to pagination only (fail-safe —
+// the server keeps its default scoping under the current admin token).
 
-fn build_network_query(_filter: &NetworkListFilter, pagination: &PaginationParams) -> String {
+fn build_network_query(filter: &NetworkListFilter, pagination: &PaginationParams) -> String {
     let mut parts = Vec::new();
+    if filter.all_tenants {
+        parts.push("all_tenants=1".to_string());
+    } else if let Some(ref tid) = filter.tenant_id {
+        parts.push(format!("tenant_id={}", encode_param(tid)));
+    }
     append_pagination_parts(&mut parts, pagination);
     parts.join("&")
 }
 
 fn build_security_group_query(
-    _filter: &SecurityGroupListFilter,
+    filter: &SecurityGroupListFilter,
     pagination: &PaginationParams,
 ) -> String {
     let mut parts = Vec::new();
+    if filter.all_tenants {
+        parts.push("all_tenants=1".to_string());
+    } else if let Some(ref tid) = filter.tenant_id {
+        parts.push(format!("tenant_id={}", encode_param(tid)));
+    }
     append_pagination_parts(&mut parts, pagination);
     parts.join("&")
 }
 
-fn build_floating_ip_query(
-    _filter: &FloatingIpListFilter,
-    pagination: &PaginationParams,
-) -> String {
+fn build_floating_ip_query(filter: &FloatingIpListFilter, pagination: &PaginationParams) -> String {
     let mut parts = Vec::new();
+    if filter.all_tenants {
+        parts.push("all_tenants=1".to_string());
+    } else if let Some(ref tid) = filter.tenant_id {
+        parts.push(format!("tenant_id={}", encode_param(tid)));
+    }
     append_pagination_parts(&mut parts, pagination);
     parts.join("&")
 }
@@ -263,7 +336,7 @@ impl NeutronPort for NeutronHttpAdapter {
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<Network>> {
         let query = build_network_query(filter, pagination);
-        paginated_list(
+        let resp = paginated_list(
             &self.base,
             "/v2.0/networks",
             &query,
@@ -272,7 +345,8 @@ impl NeutronPort for NeutronHttpAdapter {
                 (resp.networks, next)
             },
         )
-        .await
+        .await?;
+        Ok(self.refilter_response(resp, filter.all_tenants, "FetchNetworks", "network"))
     }
 
     async fn get_network(&self, network_id: &str) -> ApiResult<Network> {
@@ -350,7 +424,7 @@ impl NeutronPort for NeutronHttpAdapter {
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<SecurityGroup>> {
         let query = build_security_group_query(filter, pagination);
-        paginated_list(
+        let resp = paginated_list(
             &self.base,
             "/v2.0/security-groups",
             &query,
@@ -362,7 +436,13 @@ impl NeutronPort for NeutronHttpAdapter {
                 (resp.security_groups, next)
             },
         )
-        .await
+        .await?;
+        Ok(self.refilter_response(
+            resp,
+            filter.all_tenants,
+            "FetchSecurityGroups",
+            "security_group",
+        ))
     }
 
     async fn get_security_group(&self, sg_id: &str) -> ApiResult<SecurityGroup> {
@@ -463,7 +543,7 @@ impl NeutronPort for NeutronHttpAdapter {
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<FloatingIp>> {
         let query = build_floating_ip_query(filter, pagination);
-        paginated_list(
+        let resp = paginated_list(
             &self.base,
             "/v2.0/floatingips",
             &query,
@@ -475,7 +555,8 @@ impl NeutronPort for NeutronHttpAdapter {
                 (resp.floatingips, next)
             },
         )
-        .await
+        .await?;
+        Ok(self.refilter_response(resp, filter.all_tenants, "FetchFloatingIps", "floating_ip"))
     }
 
     async fn create_floating_ip(&self, params: &FloatingIpCreateParams) -> ApiResult<FloatingIp> {
@@ -815,30 +896,114 @@ mod tests {
     }
 
     // --- Query builders ---
+    // BL-P2-085 Step 12: tenant_id injection / all_tenants=1 branch ---
+    // Policy:
+    //   - filter.all_tenants == true   → query contains "all_tenants=1", no tenant_id
+    //   - filter.all_tenants == false && filter.tenant_id = Some(scope)
+    //                                  → query contains "tenant_id={scope}", no all_tenants
+    //   - filter.all_tenants == false && filter.tenant_id = None
+    //                                  → query has neither (no-op fail-safe; pagination only)
 
-    // Neutron does not send all_tenants query param — admin token sees all automatically
     #[test]
-    fn test_build_network_query_no_all_tenants_param() {
-        let filter = NetworkListFilter { all_tenants: true };
+    fn test_build_network_query_injects_tenant_id_when_all_tenants_false() {
+        let filter = NetworkListFilter {
+            all_tenants: false,
+            tenant_id: Some("proj-A".into()),
+        };
         let pagination = PaginationParams::default();
         let query = build_network_query(&filter, &pagination);
+        assert!(
+            query.contains("tenant_id=proj-A"),
+            "expected tenant_id=proj-A in query, got: {query}"
+        );
         assert!(!query.contains("all_tenants"));
     }
 
     #[test]
-    fn test_build_security_group_query_no_all_tenants_param() {
-        let filter = SecurityGroupListFilter { all_tenants: true };
+    fn test_build_network_query_all_tenants_true_skips_tenant_id() {
+        let filter = NetworkListFilter {
+            all_tenants: true,
+            tenant_id: Some("proj-A".into()),
+        };
+        let pagination = PaginationParams::default();
+        let query = build_network_query(&filter, &pagination);
+        assert!(
+            query.contains("all_tenants=1"),
+            "expected all_tenants=1 in query, got: {query}"
+        );
+        assert!(!query.contains("tenant_id"));
+    }
+
+    #[test]
+    fn test_build_security_group_query_injects_tenant_id_when_all_tenants_false() {
+        let filter = SecurityGroupListFilter {
+            all_tenants: false,
+            tenant_id: Some("proj-B".into()),
+        };
         let pagination = PaginationParams::default();
         let query = build_security_group_query(&filter, &pagination);
+        assert!(
+            query.contains("tenant_id=proj-B"),
+            "expected tenant_id=proj-B in query, got: {query}"
+        );
         assert!(!query.contains("all_tenants"));
     }
 
     #[test]
-    fn test_build_floating_ip_query_no_all_tenants_param() {
-        let filter = FloatingIpListFilter { all_tenants: true };
+    fn test_build_security_group_query_all_tenants_true_skips_tenant_id() {
+        let filter = SecurityGroupListFilter {
+            all_tenants: true,
+            tenant_id: Some("proj-B".into()),
+        };
+        let pagination = PaginationParams::default();
+        let query = build_security_group_query(&filter, &pagination);
+        assert!(
+            query.contains("all_tenants=1"),
+            "expected all_tenants=1 in query, got: {query}"
+        );
+        assert!(!query.contains("tenant_id"));
+    }
+
+    #[test]
+    fn test_build_security_group_query_no_op_when_no_tenant_id_no_all_tenants() {
+        let filter = SecurityGroupListFilter {
+            all_tenants: false,
+            tenant_id: None,
+        };
+        let pagination = PaginationParams::default();
+        let query = build_security_group_query(&filter, &pagination);
+        assert!(!query.contains("tenant_id"));
+        assert!(!query.contains("all_tenants"));
+    }
+
+    #[test]
+    fn test_build_floating_ip_query_injects_tenant_id_when_all_tenants_false() {
+        let filter = FloatingIpListFilter {
+            all_tenants: false,
+            tenant_id: Some("proj-C".into()),
+        };
         let pagination = PaginationParams::default();
         let query = build_floating_ip_query(&filter, &pagination);
+        assert!(
+            query.contains("tenant_id=proj-C"),
+            "expected tenant_id=proj-C in query, got: {query}"
+        );
         assert!(!query.contains("all_tenants"));
+    }
+
+    #[test]
+    fn test_build_floating_ip_query_all_tenants_true_skips_tenant_id() {
+        let filter = FloatingIpListFilter {
+            all_tenants: true,
+            tenant_id: Some("proj-C".into()),
+        };
+        let pagination = PaginationParams::default();
+        let query = build_floating_ip_query(&filter, &pagination);
+        assert!(
+            query.contains("all_tenants=1"),
+            "expected all_tenants=1 in query, got: {query}"
+        );
+        assert!(!query.contains("tenant_id"));
     }
 
     #[test]

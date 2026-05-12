@@ -5,6 +5,7 @@ use crate::adapter::http::cinder::CinderHttpAdapter;
 use crate::adapter::http::glance::GlanceHttpAdapter;
 use crate::adapter::http::keystone::KeystoneHttpAdapter;
 use crate::adapter::http::neutron::NeutronHttpAdapter;
+use crate::adapter::http::neutron_audit::AdapterAuditConfig;
 use crate::adapter::http::nova::NovaHttpAdapter;
 use crate::port::auth::AuthProvider;
 use crate::port::cinder::CinderPort;
@@ -44,7 +45,17 @@ impl AdapterRegistry {
     }
 
     /// Create all HTTP adapters from the given auth provider and region.
-    pub fn new_http(auth: Arc<dyn AuthProvider>, region: Option<String>) -> Result<Self, ApiError> {
+    ///
+    /// `audit` (BL-P2-085 Step-14-precedent-refactor-3) bundles per-service
+    /// audit contexts. Step 13b wired Neutron; Step 14 wires Nova and
+    /// Cinder. Pass `AdapterAuditConfig::default()` for mock registries
+    /// and integration tests that don't care about audit emission; each
+    /// adapter then behaves as a pre-refilter passthrough.
+    pub fn new_http(
+        auth: Arc<dyn AuthProvider>,
+        region: Option<String>,
+        audit: AdapterAuditConfig,
+    ) -> Result<Self, ApiError> {
         let nova_base = Self::make_base(auth.clone(), "compute", region.clone())?;
         let neutron_base = Self::make_base(auth.clone(), "network", region.clone())?;
         let cinder_base = Self::make_base(auth.clone(), "block-storage", region.clone())?;
@@ -59,10 +70,23 @@ impl AdapterRegistry {
             keystone_base.clone(),
         ];
 
+        let mut neutron = NeutronHttpAdapter::from_base(neutron_base);
+        if let Some(ctx) = audit.neutron {
+            neutron = neutron.with_audit(ctx);
+        }
+        let mut nova = NovaHttpAdapter::from_base(nova_base);
+        if let Some(ctx) = audit.nova {
+            nova = nova.with_audit(ctx);
+        }
+        let mut cinder = CinderHttpAdapter::from_base(cinder_base);
+        if let Some(ctx) = audit.cinder {
+            cinder = cinder.with_audit(ctx);
+        }
+
         Ok(Self {
-            nova: Arc::new(NovaHttpAdapter::from_base(nova_base)),
-            neutron: Arc::new(NeutronHttpAdapter::from_base(neutron_base)),
-            cinder: Arc::new(CinderHttpAdapter::from_base(cinder_base)),
+            nova: Arc::new(nova),
+            neutron: Arc::new(neutron),
+            cinder: Arc::new(cinder),
             glance: Arc::new(GlanceHttpAdapter::from_base(glance_base)),
             keystone: Arc::new(KeystoneHttpAdapter::from_base(keystone_base)),
             http_caches,
