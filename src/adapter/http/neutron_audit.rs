@@ -73,6 +73,8 @@ pub type NeutronAuditCtx = AuditCtx;
 pub type NovaAuditCtx = AuditCtx;
 /// Step 14 placeholder — Cinder adapter wiring will use this alias.
 pub type CinderAuditCtx = AuditCtx;
+/// BL-P2-091 — Glance adapter wiring uses this alias.
+pub type GlanceAuditCtx = AuditCtx;
 
 /// Bundle of per-service [`AuditCtx`] instances passed to
 /// [`crate::adapter::registry::AdapterRegistry::new_http`]. Replaces the
@@ -84,6 +86,7 @@ pub struct AdapterAuditConfig {
     pub neutron: Option<Arc<NeutronAuditCtx>>,
     pub nova: Option<Arc<NovaAuditCtx>>,
     pub cinder: Option<Arc<CinderAuditCtx>>,
+    pub glance: Option<Arc<GlanceAuditCtx>>,
 }
 
 /// Build an [`AdapterAuditConfig`] from the three pieces every service
@@ -113,6 +116,7 @@ pub fn build_audit_config(
         neutron: Some(make("neutron")),
         nova: Some(make("nova")),
         cinder: Some(make("cinder")),
+        glance: Some(make("glance")),
     }
 }
 
@@ -347,6 +351,7 @@ mod tests {
         assert!(cfg.neutron.is_none());
         assert!(cfg.nova.is_none());
         assert!(cfg.cinder.is_none());
+        assert!(cfg.glance.is_none());
     }
 
     #[test]
@@ -356,6 +361,7 @@ mod tests {
         assert!(cfg.neutron.is_none());
         assert!(cfg.nova.is_none());
         assert!(cfg.cinder.is_none());
+        assert!(cfg.glance.is_none());
     }
 
     #[test]
@@ -377,5 +383,45 @@ mod tests {
             .cinder
             .expect("cinder ctx must be Some when logger is Some");
         assert_eq!(cinder.service(), "cinder");
+    }
+
+    // --- BL-P2-091: Glance FR1 wiring ---
+    // `build_audit_config` must also populate `audit.glance` so registry
+    // `new_http` can pass it to `GlanceHttpAdapter::with_audit`.
+
+    #[test]
+    fn test_build_audit_config_returns_glance_with_service_glance() {
+        let dir = TempDir::new().unwrap();
+        let logger = Arc::new(AuditLogger::new(dir.path().join("audit.log")).unwrap());
+        let scope: Arc<dyn ScopeProvider> = Arc::new(FixedScope(Some("proj-A".into())));
+        let cfg = build_audit_config(Some(logger), scope, dummy_actor_ctx());
+
+        let glance = cfg
+            .glance
+            .expect("glance ctx must be Some when logger is Some (BL-P2-091)");
+        assert_eq!(
+            glance.service(),
+            "glance",
+            "service discriminator must tag glance"
+        );
+    }
+
+    #[test]
+    fn test_glance_with_audit_attaches_ctx_default_none() {
+        // BL-P2-091 mirror of `test_neutron_with_audit_attaches_ctx_default_none`:
+        // default `GlanceHttpAdapter` leaves `audit_ctx` None; `with_audit`
+        // returns `Self` so callers chain via `.with_audit(ctx)`.
+        let dir = TempDir::new().unwrap();
+        let ctx = Arc::new(build_ctx(&dir, Some("proj-A")));
+
+        // Builder type signature alone is enough — the field is private and
+        // construction needs a BaseHttpClient. Mirror Neutron's signature
+        // assertion. (Renamed-by-alias: `NeutronAuditCtx` and
+        // `GlanceAuditCtx` are both `AuditCtx`; `with_audit` is service-typed.)
+        use crate::adapter::http::glance::GlanceHttpAdapter;
+        use crate::adapter::http::neutron_audit::GlanceAuditCtx;
+        let _builder_signature: fn(GlanceHttpAdapter, Arc<GlanceAuditCtx>) -> GlanceHttpAdapter =
+            GlanceHttpAdapter::with_audit;
+        let _ = ctx;
     }
 }

@@ -24,6 +24,7 @@
 //! the audit chain depends on every drop being attributable.
 
 use crate::models::cinder::{Volume, VolumeSnapshot};
+use crate::models::glance::Image;
 use crate::models::neutron::{FloatingIp, Network, SecurityGroup};
 use crate::models::nova::Server;
 
@@ -269,6 +270,25 @@ impl ScopedItem for Volume {
 impl ScopedItem for VolumeSnapshot {
     fn tenant_id(&self) -> Option<&str> {
         self.tenant_id.as_deref()
+    }
+    fn resource_id(&self) -> Option<&str> {
+        Some(&self.id)
+    }
+}
+
+// --- BL-P2-091: ScopedItem impl for Glance Image ---
+// Glance is the asymmetric branch — atomic security PR deferred FR1 because
+// `Image.visibility` (`public` / `private` / `shared` / `community`) means
+// `owner` alone is insufficient for the broader image-visibility semantics
+// (BL-P2-091 Out-of-scope note). For FR1's "did the row's project_id match
+// the active scope" question, `owner: Option<String>` is the equivalent of
+// `tenant_id` on Neutron/Nova/Cinder models; community/shared rows under
+// strict scoping drop fail-safe (caller's responsibility to choose
+// `all_tenants=true` when intentionally listing globally-visible images).
+
+impl ScopedItem for Image {
+    fn tenant_id(&self) -> Option<&str> {
+        self.owner.as_deref()
     }
     fn resource_id(&self) -> Option<&str> {
         Some(&self.id)
@@ -808,5 +828,43 @@ mod tests {
         let snap = sample_volume_snapshot("snap-2", None);
         assert_eq!(snap.tenant_id(), None);
         assert_eq!(snap.resource_id(), Some("snap-2"));
+    }
+
+    // --- BL-P2-091: ScopedItem impl for Glance Image ---
+    // `Image.owner: Option<String>` maps to `tenant_id()` (Glance v2 uses
+    // `owner` rather than `tenant_id` on the wire). `Image.id: String`
+    // always present → `resource_id()`.
+
+    fn sample_image(id: &str, owner: Option<&str>) -> crate::models::glance::Image {
+        crate::models::glance::Image {
+            id: id.to_string(),
+            name: "img".to_string(),
+            status: "active".to_string(),
+            disk_format: None,
+            container_format: None,
+            size: None,
+            visibility: "private".to_string(),
+            min_disk: 0,
+            min_ram: 0,
+            checksum: None,
+            created_at: None,
+            owner: owner.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn test_image_has_scoped_item_returns_some_when_present() {
+        let img = sample_image("img-1", Some("proj-A"));
+        assert_eq!(img.tenant_id(), Some("proj-A"));
+        assert_eq!(img.resource_id(), Some("img-1"));
+    }
+
+    #[test]
+    fn test_image_has_scoped_item_returns_none_when_absent() {
+        // Shared/community images may surface without an `owner` field — under
+        // strict scoping the refilter drops them fail-safe (BL-P2-091 spec).
+        let img = sample_image("img-2", None);
+        assert_eq!(img.tenant_id(), None);
+        assert_eq!(img.resource_id(), Some("img-2"));
     }
 }

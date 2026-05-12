@@ -82,12 +82,16 @@ impl AdapterRegistry {
         if let Some(ctx) = audit.cinder {
             cinder = cinder.with_audit(ctx);
         }
+        let mut glance = GlanceHttpAdapter::from_base(glance_base);
+        if let Some(ctx) = audit.glance {
+            glance = glance.with_audit(ctx);
+        }
 
         Ok(Self {
             nova: Arc::new(nova),
             neutron: Arc::new(neutron),
             cinder: Arc::new(cinder),
-            glance: Arc::new(GlanceHttpAdapter::from_base(glance_base)),
+            glance: Arc::new(glance),
             keystone: Arc::new(KeystoneHttpAdapter::from_base(keystone_base)),
             http_caches,
         })
