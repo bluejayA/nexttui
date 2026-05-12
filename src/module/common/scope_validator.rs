@@ -49,6 +49,14 @@ pub fn validate_form_scope(
     active: &str,
     selections: &[FormSelection<'_>],
 ) -> Result<(), FormValidationError> {
+    // Parity with `RefilterScope::strict` — an empty active would let
+    // selections with `project_id == Some("")` silent-allow. Caught in
+    // dev builds; production callers must short-circuit to the
+    // unscoped path (worker FR2) before reaching this validator.
+    debug_assert!(
+        !active.is_empty(),
+        "validate_form_scope requires a non-empty active project id — empty would silent-allow Some(\"\")"
+    );
     for sel in selections {
         let matches = sel.project_id == Some(active);
         if !matches {
@@ -123,6 +131,22 @@ mod tests {
             }
             other => panic!("expected FormSelectionMismatch, got {other:?}"),
         }
+    }
+
+    // --- cargo-review branch-full Correctness #3 (S-class follow-up) ---
+    // RefilterScope::strict has a debug_assert against empty active; the
+    // form validator must enforce the same invariant so an upstream that
+    // leaks `active == ""` doesn't silent-allow rows with
+    // `project_id == Some("")`.
+
+    #[test]
+    #[should_panic(expected = "non-empty active")]
+    fn test_validate_form_scope_panics_on_empty_active() {
+        let selections = [FormSelection {
+            field: "image",
+            project_id: Some("A"),
+        }];
+        let _ = validate_form_scope("", &selections);
     }
 
     #[test]

@@ -426,6 +426,17 @@ pub(crate) fn emit_origin_block_audit(
 /// `None` is treated as fail-safe deny so an upstream that omits owner
 /// cannot route a cross-project delete past the form layer.
 pub(crate) fn check_image_owner_scope(image: &Image, active: &str) -> GuardDecision {
+    // Parity with `RefilterScope::strict` / `validate_form_scope` — an
+    // empty active combined with `owner == Some("")` would silent-allow
+    // a cross-project mutation. Caught in dev builds; production
+    // callers must filter `Some("")` to `None` before reaching here
+    // (DeleteImage branch wraps with `active_tenant.as_deref()` and
+    // `RefilterScope::from_parts` normalization handles the same case
+    // for the adapter list path).
+    debug_assert!(
+        !active.is_empty(),
+        "check_image_owner_scope requires a non-empty active project id — empty would silent-allow Some(\"\")"
+    );
     match image.owner.as_deref() {
         Some(owner) if owner == active => GuardDecision::Allow,
         Some(owner) => GuardDecision::Block {
@@ -939,10 +950,21 @@ async fn handle_action(
             // FR4 (BL-P2-085 Step 16, Phase 9): pre-mutation owner check.
             // Refetch the image to read `owner` live — a list snapshot in
             // the UI can be stale by the time the user confirms delete.
-            // Allow when active scope is unscoped (worker FR2 already
-            // handles the unscoped failsafe via DispatchedAction stamping)
-            // or when the pre-GET fails (let the delete attempt surface
-            // the underlying error via the existing api_error path).
+            //
+            // Unscoped session: FR2 does NOT block unstamped envelopes
+            // (check_dispatched_origin returns Allow when origin=None),
+            // and this branch also skips FR4 because `active_tenant` is
+            // None. RBAC `can_perform` is the only check; project-scope
+            // verification is intentionally absent because the user has
+            // not yet authenticated to a project. The pre-auth gate is
+            // the App-layer router's responsibility, not FR4's.
+            //
+            // Pre-GET failure: silent passthrough — the subsequent
+            // `delete_image` call surfaces the underlying error via
+            // `api_error`. Trade-off: a 401/403 on GET (e.g. token
+            // expired) could in principle route past FR4 to delete; a
+            // future cycle (BL follow-up) can fail-closed for 4xx-auth
+            // / 5xx while keeping 404 as the existing pass-through.
             if let Some(active) = active_tenant.as_deref()
                 && let Ok(image) = registry.glance.get_image(&id).await
                 && let GuardDecision::Block { reason } =
@@ -1946,6 +1968,17 @@ mod tests {
             },
             GuardDecision::Allow => panic!("missing owner must fail-safe deny"),
         }
+    }
+
+    // cargo-review branch-full Correctness #5 (S-class follow-up):
+    // RefilterScope::strict / scope_validator::validate_form_scope parity —
+    // empty active must trip in dev so a leaked `Some("")` from the token
+    // doesn't quietly Allow because `owner == Some("")` happens to match.
+    #[test]
+    #[should_panic(expected = "non-empty active")]
+    fn test_check_image_owner_scope_panics_on_empty_active() {
+        let img = sample_image("img-1", Some(""));
+        let _ = check_image_owner_scope(&img, "");
     }
 
     #[test]
