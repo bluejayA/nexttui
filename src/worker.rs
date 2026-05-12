@@ -299,7 +299,8 @@ pub(crate) fn action_to_kind(action: &Action) -> Option<ActionKind> {
         | Action::FetchUsers
         | Action::FetchUsage { .. }
         | Action::FetchMigrationProgress { .. }
-        | Action::FetchPorts { .. } => None,
+        | Action::FetchPorts { .. }
+        | Action::FetchPortBindingsForServer { .. } => None,
 
         // Navigation / UI helpers
         Action::Navigate(_)
