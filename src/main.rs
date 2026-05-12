@@ -151,9 +151,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Trigger initial authentication, then initialize RBAC from token roles
         // (the `rbac` Arc was constructed earlier so ActionSender already holds
         // a clone for FR2 stamping — `update_roles` here is observed live by
-        // the sender's `ScopeProvider` impl).
+        // the sender's `ScopeProvider` impl). The token's Keystone user UUID is
+        // captured here for BL-P2-093 startup `actor_ctx.user_id` wiring.
         let _ = auth_provider.get_token().await; // force auth before reading roles
+        let mut initial_token_user_id = String::new();
         if let Ok(token) = auth_provider.get_token_info().await {
+            initial_token_user_id = token.user_id.clone();
             rbac.update_roles(token.roles, Some(token.project.id));
         }
         let mut module_registry = nexttui::registry::ModuleRegistry::new();
@@ -165,12 +168,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // both worker-side block events and app-side success entries land in
         // a single rotated log. `actor_ctx` lives behind an `Arc<RwLock<...>>`
         // so a runtime cloud-switch (BL-P2-074) updates the next audit entry
-        // — `App::handle_event` writes the new cloud on `ContextChanged`.
-        // `user_id` falls back to `"unknown"` (matches `App::build_audit_entry`)
-        // when the credential lacks an explicit username; a follow-up resolves
-        // the Keystone UUID from the live `Token`.
+        // — `App::handle_event` writes the new cloud and user_id on
+        // `ContextChanged` (BL-P2-093). When the Keystone token exposes a
+        // `user.id`, prefer that UUID; otherwise fall back to the configured
+        // wire username for legacy parity with `App::build_audit_entry`.
         let audit_logger = app.audit_logger_arc();
-        let initial_user_id = if wire_username.is_empty() {
+        let initial_user_id = if !initial_token_user_id.is_empty() {
+            initial_token_user_id
+        } else if wire_username.is_empty() {
             "unknown".to_string()
         } else {
             wire_username.clone()

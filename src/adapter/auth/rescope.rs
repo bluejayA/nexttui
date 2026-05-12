@@ -213,6 +213,7 @@ mod tests {
             },
             roles: Vec::new(),
             catalog: Vec::new(),
+            user_id: String::new(),
         }
     }
 

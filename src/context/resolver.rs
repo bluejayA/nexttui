@@ -822,6 +822,7 @@ mod tests {
                 },
                 roles: Vec::new(),
                 catalog: Vec::<CatalogEntry>::new(),
+                user_id: String::new(),
             })
         }
         async fn set_active(&self, _scope: TokenScope, _token: Token) -> Result<(), SwitchError> {

@@ -223,6 +223,7 @@ mod tests {
                     url: "https://nova:8774/v2.1".to_string(),
                 }],
             }],
+            user_id: String::new(),
         }
     }
 

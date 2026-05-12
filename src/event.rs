@@ -210,8 +210,18 @@ pub enum AppEvent {
     /// this and clear cached data so the user never sees stale rows.
     /// Epoch lives on the surrounding `VersionedEvent` envelope, not the
     /// payload — see `crate::context::VersionedEvent`.
+    ///
+    /// BL-P2-093: `user_id` carries the Keystone-issued UUID for the freshly
+    /// rescoped token. `App::handle_event` writes it into the shared
+    /// `ActorContext` so subsequent cross-project block audits attribute the
+    /// new actor — without this, multi-cloud reauth leaves audit entries
+    /// anchored to the wire-startup user and breaks fingerprint v1 dedup
+    /// (canonical `"v1|user|active|origin|target|action|resource_id"`).
+    /// Empty string falls back to the previous value (kept for adapters/tests
+    /// that lack user info; production tokens always populate it).
     ContextChanged {
         target: ContextTarget,
+        user_id: String,
     },
 }
 
