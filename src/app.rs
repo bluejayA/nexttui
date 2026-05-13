@@ -1460,12 +1460,18 @@ impl App {
                 "Auth".into(),
                 String::new(),
             ),
-            // BL-P2-083: dedicated message so the user knows to re-run
-            // `:switch-context` rather than retry credentials. Carries the
-            // active project name for clarity in multi-project workflows.
+            // BL-P2-083: dedicated message that recommends the only path
+            // that reliably works for a fully-expired rescoped session —
+            // app restart. `:switch-context` was tempting to suggest but
+            // the rescope adapter uses the (expired) current token to
+            // authenticate the rescope request, so an already-expired
+            // session can't recover via switch — it surfaces as a
+            // generic RescopeRejected (Codex review P2). Smart recovery
+            // for the near-expiry-but-still-rescopeable window is tracked
+            // as BL-P2-096.
             AppEvent::SessionExpired { project } => (
                 format!(
-                    "{project} 세션이 만료되었습니다. :switch-context로 재전환하거나 앱을 다시 시작하세요."
+                    "{project} 세션이 만료되었습니다. 앱을 다시 시작해 재인증하세요."
                 ),
                 ToastLevel::Error,
                 "SessionExpired".into(),
@@ -3184,8 +3190,8 @@ mod tests {
         assert_eq!(entry.operation, "SessionExpired");
         assert_eq!(entry.resource_name, "demo");
         assert!(
-            entry.message.contains("세션이 만료") && entry.message.contains(":switch-context"),
-            "toast must include reauth prompt: {msg}",
+            entry.message.contains("세션이 만료") && entry.message.contains("다시 시작"),
+            "toast must include expired notice + restart prompt: {msg}",
             msg = entry.message,
         );
     }
