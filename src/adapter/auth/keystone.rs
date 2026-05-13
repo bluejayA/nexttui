@@ -433,10 +433,52 @@ impl AuthProvider for KeystoneAuthAdapter {
 
     /// Get a valid token string. If near-expiry (<1min), refresh first.
     /// Uses a Mutex to prevent thundering herd — only one refresh at a time.
+    ///
+    /// BL-P2-083: for rescoped sessions (active scope differs from the
+    /// credential's initial scope), an additional preemptive guard kicks
+    /// in when the cached token is within 5 minutes of expiry — those
+    /// can't be self-refreshed (the C1 guard in `refresh_token` rejects
+    /// rescope refresh on principle), and falling through to that path
+    /// surfaces an `AuthFailed` which is indistinguishable from real
+    /// credential rejection. We return `ApiError::SessionExpired { project }`
+    /// instead so the UI can prompt the user to switch context.
     #[tracing::instrument(skip(self))]
     async fn get_token(&self) -> ApiResult<String> {
         // Ensure refresh loop is running (idempotent — handles cached token from disk)
         self.start_refresh_loop().await;
+
+        // BL-P2-083: rescoped session + near-expiry → explicit SessionExpired.
+        // Runs BEFORE the existing 1-minute fast path so a rescoped token
+        // with 2 minutes left doesn't get served and then fail mid-request.
+        // Initial-scope tokens fall through unchanged — refresh_token can
+        // mint a fresh one for them via do_authenticate.
+        let scope = self.active_scope_snapshot();
+        let initial = self.initial_scope();
+        if scope != initial {
+            let cached_expires_at = {
+                let map = self.token_map.read().unwrap_or_else(|e| e.into_inner());
+                map.get(&scope).map(|t| t.expires_at)
+            };
+            let near_expiry = match cached_expires_at {
+                Some(at) => at <= Utc::now() + chrono::Duration::minutes(5),
+                // Cached entry missing for a rescoped scope is also a
+                // session-lost case — treat as expired rather than letting
+                // the slow path fall through to AuthFailed.
+                None => true,
+            };
+            if near_expiry {
+                let project = match &scope {
+                    TokenScope::Project { name, .. } => name.clone(),
+                    TokenScope::Unscoped => "<unscoped>".to_string(),
+                };
+                tracing::warn!(
+                    project = %project,
+                    expires_at = ?cached_expires_at,
+                    "session_expired: rescoped token expired or within 5-minute margin; reauth required"
+                );
+                return Err(ApiError::SessionExpired { project });
+            }
+        }
 
         // Fast path: token is still valid for active scope
         let scope = self.active_scope_snapshot();
@@ -810,6 +852,105 @@ mod tests {
         let adapter = KeystoneAuthAdapter::new(sample_credential_password()).unwrap();
         let err = adapter.get_token_info().await;
         assert!(err.is_err());
+    }
+
+    // ---------- BL-P2-083: interim session-expired guard ----------
+    // Rescoped sessions (set_active called with a non-initial scope) cannot
+    // be self-refreshed by KeystoneAuthAdapter — the C1 guard in
+    // `refresh_token` returns AuthFailed, which is indistinguishable from
+    // genuine credential rejection. BL-P2-083 surfaces this as the explicit
+    // `ApiError::SessionExpired` variant + tracing telemetry so the user
+    // gets "switch context to reauth" instead of "credentials rejected."
+
+    fn rescoped_token(id: &str, project_name: &str, expires_in_minutes: i64) -> Token {
+        Token {
+            id: id.into(),
+            expires_at: Utc::now() + chrono::Duration::minutes(expires_in_minutes),
+            project: ProjectScope {
+                id: format!("id-{project_name}"),
+                name: project_name.into(),
+                domain_id: "default".into(),
+                domain_name: "default".into(),
+            },
+            roles: Vec::new(),
+            catalog: Vec::new(),
+            user_id: "user-uuid".into(),
+        }
+    }
+
+    fn install_rescoped_token(adapter: &KeystoneAuthAdapter, token: Token, project_name: &str) {
+        // Swap active scope to the rescoped target and stage its token.
+        let scope = TokenScope::Project {
+            name: project_name.into(),
+            domain: "default".into(),
+        };
+        {
+            let mut map = adapter.token_map.write().unwrap_or_else(|e| e.into_inner());
+            map.insert(scope.clone(), token);
+        }
+        {
+            let mut active = adapter
+                .active_scope
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            *active = scope;
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_token_returns_session_expired_for_expired_rescoped_token() {
+        // Past-expiry rescoped token: refresh would hit the C1 guard
+        // (AuthFailed). The interim guard must short-circuit with the
+        // explicit SessionExpired variant before that mis-classification
+        // can occur.
+        let adapter = KeystoneAuthAdapter::new(sample_credential_password()).unwrap();
+        let token = rescoped_token("tok-rescoped-stale", "demo", -1); // expired 1 min ago
+        install_rescoped_token(&adapter, token, "demo");
+
+        let err = adapter.get_token().await.expect_err("must error");
+        match err {
+            ApiError::SessionExpired { project } => assert_eq!(project, "demo"),
+            other => panic!("expected SessionExpired, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_token_returns_session_expired_within_5min_margin_for_rescoped() {
+        // Rescoped token with only 2 minutes left — inside the 5-minute
+        // preemptive margin so callers get a clear reauth prompt before
+        // any in-flight operation can fail mid-request.
+        let adapter = KeystoneAuthAdapter::new(sample_credential_password()).unwrap();
+        let token = rescoped_token("tok-rescoped-soon", "demo", 2);
+        install_rescoped_token(&adapter, token, "demo");
+
+        let err = adapter.get_token().await.expect_err("must error");
+        assert!(
+            matches!(err, ApiError::SessionExpired { ref project } if project == "demo"),
+            "expected SessionExpired, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_token_initial_scope_near_expiry_does_not_return_session_expired() {
+        // Initial-scope token near expiry must NOT surface SessionExpired —
+        // refresh_token can self-refresh it (C1 guard only blocks rescoped
+        // refreshes). The interim guard is rescope-only on purpose; any
+        // error here comes from the refresh HTTP path (unreachable in
+        // unit test → Network/Unexpected), not from the guard.
+        let adapter = KeystoneAuthAdapter::new(sample_credential_password()).unwrap();
+        let initial_scope = adapter.initial_scope();
+        let mut near_expiry = sample_token("tok-near", "admin-project");
+        near_expiry.expires_at = Utc::now() + chrono::Duration::seconds(30);
+        {
+            let mut map = adapter.token_map.write().unwrap_or_else(|e| e.into_inner());
+            map.insert(initial_scope, near_expiry);
+        }
+
+        let err = adapter.get_token().await.expect_err("must error");
+        assert!(
+            !matches!(err, ApiError::SessionExpired { .. }),
+            "initial-scope expiry must not be classified as SessionExpired, got {err:?}"
+        );
     }
 
     #[tokio::test]

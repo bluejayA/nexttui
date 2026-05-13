@@ -1300,6 +1300,16 @@ async fn poll_migration_progress(
 }
 
 fn api_error(operation: &str, error: crate::port::error::ApiError) -> AppEvent {
+    // BL-P2-083: split SessionExpired off from the generic ApiError path so
+    // the UI gets a dedicated "switch context to reauth" prompt instead of
+    // "Auth failed: ..." that's indistinguishable from credential rejection.
+    // The adapter-level tracing::warn already covers the structured field
+    // logging; here we keep parity with the legacy error trace for
+    // operability (find-by-operation grep still works).
+    if let crate::port::error::ApiError::SessionExpired { project } = error {
+        tracing::warn!(operation, project = %project, "session_expired surfaced to UI");
+        return AppEvent::SessionExpired { project };
+    }
     tracing::error!(operation, error = %error, "API call failed");
     AppEvent::ApiError {
         operation: operation.to_string(),
@@ -2371,6 +2381,23 @@ mod tests {
                 assert!(message.contains("not found") || message.contains("Not"));
             }
             _ => panic!("Expected ApiError"),
+        }
+    }
+
+    // BL-P2-083: SessionExpired bypasses the generic ApiError funnel so the
+    // UI can surface the dedicated "switch context to reauth" toast. The
+    // funnel test above guards the default path; this one guards the split.
+    #[test]
+    fn test_api_error_routes_session_expired_to_dedicated_event() {
+        let event = api_error(
+            "FetchServers",
+            crate::port::error::ApiError::SessionExpired {
+                project: "demo".into(),
+            },
+        );
+        match event {
+            AppEvent::SessionExpired { project } => assert_eq!(project, "demo"),
+            other => panic!("expected SessionExpired, got {other:?}"),
         }
     }
 

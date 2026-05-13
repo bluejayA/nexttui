@@ -202,6 +202,17 @@ pub enum AppEvent {
         action: String,
     },
 
+    /// BL-P2-083: the rescoped session reached near-expiry and cannot be
+    /// auto-refreshed by the auth adapter (C1 guard rejects rescope-side
+    /// refresh on principle). The worker converts `ApiError::SessionExpired`
+    /// into this variant so the UI can prompt "switch context to reauth"
+    /// rather than the generic "credentials rejected" message produced by
+    /// `AppEvent::ApiError` / `AppEvent::AuthFailed`. `project` carries the
+    /// active project name for the user-facing toast.
+    SessionExpired {
+        project: String,
+    },
+
     // System
     CloudSwitched(String),
 

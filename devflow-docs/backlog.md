@@ -356,6 +356,28 @@ BL-P2-080 Unit 3(`.github/workflows/ci.yml::devstack-integration`)은 placeholde
 
 **Ref**: cargo-review branch-full report 2026-05-12 (Suggestions #1).
 
+### BL-P2-096: SessionExpired smart recovery — distinguish near-expiry vs already-expired in toast and switch path (BL-P2-083 follow-up)
+**Priority**: Medium
+**Parent**: BL-P2-083 codex-review branch-diff P2 (2026-05-13)
+**Category**: Auth / UX
+
+**Description**: BL-P2-083's interim guard surfaces `SessionExpired` for both states:
+- (a) "still rescopeable" — within 5-min margin but > 1 min remaining; `:switch-context <other-project>` would actually work
+- (b) "fully expired or lost" — already past expires_at, or active scope's token missing entirely; only app restart works
+
+The current interim toast safely recommends restart in both cases (Codex P2 fix — `:switch-context` was misleading because `KeystoneRescopeAdapter::rescope` authenticates with the current (expired) token and fails with `RescopeRejected`). State (a) is salvageable via switch-context but the user is told to restart anyway.
+
+본 BL에서:
+1. `ApiError::SessionExpired` payload에 `expired: bool` 추가 (true = past expires_at; false = within margin)
+2. `keystone.rs::get_token`에서 두 케이스 구분해 채움
+3. `App::generate_toast`에서 expired=true → 재시작 안내, expired=false → "지금 :switch-context로 전환 후 재시도 가능, 실패 시 재시작" 안내
+4. (선택) `spawn_switch` 실패 경로에서 `RescopeRejected` + 만료 토큰 감지 → 자동으로 `AppEvent::SessionExpired { expired: true }` 재발행 (cryptic 에러 방지)
+5. 추가 tests: state-별 토스트 메시지, spawn_switch 폴백 (선택 항목 구현 시)
+
+**Out of scope**: 백그라운드 auto-refresh — BL-P2-052 Part A 영역.
+
+**Ref**: 2026-05-13 codex-review branch-diff P2 on BL-P2-083 PR #88.
+
 ### BL-P2-095: App-side success audit attribution should use Keystone UUID (BL-P2-093 follow-up)
 **Priority**: Medium
 **Parent**: BL-P2-093 codex-review branch-diff open question (2026-05-12)
