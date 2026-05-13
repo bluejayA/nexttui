@@ -1460,6 +1460,17 @@ impl App {
                 "Auth".into(),
                 String::new(),
             ),
+            // BL-P2-083: dedicated message so the user knows to re-run
+            // `:switch-context` rather than retry credentials. Carries the
+            // active project name for clarity in multi-project workflows.
+            AppEvent::SessionExpired { project } => (
+                format!(
+                    "{project} 세션이 만료되었습니다. :switch-context로 재전환하거나 앱을 다시 시작하세요."
+                ),
+                ToastLevel::Error,
+                "SessionExpired".into(),
+                project.clone(),
+            ),
             AppEvent::PermissionDenied { operation } => (
                 format!("Permission denied: {operation}"),
                 ToastLevel::Error,
@@ -3154,6 +3165,29 @@ mod tests {
         assert!(!entry.success);
         assert_eq!(entry.operation, "CreateServer");
         assert!(entry.message.contains("quota exceeded"));
+    }
+
+    // --- BL-P2-083: SessionExpired toast ---
+
+    #[test]
+    fn test_generate_toast_for_session_expired_uses_reauth_message() {
+        let mut app = make_app();
+        app.handle_event(AppEvent::SessionExpired {
+            project: "demo".into(),
+        });
+        assert_eq!(app.activity_log.entries().len(), 1);
+        let entry = &app.activity_log.entries()[0];
+        assert!(
+            !entry.success,
+            "SessionExpired must surface as a failure in the activity log"
+        );
+        assert_eq!(entry.operation, "SessionExpired");
+        assert_eq!(entry.resource_name, "demo");
+        assert!(
+            entry.message.contains("세션이 만료") && entry.message.contains(":switch-context"),
+            "toast must include reauth prompt: {msg}",
+            msg = entry.message,
+        );
     }
 
     // --- BL-P2-085 Step 11c: cross-project block toast ---

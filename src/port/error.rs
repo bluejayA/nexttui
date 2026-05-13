@@ -9,6 +9,17 @@ pub enum ApiError {
     #[error("Token expired")]
     TokenExpired,
 
+    /// BL-P2-083: rescoped session reached near-expiry and cannot be
+    /// auto-refreshed (the C1 guard in `KeystoneAuthAdapter::refresh_token`
+    /// blocks refreshing tokens whose scope differs from the credential's
+    /// initial scope — that's the rescope adapter's job, not the auth
+    /// adapter's). Distinct from `AuthFailed` so callers can surface a
+    /// "switch context to reauth" prompt rather than "credentials
+    /// rejected." `project` carries the active project's name for the
+    /// user-facing message.
+    #[error("Session expired for project {project}; switch context to reauthenticate")]
+    SessionExpired { project: String },
+
     #[error("Forbidden: {0}")]
     Forbidden(String),
 
