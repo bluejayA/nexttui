@@ -1470,9 +1470,7 @@ impl App {
             // for the near-expiry-but-still-rescopeable window is tracked
             // as BL-P2-096.
             AppEvent::SessionExpired { project } => (
-                format!(
-                    "{project} 세션이 만료되었습니다. 앱을 다시 시작해 재인증하세요."
-                ),
+                format!("{project} 세션이 만료되었습니다. 앱을 다시 시작해 재인증하세요."),
                 ToastLevel::Error,
                 "SessionExpired".into(),
                 project.clone(),

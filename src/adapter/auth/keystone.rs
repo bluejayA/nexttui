@@ -889,7 +889,10 @@ mod tests {
             map.insert(scope.clone(), token);
         }
         {
-            let mut active = adapter.active_scope.lock().unwrap_or_else(|e| e.into_inner());
+            let mut active = adapter
+                .active_scope
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             *active = scope;
         }
     }
