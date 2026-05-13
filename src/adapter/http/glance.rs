@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{append_pagination_parts, encode_param, extract_marker_from_url, paginated_list};
 use crate::adapter::http::base::BaseHttpClient;
+use crate::adapter::http::neutron_audit::GlanceAuditCtx;
+use crate::adapter::http::scope_refilter::{RefilterScope, refilter_and_audit};
 use crate::models::glance::Image;
 use crate::port::auth::AuthProvider;
 use crate::port::error::{ApiError, ApiResult};
@@ -13,6 +15,7 @@ use crate::port::types::*;
 
 pub struct GlanceHttpAdapter {
     base: Arc<BaseHttpClient>,
+    audit_ctx: Option<Arc<GlanceAuditCtx>>,
 }
 
 impl GlanceHttpAdapter {
@@ -24,11 +27,68 @@ impl GlanceHttpAdapter {
                 EndpointInterface::Public,
                 region,
             )?),
+            audit_ctx: None,
         })
     }
 
     pub fn from_base(base: Arc<BaseHttpClient>) -> Self {
-        Self { base }
+        Self {
+            base,
+            audit_ctx: None,
+        }
+    }
+
+    /// BL-P2-091: attach a `GlanceAuditCtx` so `list_images` runs
+    /// `refilter_by_scope` against the response and emits an
+    /// `AdapterFilterViolation` audit event per dropped row. Mirrors the
+    /// Neutron/Nova/Cinder pattern wired by `registry::new_http`.
+    pub fn with_audit(mut self, ctx: Arc<GlanceAuditCtx>) -> Self {
+        self.audit_ctx = Some(ctx);
+        self
+    }
+
+    /// Apply response-side scope refiltering to a `PaginatedResponse`.
+    /// No-op when `audit_ctx` is None (mock registries, integration tests
+    /// without audit). When attached, partitions via
+    /// [`refilter_and_audit`] which fans out one `AdapterFilterViolation`
+    /// event per dropped row before returning the kept items.
+    ///
+    /// Glance v2 surfaces `Image.owner` rather than `tenant_id`; the
+    /// `ScopedItem for Image` impl bridges the two so this helper stays
+    /// identical to the Neutron/Nova/Cinder shape.
+    ///
+    /// [`refilter_and_audit`]: crate::adapter::http::scope_refilter::refilter_and_audit
+    fn refilter_response<T>(
+        &self,
+        resp: PaginatedResponse<T>,
+        all_tenants: bool,
+        action_type: &str,
+        resource_kind: &str,
+    ) -> PaginatedResponse<T>
+    where
+        T: crate::adapter::http::scope_refilter::ScopedItem,
+    {
+        let active = self
+            .audit_ctx
+            .as_ref()
+            .and_then(|ctx| ctx.scope_provider.current_project_id());
+        let scope = RefilterScope::from_parts(active.as_deref(), all_tenants);
+        // correlation_id=0 mirrors Neutron: list_* are not bound to a
+        // worker dispatch, and fingerprint resource_id disambiguates
+        // per-row events. Epoch propagation lands in a separate cycle.
+        let kept = refilter_and_audit(
+            resp.items,
+            &scope,
+            self.audit_ctx.as_deref(),
+            action_type,
+            resource_kind,
+            0,
+        );
+        PaginatedResponse {
+            items: kept,
+            next_marker: resp.next_marker,
+            has_more: resp.has_more,
+        }
     }
 }
 
@@ -100,7 +160,7 @@ impl GlancePort for GlanceHttpAdapter {
         pagination: &PaginationParams,
     ) -> ApiResult<PaginatedResponse<Image>> {
         let query = build_image_query(filter, pagination);
-        paginated_list(
+        let resp = paginated_list(
             &self.base,
             "/v2/images",
             &query,
@@ -109,7 +169,12 @@ impl GlancePort for GlanceHttpAdapter {
                 (resp.images, next)
             },
         )
-        .await
+        .await?;
+        // BL-P2-091: defense-in-depth refilter atop server-side visibility
+        // filtering. Glance v2 doesn't accept `tenant_id=<scope>`; we rely
+        // on `visibility=private/shared/community` plus this response-side
+        // owner check to fail-safe drop cross-project rows admins may see.
+        Ok(self.refilter_response(resp, filter.all_tenants, "FetchImages", "image"))
     }
 
     async fn get_image(&self, image_id: &str) -> ApiResult<Image> {
