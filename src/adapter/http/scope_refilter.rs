@@ -42,6 +42,24 @@ pub trait ScopedItem {
     /// models without a primary id — the AdapterFilterViolation event
     /// will fall back to a placeholder rather than skipping the emit.
     fn resource_id(&self) -> Option<&str>;
+    /// BL-P2-091: short-circuit keep for rows whose access model is
+    /// governed by something other than `tenant_id` equality. The canonical
+    /// case is Glance: `visibility = public/community/shared` images are
+    /// intentionally cross-project, and their `owner` is often a different
+    /// project (or absent) — owner-equality refilter would drop them and
+    /// break the standard non-admin `list_images` flow.
+    ///
+    /// Default `false` preserves Neutron/Nova/Cinder behaviour (tenant_id
+    /// equality is the only authoritative scope test). Image overrides
+    /// to keep `visibility != "private"` rows regardless of `owner`.
+    ///
+    /// Globally-accessible rows bypass refilter entirely; they neither
+    /// land in `kept` nor `dropped` from the filtering perspective — they
+    /// are returned unchanged to the caller and never emit an
+    /// AdapterFilterViolation event (no leak signal).
+    fn is_globally_accessible(&self) -> bool {
+        false
+    }
 }
 
 /// Encodes the (active, all_tenants) invariant for [`refilter_by_scope`] in
@@ -171,6 +189,15 @@ pub fn refilter_by_scope<T: ScopedItem>(
     let mut kept = Vec::with_capacity(items.len());
     let mut dropped = Vec::new();
     for item in items {
+        // BL-P2-091: globally-accessible rows (Glance public/community/
+        // shared) bypass the owner check — their visibility marker is
+        // the authoritative access decision, and their `tenant_id` is
+        // routinely a different project (or absent). Drop would break
+        // standard non-admin list_images for everyone.
+        if item.is_globally_accessible() {
+            kept.push(item);
+            continue;
+        }
         match item.tenant_id() {
             Some(tid) if tid == active => kept.push(item),
             _ => dropped.push(item),
@@ -277,14 +304,18 @@ impl ScopedItem for VolumeSnapshot {
 }
 
 // --- BL-P2-091: ScopedItem impl for Glance Image ---
-// Glance is the asymmetric branch — atomic security PR deferred FR1 because
-// `Image.visibility` (`public` / `private` / `shared` / `community`) means
-// `owner` alone is insufficient for the broader image-visibility semantics
-// (BL-P2-091 Out-of-scope note). For FR1's "did the row's project_id match
-// the active scope" question, `owner: Option<String>` is the equivalent of
-// `tenant_id` on Neutron/Nova/Cinder models; community/shared rows under
-// strict scoping drop fail-safe (caller's responsibility to choose
-// `all_tenants=true` when intentionally listing globally-visible images).
+// Glance is the asymmetric branch. `owner` is the project-id equivalent of
+// `tenant_id` on Neutron/Nova/Cinder, but Glance's visibility model
+// (`public` / `private` / `shared` / `community`) means the OWNER check
+// only applies to `private` rows. Public/community/shared images are
+// intentionally cross-project — their visibility marker IS the access
+// decision, and refusing them would break the standard non-admin
+// `list_images` flow (no public Ubuntu image, etc).
+//
+// `is_globally_accessible()` therefore short-circuits the refilter for any
+// non-private visibility. The FR1 leak signal we still catch:
+//   `visibility == "private"` AND `owner != active`
+// — a private image of another project surfaced into the response.
 
 impl ScopedItem for Image {
     fn tenant_id(&self) -> Option<&str> {
@@ -292,6 +323,15 @@ impl ScopedItem for Image {
     }
     fn resource_id(&self) -> Option<&str> {
         Some(&self.id)
+    }
+    fn is_globally_accessible(&self) -> bool {
+        // Glance v2 visibility is one of `public`, `private`, `community`,
+        // `shared`. The three non-private values are governed by
+        // visibility ACLs server-side and must be passed through; positive
+        // allowlist (not `!= "private"`) so any unrecognized value
+        // fail-safes to the owner refilter rather than silently bypassing
+        // it when a new variant ships.
+        matches!(self.visibility.as_str(), "public" | "community" | "shared")
     }
 }
 
@@ -861,10 +901,100 @@ mod tests {
 
     #[test]
     fn test_image_has_scoped_item_returns_none_when_absent() {
-        // Shared/community images may surface without an `owner` field — under
-        // strict scoping the refilter drops them fail-safe (BL-P2-091 spec).
+        // Private image without an `owner` field — under strict scoping the
+        // refilter drops it fail-safe (no proof of ownership).
         let img = sample_image("img-2", None);
         assert_eq!(img.tenant_id(), None);
         assert_eq!(img.resource_id(), Some("img-2"));
+        assert!(
+            !img.is_globally_accessible(),
+            "default sample_image is private; owner check applies"
+        );
+    }
+
+    // --- BL-P2-091 Codex P1 fix: visibility-aware short-circuit ---
+    // Glance visibility marker IS the access decision for public/community/
+    // shared images. Refilter must let them through regardless of `owner`,
+    // or non-admin users lose access to the standard image catalog (Ubuntu
+    // public images, distro AMIs, etc.).
+
+    fn sample_image_with_visibility(
+        id: &str,
+        owner: Option<&str>,
+        visibility: &str,
+    ) -> crate::models::glance::Image {
+        let mut img = sample_image(id, owner);
+        img.visibility = visibility.to_string();
+        img
+    }
+
+    #[test]
+    fn test_image_is_globally_accessible_when_visibility_public() {
+        let img = sample_image_with_visibility("img-pub", Some("other-proj"), "public");
+        assert!(
+            img.is_globally_accessible(),
+            "public images must bypass owner refilter"
+        );
+    }
+
+    #[test]
+    fn test_image_is_globally_accessible_when_visibility_community() {
+        let img = sample_image_with_visibility("img-com", Some("other-proj"), "community");
+        assert!(img.is_globally_accessible());
+    }
+
+    #[test]
+    fn test_image_is_globally_accessible_when_visibility_shared() {
+        let img = sample_image_with_visibility("img-sh", Some("other-proj"), "shared");
+        assert!(img.is_globally_accessible());
+    }
+
+    #[test]
+    fn test_image_is_not_globally_accessible_when_visibility_private() {
+        let img = sample_image_with_visibility("img-priv", Some("other-proj"), "private");
+        assert!(
+            !img.is_globally_accessible(),
+            "private images must apply owner refilter"
+        );
+    }
+
+    #[test]
+    fn test_image_unknown_visibility_treated_as_private_fail_safe() {
+        // Unknown visibility values must NOT relax the refilter — future
+        // Glance versions adding a new variant shouldn't silently bypass
+        // the owner check.
+        let img = sample_image_with_visibility("img-?", Some("other-proj"), "unobtainium");
+        assert!(
+            !img.is_globally_accessible(),
+            "unknown visibility must fail-safe to owner refilter"
+        );
+    }
+
+    #[test]
+    fn test_refilter_keeps_public_image_even_when_cross_project() {
+        // Codex P1 regression: a non-admin user listing images under
+        // strict scope must still see public/community/shared images that
+        // happen to be owned by a different project.
+        let items = vec![
+            sample_image_with_visibility("pub-1", Some("admin-proj"), "public"),
+            sample_image_with_visibility("priv-mine", Some("proj-A"), "private"),
+            sample_image_with_visibility("priv-other", Some("proj-B"), "private"),
+        ];
+        let (kept, dropped) = refilter_by_scope(items, &RefilterScope::strict("proj-A"));
+        let kept_ids: Vec<&str> = kept.iter().map(|i| i.id.as_str()).collect();
+        let dropped_ids: Vec<&str> = dropped.iter().map(|i| i.id.as_str()).collect();
+        assert!(
+            kept_ids.contains(&"pub-1"),
+            "public image must survive refilter (kept_ids={kept_ids:?})"
+        );
+        assert!(
+            kept_ids.contains(&"priv-mine"),
+            "private image owned by active project must be kept"
+        );
+        assert_eq!(
+            dropped_ids,
+            vec!["priv-other"],
+            "only private cross-project images must be dropped"
+        );
     }
 }
